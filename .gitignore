@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+job_hunter.db
