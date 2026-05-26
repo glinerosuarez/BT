@@ -13,9 +13,14 @@ class ConfigTests(unittest.TestCase):
             settings = load_settings()
         self.assertEqual(settings.poll_interval_minutes, 15)
         self.assertTrue(settings.use_arbeitnow)
+        self.assertTrue(settings.use_greenhouse)
+        self.assertTrue(settings.use_lever)
+        self.assertTrue(settings.use_rss)
         self.assertEqual(settings.min_relevance_score, 3.0)
         self.assertEqual(settings.min_eligibility_confidence, 0.4)
         self.assertTrue(settings.notify_on_ambiguous_eligibility)
+        self.assertEqual(settings.max_posting_age_days, 7)
+        self.assertTrue(settings.greenhouse_boards)
 
 
 if __name__ == "__main__":

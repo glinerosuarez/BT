@@ -41,6 +41,9 @@ class JobStore:
                 eligibility_confidence REAL NOT NULL,
                 eligibility_status TEXT NOT NULL,
                 relevance_hits TEXT,
+                age_days REAL,
+                age_unknown INTEGER NOT NULL DEFAULT 1,
+                source_detail TEXT,
                 notified INTEGER NOT NULL DEFAULT 0,
                 notified_at TEXT
             );
@@ -64,9 +67,36 @@ class JobStore:
                 duplicate_count INTEGER NOT NULL,
                 error_count INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS source_run_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_log_id INTEGER NOT NULL,
+                source_name TEXT NOT NULL,
+                fetched_count INTEGER NOT NULL,
+                rejected_age_count INTEGER NOT NULL,
+                rejected_internship_count INTEGER NOT NULL,
+                rejected_us_scope_count INTEGER NOT NULL,
+                rejected_eligibility_count INTEGER NOT NULL,
+                rejected_relevance_count INTEGER NOT NULL,
+                persisted_count INTEGER NOT NULL,
+                notified_count INTEGER NOT NULL,
+                duplicate_count INTEGER NOT NULL,
+                error_count INTEGER NOT NULL,
+                FOREIGN KEY(run_log_id) REFERENCES run_logs(id)
+            );
             """
         )
+        self._ensure_column("jobs", "age_days", "REAL")
+        self._ensure_column("jobs", "age_unknown", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column("jobs", "source_detail", "TEXT")
         self._conn.commit()
+
+    def _ensure_column(self, table_name: str, column_name: str, column_def: str) -> None:
+        rows = self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        existing = {str(row["name"]) for row in rows}
+        if column_name in existing:
+            return
+        self._conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
 
     def is_seen(self, dedupe_key: str) -> bool:
         row = self._conn.execute(
@@ -74,6 +104,15 @@ class JobStore:
             (dedupe_key,),
         ).fetchone()
         return row is not None
+
+    def was_notified(self, dedupe_key: str) -> bool:
+        row = self._conn.execute(
+            "SELECT notified FROM seen_events WHERE dedupe_key = ? LIMIT 1",
+            (dedupe_key,),
+        ).fetchone()
+        if row is None:
+            return False
+        return bool(row["notified"])
 
     def insert_job(self, job: JobRecord, dedupe_key: str) -> bool:
         now_iso = job.ingested_at
@@ -86,8 +125,8 @@ class JobStore:
                     location, is_internship, posted_at, description,
                     work_auth_signals, sponsorship_signals, skills, ingested_at,
                     relevance_score, eligibility_confidence, eligibility_status,
-                    relevance_hits
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    relevance_hits, age_days, age_unknown, source_detail
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     dedupe_key,
@@ -108,6 +147,9 @@ class JobStore:
                     payload["eligibility_confidence"],
                     payload["eligibility_status"],
                     json.dumps(payload["relevance_hits"]),
+                    payload["age_days"],
+                    int(payload["age_unknown"]),
+                    payload["source_detail"],
                 ),
             )
             self._conn.execute(
@@ -153,7 +195,7 @@ class JobStore:
         self._conn.commit()
 
     def log_run(self, outcome: PipelineOutcome) -> None:
-        self._conn.execute(
+        cursor = self._conn.execute(
             """
             INSERT INTO run_logs (
                 source_count, passed_filter_count, persisted_count,
@@ -169,6 +211,32 @@ class JobStore:
                 outcome.error_count,
             ),
         )
+        run_log_id = cursor.lastrowid
+        for source_name, stats in outcome.source_stats.items():
+            self._conn.execute(
+                """
+                INSERT INTO source_run_logs (
+                    run_log_id, source_name, fetched_count, rejected_age_count,
+                    rejected_internship_count, rejected_us_scope_count,
+                    rejected_eligibility_count, rejected_relevance_count,
+                    persisted_count, notified_count, duplicate_count, error_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_log_id,
+                    source_name,
+                    stats.fetched_count,
+                    stats.rejected_age_count,
+                    stats.rejected_internship_count,
+                    stats.rejected_us_scope_count,
+                    stats.rejected_eligibility_count,
+                    stats.rejected_relevance_count,
+                    stats.persisted_count,
+                    stats.notified_count,
+                    stats.duplicate_count,
+                    stats.error_count,
+                ),
+            )
         self._conn.commit()
 
 

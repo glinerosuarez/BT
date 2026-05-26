@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +17,39 @@ from job_hunter.pipeline import (
     run_pipeline,
 )
 from job_hunter.storage import JobStore
+
+
+def make_settings(db_path: str) -> Settings:
+    return Settings(
+        db_path=db_path,
+        poll_interval_minutes=15,
+        request_timeout_seconds=10,
+        use_arbeitnow=False,
+        use_remotive=False,
+        use_themuse=False,
+        use_greenhouse=False,
+        use_lever=False,
+        use_rss=False,
+        use_usajobs=False,
+        use_adzuna=False,
+        min_relevance_score=3.0,
+        min_eligibility_confidence=0.4,
+        notify_on_ambiguous_eligibility=True,
+        max_posting_age_days=7,
+        telegram_bot_token=None,
+        telegram_chat_id=None,
+        themuse_pages=2,
+        greenhouse_boards=[],
+        lever_companies=[],
+        rss_feeds=[],
+        usajobs_user_agent=None,
+        usajobs_auth_key=None,
+        usajobs_results_per_page=250,
+        adzuna_app_id=None,
+        adzuna_app_key=None,
+        adzuna_country="us",
+        adzuna_pages=2,
+    )
 
 
 class FakeSource:
@@ -160,6 +194,22 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertEqual(score, 0.0)
         self.assertEqual(hits, [])
 
+    def test_relevance_unknown_age_penalty(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="1",
+            url="https://example.com",
+            title="Machine Learning Intern",
+            company="Example",
+            location="US",
+            is_internship=True,
+            posted_at=None,
+            description="Machine learning internship",
+            ingested_at="now",
+        )
+        score, _ = _score_relevance(job)
+        self.assertGreaterEqual(score, 2.75)
+
     def test_dedupe_stability(self) -> None:
         j1 = JobRecord(
             source="x",
@@ -192,19 +242,7 @@ class PipelineIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         db_path = str(Path(self.temp_dir.name) / "test.db")
-        self.settings = Settings(
-            db_path=db_path,
-            poll_interval_minutes=15,
-            request_timeout_seconds=10,
-            use_arbeitnow=False,
-            use_remotive=False,
-            use_themuse=False,
-            min_relevance_score=3.0,
-            min_eligibility_confidence=0.4,
-            notify_on_ambiguous_eligibility=True,
-            telegram_bot_token=None,
-            telegram_chat_id=None,
-        )
+        self.settings = make_settings(db_path)
         self.store = JobStore(db_path)
 
     def tearDown(self) -> None:
@@ -263,6 +301,58 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(outcome.passed_filter_count, 0)
         self.assertEqual(outcome.persisted_count, 0)
         self.assertEqual(outcome.notified_count, 0)
+
+    def test_age_window_filters_old_postings(self) -> None:
+        stale_payload = [
+            {
+                "source": "fake",
+                "external_id": "old-1",
+                "url": "https://example.com/old-1",
+                "title": "Data Science Intern",
+                "company": "Acme",
+                "location": "Remote - US",
+                "posted_at": "2020-01-01T00:00:00+00:00",
+                "description": "Summer internship program for ML and analytics",
+                "skills": ["python"],
+            }
+        ]
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(stale_payload)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertEqual(outcome.persisted_count, 0)
+        self.assertEqual(outcome.source_stats["fake"].rejected_age_count, 1)
+
+    def test_duplicate_can_notify_when_previously_unnotified(self) -> None:
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "job-3",
+                "url": "https://example.com/job-3",
+                "title": "Data Science Intern",
+                "company": "Acme",
+                "location": "Remote - US",
+                "posted_at": "2026-05-21",
+                "description": "Summer internship program for ML and Python",
+                "skills": ["python"],
+            }
+        ]
+
+        notifier1 = FakeNotifier()
+        settings_no_ambiguous = replace(self.settings, notify_on_ambiguous_eligibility=False)
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome1 = run_pipeline(settings_no_ambiguous, self.store, notifier1)
+        self.assertEqual(outcome1.persisted_count, 1)
+        self.assertEqual(outcome1.notified_count, 0)
+        self.assertEqual(notifier1.sent, 0)
+
+        notifier2 = FakeNotifier()
+        settings_with_ambiguous = replace(self.settings, notify_on_ambiguous_eligibility=True)
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome2 = run_pipeline(settings_with_ambiguous, self.store, notifier2)
+        self.assertEqual(outcome2.persisted_count, 0)
+        self.assertGreaterEqual(outcome2.duplicate_count, 1)
+        self.assertEqual(outcome2.notified_count, 1)
+        self.assertEqual(notifier2.sent, 1)
 
 
 if __name__ == "__main__":

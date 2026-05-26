@@ -7,6 +7,7 @@ import logging
 import re
 from dataclasses import asdict
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 from job_hunter.config import Settings
 from job_hunter.keywords import (
@@ -17,9 +18,19 @@ from job_hunter.keywords import (
     POSITIVE_SPONSORSHIP_PATTERNS,
     US_LOCATION_HINTS,
 )
-from job_hunter.models import JobRecord, PipelineOutcome
+from job_hunter.models import JobRecord, PipelineOutcome, SourceRunStats
 from job_hunter.notify import TelegramNotifier
-from job_hunter.sources import ArbeitnowSource, RemotiveSource, SourceConnector, TheMuseSource
+from job_hunter.sources import (
+    AdzunaSource,
+    ArbeitnowSource,
+    GreenhouseSource,
+    LeverSource,
+    RemotiveSource,
+    RssSource,
+    SourceConnector,
+    TheMuseSource,
+    USAJobsSource,
+)
 from job_hunter.storage import JobStore
 
 LOG = logging.getLogger(__name__)
@@ -58,31 +69,75 @@ def build_sources(settings: Settings) -> list[SourceConnector]:
     if settings.use_remotive:
         sources.append(RemotiveSource())
     if settings.use_themuse:
-        sources.append(TheMuseSource())
+        sources.append(TheMuseSource(pages=settings.themuse_pages))
+    if settings.use_greenhouse and settings.greenhouse_boards:
+        sources.append(GreenhouseSource(board_tokens=settings.greenhouse_boards))
+    if settings.use_lever and settings.lever_companies:
+        sources.append(LeverSource(companies=settings.lever_companies))
+    if settings.use_rss and settings.rss_feeds:
+        sources.append(RssSource(feeds=settings.rss_feeds))
+
+    if settings.use_usajobs:
+        if settings.usajobs_user_agent and settings.usajobs_auth_key:
+            sources.append(
+                USAJobsSource(
+                    user_agent=settings.usajobs_user_agent,
+                    auth_key=settings.usajobs_auth_key,
+                    results_per_page=settings.usajobs_results_per_page,
+                )
+            )
+        else:
+            LOG.warning("usajobs_skipped_missing_credentials")
+
+    if settings.use_adzuna:
+        if settings.adzuna_app_id and settings.adzuna_app_key:
+            sources.append(
+                AdzunaSource(
+                    country=settings.adzuna_country,
+                    app_id=settings.adzuna_app_id,
+                    app_key=settings.adzuna_app_key,
+                    pages=settings.adzuna_pages,
+                )
+            )
+        else:
+            LOG.warning("adzuna_skipped_missing_credentials")
+
     return sources
 
 
 def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier | None) -> PipelineOutcome:
     outcome = PipelineOutcome()
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
 
     for source in build_sources(settings):
+        source_stats = outcome.source_stats.setdefault(source.name, SourceRunStats())
         try:
             raw_jobs = source.fetch(settings.request_timeout_seconds)
         except Exception:
             LOG.exception("source_fetch_failed", extra={"source": source.name})
             outcome.error_count += 1
+            source_stats.error_count += 1
             continue
 
         outcome.source_count += len(raw_jobs)
+        source_stats.fetched_count += len(raw_jobs)
+
         for raw_job in raw_jobs:
             job = _normalize_record(raw_job, ingested_at=now_iso)
             if not job.url or not job.title:
+                source_stats.rejected_relevance_count += 1
+                continue
+
+            if _is_too_old(job, now, settings.max_posting_age_days):
+                source_stats.rejected_age_count += 1
                 continue
 
             if not _is_internship(job):
+                source_stats.rejected_internship_count += 1
                 continue
             if not _is_us_scope(job):
+                source_stats.rejected_us_scope_count += 1
                 continue
 
             eligibility_status, eligibility_confidence, work_auth_hits, sponsor_hits = _evaluate_eligibility(job)
@@ -91,13 +146,16 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
             job.work_auth_signals = work_auth_hits
             job.sponsorship_signals = sponsor_hits
 
+            if job.eligibility_status == "reject" or job.eligibility_confidence < settings.min_eligibility_confidence:
+                source_stats.rejected_eligibility_count += 1
+                continue
+
             relevance_score, relevance_hits = _score_relevance(job)
             job.relevance_score = relevance_score
             job.relevance_hits = relevance_hits
 
             if job.relevance_score < settings.min_relevance_score:
-                continue
-            if job.eligibility_confidence < settings.min_eligibility_confidence:
+                source_stats.rejected_relevance_count += 1
                 continue
 
             if job.eligibility_status == "ambiguous" and not settings.notify_on_ambiguous_eligibility:
@@ -109,19 +167,30 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
             dedupe_key = _dedupe_key(job)
             if store.is_seen(dedupe_key):
                 outcome.duplicate_count += 1
+                source_stats.duplicate_count += 1
+                if notifier is not None and pass_notify and not store.was_notified(dedupe_key):
+                    sent = notifier.send(job)
+                    store.mark_notified(dedupe_key, sent)
+                    if sent:
+                        outcome.notified_count += 1
+                        source_stats.notified_count += 1
                 continue
 
             persisted = store.insert_job(job, dedupe_key)
             if not persisted:
                 outcome.duplicate_count += 1
+                source_stats.duplicate_count += 1
                 continue
+
             outcome.persisted_count += 1
+            source_stats.persisted_count += 1
 
             if notifier is not None and pass_notify:
                 sent = notifier.send(job)
                 store.mark_notified(dedupe_key, sent)
                 if sent:
                     outcome.notified_count += 1
+                    source_stats.notified_count += 1
 
     store.log_run(outcome)
     LOG.info("pipeline_completed %s", json.dumps(asdict(outcome), sort_keys=True))
@@ -134,6 +203,14 @@ def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
     company = _clean_text(str(raw.get("company", "")))
     location = _clean_text(str(raw.get("location", "")))
 
+    raw_skills = raw.get("skills", [])
+    if isinstance(raw_skills, list):
+        skills = [str(x) for x in raw_skills if str(x).strip()]
+    elif raw_skills:
+        skills = [str(raw_skills)]
+    else:
+        skills = []
+
     return JobRecord(
         source=str(raw.get("source", "")),
         external_id=str(raw.get("external_id", "")),
@@ -144,8 +221,9 @@ def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
         is_internship=False,
         posted_at=_nullable_str(raw.get("posted_at")),
         description=description,
-        skills=[str(x) for x in raw.get("skills", []) if str(x).strip()],
+        skills=skills,
         ingested_at=ingested_at,
+        source_detail=str(raw.get("source_detail", "")),
     )
 
 
@@ -165,6 +243,62 @@ def _nullable_str(value: object) -> str | None:
 
 def _job_blob(job: JobRecord) -> str:
     return " ".join([job.title, job.description, " ".join(job.skills)]).lower()
+
+
+def _is_too_old(job: JobRecord, now: datetime, max_days: int) -> bool:
+    age_days, age_unknown = _job_age_days(job.posted_at, now)
+    job.age_days = age_days
+    job.age_unknown = age_unknown
+    if max_days <= 0:
+        return False
+    if age_unknown:
+        return False
+    if age_days is None:
+        return False
+    return age_days > max_days
+
+
+def _job_age_days(posted_at: str | None, now: datetime) -> tuple[float | None, bool]:
+    posted_dt = _parse_posted_at(posted_at)
+    if posted_dt is None:
+        return None, True
+    delta = now - posted_dt
+    age_days = max(delta.total_seconds() / 86400.0, 0.0)
+    return age_days, False
+
+
+def _parse_posted_at(posted_at: str | None) -> datetime | None:
+    if posted_at is None:
+        return None
+    value = posted_at.strip()
+    if not value:
+        return None
+
+    if value.isdigit():
+        num = int(value)
+        if num > 10_000_000_000:
+            num = int(num / 1000)
+        try:
+            return datetime.fromtimestamp(num, tz=timezone.utc)
+        except (OSError, ValueError):
+            return None
+
+    normalized = value.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        pass
+
+    try:
+        dt = parsedate_to_datetime(value)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_internship(job: JobRecord) -> bool:
@@ -209,11 +343,19 @@ def _score_relevance(job: JobRecord) -> tuple[float, list[str]]:
             score += weight
             hits.append(keyword)
 
-    if job.posted_at:
-        # Simple recency boost based on known posted timestamp presence.
-        score += 0.75
+    if job.age_unknown:
+        score -= 0.25
+    elif job.age_days is not None:
+        if job.age_days <= 1:
+            score += 1.0
+        elif job.age_days <= 3:
+            score += 0.75
+        elif job.age_days <= 7:
+            score += 0.5
+        else:
+            score += 0.1
 
-    return score, sorted(set(hits))
+    return max(score, 0.0), sorted(set(hits))
 
 
 def _canonical_url(url: str) -> str:

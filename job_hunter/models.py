@@ -4,6 +4,20 @@ from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
+class SourceRunStats:
+    fetched_count: int = 0
+    rejected_age_count: int = 0
+    rejected_internship_count: int = 0
+    rejected_us_scope_count: int = 0
+    rejected_eligibility_count: int = 0
+    rejected_relevance_count: int = 0
+    persisted_count: int = 0
+    notified_count: int = 0
+    duplicate_count: int = 0
+    error_count: int = 0
+
+
+@dataclass(slots=True)
 class JobRecord:
     source: str
     external_id: str
@@ -23,6 +37,9 @@ class JobRecord:
     eligibility_confidence: float = 0.0
     eligibility_status: str = "ambiguous"
     relevance_hits: list[str] = field(default_factory=list)
+    age_days: float | None = None
+    age_unknown: bool = True
+    source_detail: str = ""
 
 
 @dataclass(slots=True)
@@ -33,3 +50,4 @@ class PipelineOutcome:
     notified_count: int = 0
     duplicate_count: int = 0
     error_count: int = 0
+    source_stats: dict[str, SourceRunStats] = field(default_factory=dict)
