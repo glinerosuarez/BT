@@ -13,6 +13,9 @@ class SourceConnector:
     def fetch(self, timeout_seconds: int) -> list[dict]:
         raise NotImplementedError
 
+    def get_fetch_meta(self) -> dict[str, int]:
+        return {}
+
 
 USER_AGENT = "job-hunter/0.1 (+internship-sourcing)"
 

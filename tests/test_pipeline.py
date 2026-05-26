@@ -42,6 +42,10 @@ def make_settings(db_path: str) -> Settings:
         greenhouse_boards=[],
         lever_companies=[],
         rss_feeds=[],
+        title_blacklist_patterns=[r"\brecruiter\b"],
+        greenhouse_token_file=None,
+        lever_token_file=None,
+        rss_feed_file=None,
         usajobs_user_agent=None,
         usajobs_auth_key=None,
         usajobs_results_per_page=250,
@@ -353,6 +357,52 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(outcome2.duplicate_count, 1)
         self.assertEqual(outcome2.notified_count, 1)
         self.assertEqual(notifier2.sent, 1)
+
+    def test_source_meta_counters_are_recorded(self) -> None:
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "job-4",
+                "url": "https://example.com/job-4",
+                "title": "Machine Learning Intern",
+                "company": "Acme",
+                "location": "Remote - US",
+                "posted_at": "2026-05-21",
+                "description": "Summer internship program for ML and Python",
+                "skills": ["python"],
+            }
+        ]
+
+        class FakeMetaSource(FakeSource):
+            def get_fetch_meta(self) -> dict[str, int]:
+                return {"dead_token_count": 3, "feed_error_count": 2}
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeMetaSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertEqual(outcome.source_stats["fake"].dead_token_count, 3)
+        self.assertEqual(outcome.source_stats["fake"].feed_error_count, 2)
+
+    def test_title_blacklist_blocks_non_target_roles(self) -> None:
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "job-5",
+                "url": "https://example.com/job-5",
+                "title": "University Recruiter (Contract)",
+                "company": "Acme",
+                "location": "Remote - US",
+                "posted_at": "2026-05-21",
+                "description": "Join internship program operations for campus hiring",
+                "skills": ["coordination"],
+            }
+        ]
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertEqual(outcome.persisted_count, 0)
+        self.assertEqual(outcome.source_stats["fake"].rejected_title_blacklist_count, 1)
 
 
 if __name__ == "__main__":

@@ -76,12 +76,15 @@ class JobStore:
                 rejected_age_count INTEGER NOT NULL,
                 rejected_internship_count INTEGER NOT NULL,
                 rejected_us_scope_count INTEGER NOT NULL,
+                rejected_title_blacklist_count INTEGER NOT NULL DEFAULT 0,
                 rejected_eligibility_count INTEGER NOT NULL,
                 rejected_relevance_count INTEGER NOT NULL,
                 persisted_count INTEGER NOT NULL,
                 notified_count INTEGER NOT NULL,
                 duplicate_count INTEGER NOT NULL,
                 error_count INTEGER NOT NULL,
+                dead_token_count INTEGER NOT NULL DEFAULT 0,
+                feed_error_count INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(run_log_id) REFERENCES run_logs(id)
             );
             """
@@ -89,6 +92,9 @@ class JobStore:
         self._ensure_column("jobs", "age_days", "REAL")
         self._ensure_column("jobs", "age_unknown", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("jobs", "source_detail", "TEXT")
+        self._ensure_column("source_run_logs", "rejected_title_blacklist_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "dead_token_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "feed_error_count", "INTEGER NOT NULL DEFAULT 0")
         self._conn.commit()
 
     def _ensure_column(self, table_name: str, column_name: str, column_def: str) -> None:
@@ -217,10 +223,11 @@ class JobStore:
                 """
                 INSERT INTO source_run_logs (
                     run_log_id, source_name, fetched_count, rejected_age_count,
-                    rejected_internship_count, rejected_us_scope_count,
+                    rejected_internship_count, rejected_us_scope_count, rejected_title_blacklist_count,
                     rejected_eligibility_count, rejected_relevance_count,
-                    persisted_count, notified_count, duplicate_count, error_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    persisted_count, notified_count, duplicate_count, error_count,
+                    dead_token_count, feed_error_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_log_id,
@@ -229,12 +236,15 @@ class JobStore:
                     stats.rejected_age_count,
                     stats.rejected_internship_count,
                     stats.rejected_us_scope_count,
+                    stats.rejected_title_blacklist_count,
                     stats.rejected_eligibility_count,
                     stats.rejected_relevance_count,
                     stats.persisted_count,
                     stats.notified_count,
                     stats.duplicate_count,
                     stats.error_count,
+                    stats.dead_token_count,
+                    stats.feed_error_count,
                 ),
             )
         self._conn.commit()

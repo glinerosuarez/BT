@@ -109,6 +109,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
     outcome = PipelineOutcome()
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
+    title_blacklist_regexes = _compile_title_blacklist(settings.title_blacklist_patterns)
 
     for source in build_sources(settings):
         source_stats = outcome.source_stats.setdefault(source.name, SourceRunStats())
@@ -119,6 +120,10 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
             outcome.error_count += 1
             source_stats.error_count += 1
             continue
+
+        fetch_meta = source.get_fetch_meta() if hasattr(source, "get_fetch_meta") else {}
+        source_stats.dead_token_count += int(fetch_meta.get("dead_token_count", 0))
+        source_stats.feed_error_count += int(fetch_meta.get("feed_error_count", 0))
 
         outcome.source_count += len(raw_jobs)
         source_stats.fetched_count += len(raw_jobs)
@@ -138,6 +143,9 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 continue
             if not _is_us_scope(job):
                 source_stats.rejected_us_scope_count += 1
+                continue
+            if _is_blacklisted_title(job, title_blacklist_regexes):
+                source_stats.rejected_title_blacklist_count += 1
                 continue
 
             eligibility_status, eligibility_confidence, work_auth_hits, sponsor_hits = _evaluate_eligibility(job)
@@ -243,6 +251,30 @@ def _nullable_str(value: object) -> str | None:
 
 def _job_blob(job: JobRecord) -> str:
     return " ".join([job.title, job.description, " ".join(job.skills)]).lower()
+
+
+def _compile_title_blacklist(patterns: list[str]) -> list[re.Pattern[str]]:
+    compiled: list[re.Pattern[str]] = []
+    for pattern in patterns:
+        text = pattern.strip()
+        if not text:
+            continue
+        try:
+            compiled.append(re.compile(text, flags=re.IGNORECASE))
+        except re.error:
+            # fallback to literal matching when an env-supplied pattern is invalid
+            compiled.append(re.compile(re.escape(text), flags=re.IGNORECASE))
+    return compiled
+
+
+def _is_blacklisted_title(job: JobRecord, patterns: list[re.Pattern[str]]) -> bool:
+    title = job.title or ""
+    if not title:
+        return False
+    for pattern in patterns:
+        if pattern.search(title):
+            return True
+    return False
 
 
 def _is_too_old(job: JobRecord, now: datetime, max_days: int) -> bool:

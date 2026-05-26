@@ -11,8 +11,12 @@ class GreenhouseSource(SourceConnector):
     def __init__(self, board_tokens: list[str]) -> None:
         super().__init__(name="greenhouse")
         self.board_tokens = board_tokens
+        self._fetch_meta: dict[str, int] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
+        dead_token_count = 0
+        max_error_logs = 10
+        logged_errors = 0
         results: list[dict] = []
         for board in self.board_tokens:
             try:
@@ -22,7 +26,10 @@ class GreenhouseSource(SourceConnector):
                     params={"content": "true"},
                 )
             except Exception as exc:
-                LOG.warning("greenhouse_board_fetch_failed board=%s error=%s", board, exc)
+                dead_token_count += 1
+                if logged_errors < max_error_logs:
+                    LOG.warning("greenhouse_board_fetch_failed board=%s error=%s", board, exc)
+                    logged_errors += 1
                 continue
 
             jobs = data.get("jobs", []) if isinstance(data, dict) else []
@@ -44,4 +51,11 @@ class GreenhouseSource(SourceConnector):
                         "skills": [],
                     }
                 )
+        self._fetch_meta = {"dead_token_count": dead_token_count}
+        suppressed = dead_token_count - logged_errors
+        if suppressed > 0:
+            LOG.warning("greenhouse_board_fetch_failures_suppressed count=%s", suppressed)
         return results
+
+    def get_fetch_meta(self) -> dict[str, int]:
+        return dict(self._fetch_meta)

@@ -21,6 +21,10 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.notify_on_ambiguous_eligibility)
         self.assertEqual(settings.max_posting_age_days, 7)
         self.assertTrue(settings.greenhouse_boards)
+        self.assertTrue(settings.lever_companies)
+        self.assertTrue(settings.rss_feeds)
+        self.assertTrue(settings.title_blacklist_patterns)
+        self.assertIsNotNone(settings.greenhouse_token_file)
 
 
 if __name__ == "__main__":

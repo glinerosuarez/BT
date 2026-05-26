@@ -6,6 +6,7 @@ Automated sourcing pipeline for US-based ML/Data internships with eligibility-aw
 
 - Pulls postings from multi-source connectors (`Arbeitnow`, `Remotive`, `The Muse`, `Greenhouse`, `Lever`, `RSS`).
 - Supports optional keyed connectors (`USAJobs`, `Adzuna`) when credentials are provided.
+- Loads large default ATS/RSS source lists from `job_hunter/data/*.txt` (with env overrides).
 - Normalizes jobs into a unified schema.
 - Keeps US-scoped internships only.
 - Excludes postings that explicitly require existing US work authorization.
@@ -42,7 +43,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `jobs`: normalized postings with score/eligibility fields and notification state.
 - `seen_events`: dedupe and notification tracking.
 - `run_logs`: per-run metrics.
-- `source_run_logs`: per-source funnel diagnostics (fetched, rejected by rule, persisted, notified).
+- `source_run_logs`: per-source funnel diagnostics (fetched, dead tokens/feed errors, rejected by rule, persisted, notified).
 
 ## Core environment variables
 
@@ -56,10 +57,14 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `JOB_HUNTER_SOURCE_RSS`
 - `JOB_HUNTER_SOURCE_USAJOBS`
 - `JOB_HUNTER_SOURCE_ADZUNA`
+- `JOB_HUNTER_GREENHOUSE_TOKEN_FILE`
+- `JOB_HUNTER_LEVER_TOKEN_FILE`
+- `JOB_HUNTER_RSS_FEED_FILE`
 - `JOB_HUNTER_MIN_RELEVANCE_SCORE`
 - `JOB_HUNTER_MIN_ELIGIBILITY_CONFIDENCE`
 - `JOB_HUNTER_NOTIFY_AMBIGUOUS`
 - `JOB_HUNTER_MAX_POSTING_AGE_DAYS`
+- `JOB_HUNTER_TITLE_BLACKLIST_PATTERNS`
 - `JOB_HUNTER_GREENHOUSE_BOARDS`
 - `JOB_HUNTER_LEVER_COMPANIES`
 - `JOB_HUNTER_RSS_FEEDS`

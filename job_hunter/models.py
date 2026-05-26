@@ -9,12 +9,15 @@ class SourceRunStats:
     rejected_age_count: int = 0
     rejected_internship_count: int = 0
     rejected_us_scope_count: int = 0
+    rejected_title_blacklist_count: int = 0
     rejected_eligibility_count: int = 0
     rejected_relevance_count: int = 0
     persisted_count: int = 0
     notified_count: int = 0
     duplicate_count: int = 0
     error_count: int = 0
+    dead_token_count: int = 0
+    feed_error_count: int = 0
 
 
 @dataclass(slots=True)

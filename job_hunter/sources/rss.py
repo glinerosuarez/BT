@@ -15,8 +15,12 @@ class RssSource(SourceConnector):
     def __init__(self, feeds: list[str]) -> None:
         super().__init__(name="rss")
         self.feeds = feeds
+        self._fetch_meta: dict[str, int] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
+        feed_error_count = 0
+        max_error_logs = 10
+        logged_errors = 0
         results: list[dict] = []
         for feed_url in self.feeds:
             try:
@@ -24,13 +28,19 @@ class RssSource(SourceConnector):
                 with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
                     raw = resp.read()
             except Exception as exc:
-                LOG.warning("rss_feed_fetch_failed feed=%s error=%s", feed_url, exc)
+                feed_error_count += 1
+                if logged_errors < max_error_logs:
+                    LOG.warning("rss_feed_fetch_failed feed=%s error=%s", feed_url, exc)
+                    logged_errors += 1
                 continue
 
             try:
                 root = ET.fromstring(raw)
             except ET.ParseError as exc:
-                LOG.warning("rss_feed_parse_failed feed=%s error=%s", feed_url, exc)
+                feed_error_count += 1
+                if logged_errors < max_error_logs:
+                    LOG.warning("rss_feed_parse_failed feed=%s error=%s", feed_url, exc)
+                    logged_errors += 1
                 continue
 
             items = _find_items(root)
@@ -57,7 +67,14 @@ class RssSource(SourceConnector):
                         "skills": [],
                     }
                 )
+        self._fetch_meta = {"feed_error_count": feed_error_count}
+        suppressed = feed_error_count - logged_errors
+        if suppressed > 0:
+            LOG.warning("rss_feed_failures_suppressed count=%s", suppressed)
         return results
+
+    def get_fetch_meta(self) -> dict[str, int]:
+        return dict(self._fetch_meta)
 
 
 def _find_items(root: ET.Element) -> list[ET.Element]:
