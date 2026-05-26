@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 
 from job_hunter.config import Settings
 from job_hunter.keywords import (
-    INTERNSHIP_KEYWORDS,
+    INTERNSHIP_DESCRIPTION_PATTERNS,
+    INTERNSHIP_TITLE_PATTERNS,
     ML_DATA_KEYWORDS,
     NEGATIVE_WORK_AUTH_PATTERNS,
     POSITIVE_SPONSORSHIP_PATTERNS,
@@ -22,6 +23,32 @@ from job_hunter.sources import ArbeitnowSource, RemotiveSource, SourceConnector,
 from job_hunter.storage import JobStore
 
 LOG = logging.getLogger(__name__)
+WORD_BOUNDARY_PATTERN = r"(?<![a-z0-9])%s(?![a-z0-9])"
+ML_KEYWORD_PATTERNS = {
+    keyword: re.compile(WORD_BOUNDARY_PATTERN % re.escape(keyword))
+    for keyword in ML_DATA_KEYWORDS
+}
+INTERNSHIP_TITLE_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in INTERNSHIP_TITLE_PATTERNS.items()
+}
+INTERNSHIP_DESCRIPTION_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in INTERNSHIP_DESCRIPTION_PATTERNS.items()
+}
+NEGATIVE_WORK_AUTH_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in NEGATIVE_WORK_AUTH_PATTERNS.items()
+}
+POSITIVE_SPONSORSHIP_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in POSITIVE_SPONSORSHIP_PATTERNS.items()
+}
+NEGATED_SPONSORSHIP_REGEXES = {
+    "no_sponsorship": re.compile(r"\b(no|not|without)\s+(visa\s+)?sponsorship\b", flags=re.IGNORECASE),
+    "cannot_sponsor": re.compile(r"\b(cannot|can't|unable to)\s+sponsor\b", flags=re.IGNORECASE),
+    "do_not_sponsor": re.compile(r"\b(do not|does not|don't|doesn't)\s+.*\bsponsor(ship)?\b", flags=re.IGNORECASE),
+}
 
 
 def build_sources(settings: Settings) -> list[SourceConnector]:
@@ -141,8 +168,11 @@ def _job_blob(job: JobRecord) -> str:
 
 
 def _is_internship(job: JobRecord) -> bool:
-    blob = _job_blob(job)
-    job.is_internship = any(word in blob for word in INTERNSHIP_KEYWORDS)
+    title = job.title or ""
+    description = job.description or ""
+    title_match = any(pattern.search(title) for pattern in INTERNSHIP_TITLE_REGEXES.values())
+    description_match = any(pattern.search(description) for pattern in INTERNSHIP_DESCRIPTION_REGEXES.values())
+    job.is_internship = bool(title_match or description_match)
     return job.is_internship
 
 
@@ -157,14 +187,17 @@ def _is_us_scope(job: JobRecord) -> bool:
 
 def _evaluate_eligibility(job: JobRecord) -> tuple[str, float, list[str], list[str]]:
     blob = _job_blob(job)
-    negative = [pat for pat in NEGATIVE_WORK_AUTH_PATTERNS if pat in blob]
-    positive = [pat for pat in POSITIVE_SPONSORSHIP_PATTERNS if pat in blob]
+    negative = [name for name, pattern in NEGATIVE_WORK_AUTH_REGEXES.items() if pattern.search(blob)]
+    has_negated_sponsorship = any(pattern.search(blob) for pattern in NEGATED_SPONSORSHIP_REGEXES.values())
+    positive = []
+    if not has_negated_sponsorship:
+        positive = [name for name, pattern in POSITIVE_SPONSORSHIP_REGEXES.items() if pattern.search(blob)]
 
     if negative:
         return "reject", 0.0, negative, positive
     if positive:
         return "sponsorship_friendly", 0.95, negative, positive
-    return "ambiguous", 0.45, negative, positive
+    return "ambiguous", 0.6, negative, positive
 
 
 def _score_relevance(job: JobRecord) -> tuple[float, list[str]]:
@@ -172,7 +205,7 @@ def _score_relevance(job: JobRecord) -> tuple[float, list[str]]:
     score = 0.0
     hits: list[str] = []
     for keyword, weight in ML_DATA_KEYWORDS.items():
-        if keyword in blob:
+        if ML_KEYWORD_PATTERNS[keyword].search(blob):
             score += weight
             hits.append(keyword)
 

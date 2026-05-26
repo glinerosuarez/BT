@@ -1,8 +1,12 @@
-INTERNSHIP_KEYWORDS = {
-    "intern",
-    "internship",
-    "co-op",
-    "coop",
+INTERNSHIP_TITLE_PATTERNS = {
+    "intern_title": r"\bintern(ship)?\b",
+    "coop_title": r"\bco[\s-]?op\b",
+}
+
+INTERNSHIP_DESCRIPTION_PATTERNS = {
+    "internship_program": r"\bintern(ship)?\s+(program|position|role|opportunity|opening|cohort)\b",
+    "seasonal_internship": r"\b(summer|fall|spring|winter)\s+intern(ship)?\b",
+    "coop_program": r"\bco[\s-]?op\s+(program|position|role|opportunity|opening)\b",
 }
 
 ML_DATA_KEYWORDS = {
@@ -34,27 +38,20 @@ US_LOCATION_HINTS = {
 }
 
 NEGATIVE_WORK_AUTH_PATTERNS = {
-    "must be authorized to work in the us",
-    "must be authorized to work in the united states",
-    "authorized to work in the us",
-    "authorized to work in the united states",
-    "requires us work authorization",
-    "requires current us work authorization",
-    "cannot provide visa sponsorship",
-    "no visa sponsorship",
-    "unable to sponsor",
-    "must have permanent work authorization",
-    "us citizens only",
+    "must_authorized_us": r"\bmust be authorized to work in the (us|u\.s\.|united states)\b",
+    "authorized_us_required": r"\bauthorized to work in the (us|u\.s\.|united states)\b",
+    "requires_us_work_auth": r"\brequires?\s+(current\s+)?(us|u\.s\.|united states)\s+work authorization\b",
+    "must_have_us_work_auth": r"\bmust have\s+(current\s+)?(us|u\.s\.|united states)\s+work authorization\b",
+    "citizen_or_pr_required": r"\b(us citizens?\s+only|must be a us citizen|must be (a )?permanent resident)\b",
 }
 
 POSITIVE_SPONSORSHIP_PATTERNS = {
-    "visa sponsorship",
-    "sponsorship available",
-    "cpt",
-    "opt",
-    "international students",
-    "h-1b",
-    "h1b",
-    "willing to sponsor",
-    "open to sponsorship",
+    "visa_sponsorship": r"\bvisa sponsorship\b",
+    "sponsorship_available": r"\bsponsorship available\b",
+    "cpt": r"\bcpt\b",
+    "opt": r"\bopt\b",
+    "international_students": r"\binternational students\b",
+    "h1b": r"\bh-?1b\b",
+    "willing_to_sponsor": r"\bwilling to sponsor\b",
+    "open_to_sponsorship": r"\bopen to sponsorship\b",
 }

@@ -60,9 +60,9 @@ def load_settings() -> Settings:
         use_arbeitnow=_env_bool("JOB_HUNTER_SOURCE_ARBEITNOW", True),
         use_remotive=_env_bool("JOB_HUNTER_SOURCE_REMOTIVE", True),
         use_themuse=_env_bool("JOB_HUNTER_SOURCE_THEMUSE", True),
-        min_relevance_score=_env_float("JOB_HUNTER_MIN_RELEVANCE_SCORE", 2.0),
+        min_relevance_score=_env_float("JOB_HUNTER_MIN_RELEVANCE_SCORE", 3.0),
         min_eligibility_confidence=_env_float("JOB_HUNTER_MIN_ELIGIBILITY_CONFIDENCE", 0.4),
-        notify_on_ambiguous_eligibility=_env_bool("JOB_HUNTER_NOTIFY_AMBIGUOUS", False),
+        notify_on_ambiguous_eligibility=_env_bool("JOB_HUNTER_NOTIFY_AMBIGUOUS", True),
         telegram_bot_token=os.getenv("JOB_HUNTER_TELEGRAM_BOT_TOKEN"),
         telegram_chat_id=os.getenv("JOB_HUNTER_TELEGRAM_CHAT_ID"),
     )

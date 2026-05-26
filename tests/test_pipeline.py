@@ -49,7 +49,7 @@ class PipelineUnitTests(unittest.TestCase):
             location="Remote - US",
             is_internship=True,
             posted_at="2026-05-20",
-            description="Must be authorized to work in the US. No visa sponsorship.",
+            description="Must be authorized to work in the US.",
             ingested_at="2026-05-25T00:00:00+00:00",
         )
         status, confidence, negative, _ = _evaluate_eligibility(job)
@@ -73,6 +73,59 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertTrue(_is_internship(job))
         self.assertTrue(_is_us_scope(job))
 
+    def test_description_based_internship_match(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="1",
+            url="https://example.com",
+            title="Machine Learning Program Participant",
+            company="Example",
+            location="United States",
+            is_internship=False,
+            posted_at=None,
+            description="Join our summer internship program for AI research.",
+            ingested_at="now",
+        )
+        self.assertTrue(_is_internship(job))
+
+    def test_false_positive_non_intern_role_is_filtered(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="1",
+            url="https://example.com",
+            title="Business Transformation Lead",
+            company="Example",
+            location="USA",
+            is_internship=False,
+            posted_at=None,
+            description=(
+                "Lead initiatives across international pharmacy operations and "
+                "optimize workflows with AI/ML tooling."
+            ),
+            ingested_at="now",
+            skills=["AI/ML", "automation"],
+        )
+        self.assertFalse(_is_internship(job))
+
+    def test_eligibility_without_explicit_us_auth_requirement_is_ambiguous(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="1",
+            url="https://example.com",
+            title="Data Science Intern",
+            company="Example",
+            location="US",
+            is_internship=True,
+            posted_at=None,
+            description="We currently do not provide visa sponsorship.",
+            ingested_at="now",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "ambiguous")
+        self.assertEqual(confidence, 0.6)
+        self.assertEqual(negative, [])
+        self.assertEqual(positive, [])
+
     def test_relevance_scoring(self) -> None:
         job = JobRecord(
             source="x",
@@ -89,6 +142,23 @@ class PipelineUnitTests(unittest.TestCase):
         score, hits = _score_relevance(job)
         self.assertGreaterEqual(score, 5.0)
         self.assertIn("machine learning", hits)
+
+    def test_relevance_keyword_word_boundaries(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="1",
+            url="https://example.com",
+            title="Generalist",
+            company="Example",
+            location="US",
+            is_internship=False,
+            posted_at=None,
+            description="Build HTML interfaces and optimize systems.",
+            ingested_at="now",
+        )
+        score, hits = _score_relevance(job)
+        self.assertEqual(score, 0.0)
+        self.assertEqual(hits, [])
 
     def test_dedupe_stability(self) -> None:
         j1 = JobRecord(
@@ -129,9 +199,9 @@ class PipelineIntegrationTests(unittest.TestCase):
             use_arbeitnow=False,
             use_remotive=False,
             use_themuse=False,
-            min_relevance_score=2.0,
+            min_relevance_score=3.0,
             min_eligibility_confidence=0.4,
-            notify_on_ambiguous_eligibility=False,
+            notify_on_ambiguous_eligibility=True,
             telegram_bot_token=None,
             telegram_chat_id=None,
         )
@@ -151,7 +221,7 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "company": "Acme",
                 "location": "Remote - US",
                 "posted_at": "2026-05-21",
-                "description": "CPT OPT welcome. Build NLP models in Python.",
+                "description": "Build NLP models in Python for our summer internship program.",
                 "skills": ["python", "nlp"],
             }
         ]
@@ -166,6 +236,33 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(outcome2.persisted_count, 0)
         self.assertGreaterEqual(outcome2.duplicate_count, 1)
         self.assertEqual(notifier.sent, 1)
+
+    def test_db_false_positive_regression(self) -> None:
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "job-2",
+                "url": "https://example.com/job-2",
+                "title": "Business Transformation Lead",
+                "company": "Expion Health",
+                "location": "USA",
+                "posted_at": "2026-05-21",
+                "description": (
+                    "Expion Health is building the future of pharmacy economics. "
+                    "Work across international teams and optimize business operations "
+                    "with AI/ML automation."
+                ),
+                "skills": ["AI/ML", "automation", "healthcare"],
+            }
+        ]
+        notifier = FakeNotifier()
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, notifier)
+
+        self.assertEqual(outcome.passed_filter_count, 0)
+        self.assertEqual(outcome.persisted_count, 0)
+        self.assertEqual(outcome.notified_count, 0)
 
 
 if __name__ == "__main__":
