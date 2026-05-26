@@ -30,6 +30,42 @@ ML_DATA_KEYWORDS = {
     "a/b testing": 1.0,
 }
 
+HIGH_SIGNAL_ML_DATA_KEYWORDS = {
+    "machine learning",
+    "data science",
+    "data scientist",
+    "data engineering",
+    "data engineer",
+    "ml engineer",
+    "applied scientist",
+    "research scientist",
+    "computer vision",
+    "nlp",
+    "deep learning",
+    "pytorch",
+    "tensorflow",
+    "llm",
+    "sql",
+}
+
+DATA_ROLE_TITLE_PATTERNS = {
+    "machine_learning_title": r"\b(machine learning|ml)\b",
+    "data_science_title": r"\bdata (science|scientist)\b",
+    "data_engineer_title": r"\bdata engineer(ing)?\b",
+    "analytics_engineer_title": r"\banalytics engineer\b",
+    "applied_research_title": r"\b(applied|research) scientist\b",
+    "quant_title": r"\bquant(itative)?\b",
+}
+
+NON_DATA_ROLE_TITLE_PATTERNS = {
+    "developer_advocacy": r"\bdeveloper advocacy\b",
+    "go_to_market": r"\bgo[- ]to[- ]market\b",
+    "content_role": r"\b(content|video content|editorial)\b",
+    "sales_marketing": r"\b(sales|marketing|partnerships?)\b",
+    "customer_success": r"\bcustomer success\b",
+    "recruiting_ops": r"\b(recruit(er|ing)|talent|hr|human resources)\b",
+}
+
 US_LOCATION_HINTS = {
     "united states",
     "usa",

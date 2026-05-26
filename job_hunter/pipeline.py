@@ -11,10 +11,13 @@ from email.utils import parsedate_to_datetime
 
 from job_hunter.config import Settings
 from job_hunter.keywords import (
+    DATA_ROLE_TITLE_PATTERNS,
+    HIGH_SIGNAL_ML_DATA_KEYWORDS,
     INTERNSHIP_DESCRIPTION_PATTERNS,
     INTERNSHIP_TITLE_PATTERNS,
     ML_DATA_KEYWORDS,
     NEGATIVE_WORK_AUTH_PATTERNS,
+    NON_DATA_ROLE_TITLE_PATTERNS,
     POSITIVE_SPONSORSHIP_PATTERNS,
     US_LOCATION_HINTS,
 )
@@ -39,9 +42,21 @@ ML_KEYWORD_PATTERNS = {
     keyword: re.compile(WORD_BOUNDARY_PATTERN % re.escape(keyword))
     for keyword in ML_DATA_KEYWORDS
 }
+HIGH_SIGNAL_KEYWORD_PATTERNS = {
+    keyword: re.compile(WORD_BOUNDARY_PATTERN % re.escape(keyword))
+    for keyword in HIGH_SIGNAL_ML_DATA_KEYWORDS
+}
 INTERNSHIP_TITLE_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
     for name, pattern in INTERNSHIP_TITLE_PATTERNS.items()
+}
+DEFAULT_DATA_ROLE_TITLE_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in DATA_ROLE_TITLE_PATTERNS.items()
+}
+DEFAULT_NON_DATA_ROLE_TITLE_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in NON_DATA_ROLE_TITLE_PATTERNS.items()
 }
 INTERNSHIP_DESCRIPTION_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
@@ -110,6 +125,8 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
     title_blacklist_regexes = _compile_title_blacklist(settings.title_blacklist_patterns)
+    data_role_title_regexes = _compile_title_blacklist(settings.data_role_title_patterns)
+    non_data_role_title_regexes = _compile_title_blacklist(settings.non_data_title_patterns)
 
     for source in build_sources(settings):
         source_stats = outcome.source_stats.setdefault(source.name, SourceRunStats())
@@ -146,6 +163,14 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 continue
             if _is_blacklisted_title(job, title_blacklist_regexes):
                 source_stats.rejected_title_blacklist_count += 1
+                continue
+            if not _passes_data_role_gate(
+                job,
+                data_role_title_regexes=data_role_title_regexes,
+                non_data_role_title_regexes=non_data_role_title_regexes,
+                min_data_signal_count=settings.min_data_signal_count,
+            ):
+                source_stats.rejected_data_role_count += 1
                 continue
 
             eligibility_status, eligibility_confidence, work_auth_hits, sponsor_hits = _evaluate_eligibility(job)
@@ -277,6 +302,31 @@ def _is_blacklisted_title(job: JobRecord, patterns: list[re.Pattern[str]]) -> bo
     return False
 
 
+def _passes_data_role_gate(
+    job: JobRecord,
+    data_role_title_regexes: list[re.Pattern[str]],
+    non_data_role_title_regexes: list[re.Pattern[str]],
+    min_data_signal_count: int,
+) -> bool:
+    title = job.title or ""
+    desc_blob = (job.description or "").lower()
+
+    positive_title = any(pattern.search(title) for pattern in data_role_title_regexes)
+    negative_title = any(pattern.search(title) for pattern in non_data_role_title_regexes)
+    if negative_title and not positive_title:
+        return False
+    if positive_title:
+        return True
+
+    high_signal_hits = 0
+    for keyword, pattern in HIGH_SIGNAL_KEYWORD_PATTERNS.items():
+        if pattern.search(desc_blob):
+            high_signal_hits += 1
+            if high_signal_hits >= max(min_data_signal_count, 1):
+                return True
+    return False
+
+
 def _is_too_old(job: JobRecord, now: datetime, max_days: int) -> bool:
     age_days, age_unknown = _job_age_days(job.posted_at, now)
     job.age_days = age_days
@@ -372,7 +422,10 @@ def _score_relevance(job: JobRecord) -> tuple[float, list[str]]:
     hits: list[str] = []
     for keyword, weight in ML_DATA_KEYWORDS.items():
         if ML_KEYWORD_PATTERNS[keyword].search(blob):
-            score += weight
+            adjusted = weight
+            if keyword in {"analytics", "python"}:
+                adjusted = weight * 0.5
+            score += adjusted
             hits.append(keyword)
 
     if job.age_unknown:

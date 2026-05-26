@@ -77,6 +77,7 @@ class JobStore:
                 rejected_internship_count INTEGER NOT NULL,
                 rejected_us_scope_count INTEGER NOT NULL,
                 rejected_title_blacklist_count INTEGER NOT NULL DEFAULT 0,
+                rejected_data_role_count INTEGER NOT NULL DEFAULT 0,
                 rejected_eligibility_count INTEGER NOT NULL,
                 rejected_relevance_count INTEGER NOT NULL,
                 persisted_count INTEGER NOT NULL,
@@ -93,6 +94,7 @@ class JobStore:
         self._ensure_column("jobs", "age_unknown", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("jobs", "source_detail", "TEXT")
         self._ensure_column("source_run_logs", "rejected_title_blacklist_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "rejected_data_role_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "dead_token_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "feed_error_count", "INTEGER NOT NULL DEFAULT 0")
         self._conn.commit()
@@ -224,10 +226,11 @@ class JobStore:
                 INSERT INTO source_run_logs (
                     run_log_id, source_name, fetched_count, rejected_age_count,
                     rejected_internship_count, rejected_us_scope_count, rejected_title_blacklist_count,
+                    rejected_data_role_count,
                     rejected_eligibility_count, rejected_relevance_count,
                     persisted_count, notified_count, duplicate_count, error_count,
                     dead_token_count, feed_error_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_log_id,
@@ -237,6 +240,7 @@ class JobStore:
                     stats.rejected_internship_count,
                     stats.rejected_us_scope_count,
                     stats.rejected_title_blacklist_count,
+                    stats.rejected_data_role_count,
                     stats.rejected_eligibility_count,
                     stats.rejected_relevance_count,
                     stats.persisted_count,

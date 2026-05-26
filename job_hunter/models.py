@@ -10,6 +10,7 @@ class SourceRunStats:
     rejected_internship_count: int = 0
     rejected_us_scope_count: int = 0
     rejected_title_blacklist_count: int = 0
+    rejected_data_role_count: int = 0
     rejected_eligibility_count: int = 0
     rejected_relevance_count: int = 0
     persisted_count: int = 0

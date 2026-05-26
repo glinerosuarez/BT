@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tempfile
 import unittest
 from dataclasses import replace
@@ -12,6 +13,7 @@ from job_hunter.pipeline import (
     _dedupe_key,
     _evaluate_eligibility,
     _is_internship,
+    _passes_data_role_gate,
     _is_us_scope,
     _score_relevance,
     run_pipeline,
@@ -43,6 +45,18 @@ def make_settings(db_path: str) -> Settings:
         lever_companies=[],
         rss_feeds=[],
         title_blacklist_patterns=[r"\brecruiter\b"],
+        data_role_title_patterns=[
+            r"\b(machine learning|ml)\b",
+            r"\bdata (science|scientist)\b",
+            r"\bdata engineer(ing)?\b",
+            r"\banalytics engineer\b",
+        ],
+        non_data_title_patterns=[
+            r"\bdeveloper advocacy\b",
+            r"\bgo[- ]to[- ]market\b",
+            r"\b(content|video content)\b",
+        ],
+        min_data_signal_count=2,
         greenhouse_token_file=None,
         lever_token_file=None,
         rss_feed_file=None,
@@ -213,6 +227,28 @@ class PipelineUnitTests(unittest.TestCase):
         )
         score, _ = _score_relevance(job)
         self.assertGreaterEqual(score, 2.75)
+
+    def test_data_role_gate_rejects_non_data_title(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="1",
+            url="https://example.com",
+            title="Developer Advocacy Intern",
+            company="Example",
+            location="US",
+            is_internship=True,
+            posted_at=None,
+            description="Build developer communities with Python tutorials.",
+            ingested_at="now",
+        )
+        self.assertFalse(
+            _passes_data_role_gate(
+                job,
+                data_role_title_regexes=[re.compile(r"\bdata (science|scientist)\b", re.IGNORECASE)],
+                non_data_role_title_regexes=[re.compile(r"\bdeveloper advocacy\b", re.IGNORECASE)],
+                min_data_signal_count=2,
+            )
+        )
 
     def test_dedupe_stability(self) -> None:
         j1 = JobRecord(
@@ -403,6 +439,38 @@ class PipelineIntegrationTests(unittest.TestCase):
 
         self.assertEqual(outcome.persisted_count, 0)
         self.assertEqual(outcome.source_stats["fake"].rejected_title_blacklist_count, 1)
+
+    def test_data_role_gate_blocks_twilio_style_non_data_internships(self) -> None:
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "twilio-1",
+                "url": "https://example.com/twilio-1",
+                "title": "Developer Advocacy Intern",
+                "company": "Twilio",
+                "location": "Remote - US",
+                "posted_at": "2026-05-22T11:33:44-04:00",
+                "description": "Empower developers and create Python-focused content.",
+                "skills": ["python"],
+            },
+            {
+                "source": "fake",
+                "external_id": "twilio-2",
+                "url": "https://example.com/twilio-2",
+                "title": "Technical Video Content Intern, Developer Ecosystem",
+                "company": "Twilio",
+                "location": "Remote - US",
+                "posted_at": "2026-05-22T11:33:44-04:00",
+                "description": "Produce technical videos for developer ecosystem analytics dashboards.",
+                "skills": ["analytics"],
+            },
+        ]
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertEqual(outcome.persisted_count, 0)
+        self.assertEqual(outcome.source_stats["fake"].rejected_data_role_count, 2)
 
 
 if __name__ == "__main__":

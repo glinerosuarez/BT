@@ -24,6 +24,9 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.lever_companies)
         self.assertTrue(settings.rss_feeds)
         self.assertTrue(settings.title_blacklist_patterns)
+        self.assertTrue(settings.data_role_title_patterns)
+        self.assertTrue(settings.non_data_title_patterns)
+        self.assertEqual(settings.min_data_signal_count, 2)
         self.assertIsNotNone(settings.greenhouse_token_file)
 
 
