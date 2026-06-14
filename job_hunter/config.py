@@ -40,6 +40,14 @@ def _env_csv(name: str, default: list[str]) -> list[str]:
     return [item for item in items if item]
 
 
+def _derive_quarantine_file(path_value: str | None, fallback: str) -> str:
+    base = Path(path_value or fallback).expanduser()
+    suffix = base.suffix
+    if suffix:
+        return str(base.with_name(f"{base.stem}.quarantine{suffix}"))
+    return str(base.with_name(f"{base.name}.quarantine"))
+
+
 DEFAULT_GREENHOUSE_BOARDS = ["airbnb", "databricks", "discord", "stripe"]
 DEFAULT_LEVER_COMPANIES = ["atlassian", "lever", "plaid"]
 DEFAULT_RSS_FEEDS = [
@@ -143,6 +151,11 @@ class Settings:
     greenhouse_token_file: str | None
     lever_token_file: str | None
     rss_feed_file: str | None
+    greenhouse_quarantine_file: str | None
+    lever_quarantine_file: str | None
+    rss_quarantine_file: str | None
+    source_failure_quarantine_threshold: int
+    source_restore_success_threshold: int
 
     usajobs_user_agent: str | None
     usajobs_auth_key: str | None
@@ -161,6 +174,18 @@ def load_settings() -> Settings:
     greenhouse_token_file = os.getenv("JOB_HUNTER_GREENHOUSE_TOKEN_FILE", DEFAULT_GREENHOUSE_TOKEN_FILE)
     lever_token_file = os.getenv("JOB_HUNTER_LEVER_TOKEN_FILE", DEFAULT_LEVER_TOKEN_FILE)
     rss_feed_file = os.getenv("JOB_HUNTER_RSS_FEED_FILE", DEFAULT_RSS_FEED_FILE)
+    greenhouse_quarantine_file = os.getenv(
+        "JOB_HUNTER_GREENHOUSE_QUARANTINE_FILE",
+        _derive_quarantine_file(greenhouse_token_file, DEFAULT_GREENHOUSE_TOKEN_FILE),
+    )
+    lever_quarantine_file = os.getenv(
+        "JOB_HUNTER_LEVER_QUARANTINE_FILE",
+        _derive_quarantine_file(lever_token_file, DEFAULT_LEVER_TOKEN_FILE),
+    )
+    rss_quarantine_file = os.getenv(
+        "JOB_HUNTER_RSS_QUARANTINE_FILE",
+        _derive_quarantine_file(rss_feed_file, DEFAULT_RSS_FEED_FILE),
+    )
 
     greenhouse_boards = _merge_unique(
         _read_list_file(greenhouse_token_file),
@@ -204,6 +229,11 @@ def load_settings() -> Settings:
         greenhouse_token_file=greenhouse_token_file,
         lever_token_file=lever_token_file,
         rss_feed_file=rss_feed_file,
+        greenhouse_quarantine_file=greenhouse_quarantine_file,
+        lever_quarantine_file=lever_quarantine_file,
+        rss_quarantine_file=rss_quarantine_file,
+        source_failure_quarantine_threshold=_env_int("JOB_HUNTER_SOURCE_FAILURE_QUARANTINE_THRESHOLD", 2),
+        source_restore_success_threshold=_env_int("JOB_HUNTER_SOURCE_RESTORE_SUCCESS_THRESHOLD", 2),
         usajobs_user_agent=os.getenv("JOB_HUNTER_USAJOBS_USER_AGENT"),
         usajobs_auth_key=os.getenv("JOB_HUNTER_USAJOBS_AUTH_KEY"),
         usajobs_results_per_page=_env_int("JOB_HUNTER_USAJOBS_RESULTS_PER_PAGE", 250),

@@ -1,0 +1,10 @@
+https://remotive.com/remote-jobs.rss
+https://www.workingnomads.com/jobsapi/job_feed?format=rss
+https://remote.co/remote-jobs/developer/feed/
+https://remote.co/remote-jobs/data-science/feed/
+https://remote.co/remote-jobs/all-remote-jobs/feed/
+https://www.authenticjobs.com/rss/index.xml
+https://www.careerjet.com/rss?location=United+States
+https://jobicy.com/jobs-rss-feed
+https://www.techfetch.com/rss.xml
+https://www.higheredjobs.com/rss/articleFeed.cfm

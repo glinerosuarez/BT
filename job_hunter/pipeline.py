@@ -77,20 +77,44 @@ NEGATED_SPONSORSHIP_REGEXES = {
 }
 
 
-def build_sources(settings: Settings) -> list[SourceConnector]:
+def build_sources(settings: Settings, store: JobStore | None = None) -> list[SourceConnector]:
     sources: list[SourceConnector] = []
+    greenhouse_boards = settings.greenhouse_boards
+    lever_companies = settings.lever_companies
+    rss_feeds = settings.rss_feeds
+
+    if store is not None:
+        greenhouse_boards = _filter_suppressed_items(
+            store=store,
+            source_name="greenhouse",
+            items=greenhouse_boards,
+            min_failures=settings.source_failure_quarantine_threshold,
+        )
+        lever_companies = _filter_suppressed_items(
+            store=store,
+            source_name="lever",
+            items=lever_companies,
+            min_failures=settings.source_failure_quarantine_threshold,
+        )
+        rss_feeds = _filter_suppressed_items(
+            store=store,
+            source_name="rss",
+            items=rss_feeds,
+            min_failures=settings.source_failure_quarantine_threshold,
+        )
+
     if settings.use_arbeitnow:
         sources.append(ArbeitnowSource())
     if settings.use_remotive:
         sources.append(RemotiveSource())
     if settings.use_themuse:
         sources.append(TheMuseSource(pages=settings.themuse_pages))
-    if settings.use_greenhouse and settings.greenhouse_boards:
-        sources.append(GreenhouseSource(board_tokens=settings.greenhouse_boards))
-    if settings.use_lever and settings.lever_companies:
-        sources.append(LeverSource(companies=settings.lever_companies))
-    if settings.use_rss and settings.rss_feeds:
-        sources.append(RssSource(feeds=settings.rss_feeds))
+    if settings.use_greenhouse and greenhouse_boards:
+        sources.append(GreenhouseSource(board_tokens=greenhouse_boards))
+    if settings.use_lever and lever_companies:
+        sources.append(LeverSource(companies=lever_companies))
+    if settings.use_rss and rss_feeds:
+        sources.append(RssSource(feeds=rss_feeds))
 
     if settings.use_usajobs:
         if settings.usajobs_user_agent and settings.usajobs_auth_key:
@@ -128,7 +152,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
     data_role_title_regexes = _compile_title_blacklist(settings.data_role_title_patterns)
     non_data_role_title_regexes = _compile_title_blacklist(settings.non_data_title_patterns)
 
-    for source in build_sources(settings):
+    for source in build_sources(settings, store=store):
         source_stats = outcome.source_stats.setdefault(source.name, SourceRunStats())
         try:
             raw_jobs = source.fetch(settings.request_timeout_seconds)
@@ -141,6 +165,11 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
         fetch_meta = source.get_fetch_meta() if hasattr(source, "get_fetch_meta") else {}
         source_stats.dead_token_count += int(fetch_meta.get("dead_token_count", 0))
         source_stats.feed_error_count += int(fetch_meta.get("feed_error_count", 0))
+        raw_item_results = fetch_meta.get("item_results", [])
+        if isinstance(raw_item_results, list):
+            item_results = [item for item in raw_item_results if isinstance(item, dict)]
+            if item_results:
+                store.record_source_item_results(source.name, item_results)
 
         outcome.source_count += len(raw_jobs)
         source_stats.fetched_count += len(raw_jobs)
@@ -228,6 +257,18 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
     store.log_run(outcome)
     LOG.info("pipeline_completed %s", json.dumps(asdict(outcome), sort_keys=True))
     return outcome
+
+
+def _filter_suppressed_items(store: JobStore, source_name: str, items: list[str], min_failures: int) -> list[str]:
+    suppressed = {value.strip().lower() for value in store.get_suppressed_items(source_name, min_failures)}
+    if not suppressed:
+        return items
+    kept: list[str] = []
+    for item in items:
+        if item.strip().lower() in suppressed:
+            continue
+        kept.append(item)
+    return kept
 
 
 def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:

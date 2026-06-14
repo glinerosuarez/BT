@@ -28,6 +28,11 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.non_data_title_patterns)
         self.assertEqual(settings.min_data_signal_count, 2)
         self.assertIsNotNone(settings.greenhouse_token_file)
+        self.assertIsNotNone(settings.greenhouse_quarantine_file)
+        self.assertIsNotNone(settings.lever_quarantine_file)
+        self.assertIsNotNone(settings.rss_quarantine_file)
+        self.assertEqual(settings.source_failure_quarantine_threshold, 2)
+        self.assertEqual(settings.source_restore_success_threshold, 2)
 
 
 if __name__ == "__main__":

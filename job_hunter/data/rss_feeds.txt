@@ -1,17 +1,6 @@
-# Internship / early-career job feeds
 https://remoteok.com/remote-internship-jobs.rss
 https://weworkremotely.com/categories/remote-programming-jobs.rss
 https://weworkremotely.com/remote-jobs.rss
-https://remotive.com/remote-jobs.rss
 https://stackoverflow.blog/jobs/feed/
-https://jobicy.com/jobs-rss-feed
-https://www.workingnomads.com/jobsapi/job_feed?format=rss
-https://remote.co/remote-jobs/developer/feed/
-https://remote.co/remote-jobs/data-science/feed/
-https://remote.co/remote-jobs/all-remote-jobs/feed/
-https://www.authenticjobs.com/rss/index.xml
 https://www.python.org/jobs/feed/rss/
 https://www.smashingmagazine.com/jobs/feed/
-https://www.techfetch.com/rss.xml
-https://www.careerjet.com/rss?location=United+States
-https://www.higheredjobs.com/rss/articleFeed.cfm

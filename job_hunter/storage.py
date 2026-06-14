@@ -88,6 +88,19 @@ class JobStore:
                 feed_error_count INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(run_log_id) REFERENCES run_logs(id)
             );
+
+            CREATE TABLE IF NOT EXISTS source_item_health (
+                source_name TEXT NOT NULL,
+                item_value TEXT NOT NULL,
+                status TEXT NOT NULL,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                consecutive_successes INTEGER NOT NULL DEFAULT 0,
+                total_failures INTEGER NOT NULL DEFAULT 0,
+                total_successes INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                last_checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (source_name, item_value)
+            );
             """
         )
         self._ensure_column("jobs", "age_days", "REAL")
@@ -97,6 +110,11 @@ class JobStore:
         self._ensure_column("source_run_logs", "rejected_data_role_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "dead_token_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "feed_error_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_item_health", "consecutive_successes", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_item_health", "total_failures", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_item_health", "total_successes", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_item_health", "last_error", "TEXT")
+        self._ensure_column("source_item_health", "last_checked_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
         self._conn.commit()
 
     def _ensure_column(self, table_name: str, column_name: str, column_def: str) -> None:
@@ -252,6 +270,114 @@ class JobStore:
                 ),
             )
         self._conn.commit()
+
+    def record_source_item_results(self, source_name: str, item_results: list[dict[str, str]]) -> None:
+        for result in item_results:
+            item_value = str(result.get("item", "")).strip()
+            status = str(result.get("status", "")).strip().lower()
+            error = str(result.get("error", "")).strip()
+            if not item_value or status not in {"success", "failure"}:
+                continue
+
+            row = self._conn.execute(
+                """
+                SELECT consecutive_failures, consecutive_successes, total_failures, total_successes
+                FROM source_item_health
+                WHERE source_name = ? AND item_value = ?
+                """,
+                (source_name, item_value),
+            ).fetchone()
+
+            if status == "success":
+                if row is None:
+                    self._conn.execute(
+                        """
+                        INSERT INTO source_item_health (
+                            source_name, item_value, status, consecutive_failures,
+                            consecutive_successes, total_failures, total_successes,
+                            last_error, last_checked_at
+                        ) VALUES (?, ?, 'success', 0, 1, 0, 1, NULL, CURRENT_TIMESTAMP)
+                        """,
+                        (source_name, item_value),
+                    )
+                else:
+                    self._conn.execute(
+                        """
+                        UPDATE source_item_health
+                        SET status = 'success',
+                            consecutive_failures = 0,
+                            consecutive_successes = ?,
+                            total_successes = ?,
+                            last_error = NULL,
+                            last_checked_at = CURRENT_TIMESTAMP
+                        WHERE source_name = ? AND item_value = ?
+                        """,
+                        (
+                            int(row["consecutive_successes"]) + 1,
+                            int(row["total_successes"]) + 1,
+                            source_name,
+                            item_value,
+                        ),
+                    )
+                continue
+
+            if row is None:
+                self._conn.execute(
+                    """
+                    INSERT INTO source_item_health (
+                        source_name, item_value, status, consecutive_failures,
+                        consecutive_successes, total_failures, total_successes,
+                        last_error, last_checked_at
+                    ) VALUES (?, ?, 'failure', 1, 0, 1, 0, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (source_name, item_value, error or None),
+                )
+            else:
+                self._conn.execute(
+                    """
+                    UPDATE source_item_health
+                    SET status = 'failure',
+                        consecutive_failures = ?,
+                        consecutive_successes = 0,
+                        total_failures = ?,
+                        last_error = ?,
+                        last_checked_at = CURRENT_TIMESTAMP
+                    WHERE source_name = ? AND item_value = ?
+                    """,
+                    (
+                        int(row["consecutive_failures"]) + 1,
+                        int(row["total_failures"]) + 1,
+                        error or None,
+                        source_name,
+                        item_value,
+                    ),
+                )
+        self._conn.commit()
+
+    def get_suppressed_items(self, source_name: str, min_failures: int) -> set[str]:
+        if min_failures <= 0:
+            return set()
+        rows = self._conn.execute(
+            """
+            SELECT item_value
+            FROM source_item_health
+            WHERE source_name = ? AND status = 'failure' AND consecutive_failures >= ?
+            """,
+            (source_name, min_failures),
+        ).fetchall()
+        return {str(row["item_value"]) for row in rows}
+
+    def get_source_item_health(self, source_name: str) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            """
+            SELECT source_name, item_value, status, consecutive_failures, consecutive_successes,
+                   total_failures, total_successes, last_error, last_checked_at
+            FROM source_item_health
+            WHERE source_name = ?
+            ORDER BY item_value
+            """,
+            (source_name,),
+        ).fetchall()
 
 
 def ensure_parent_dir(db_path: str) -> None:

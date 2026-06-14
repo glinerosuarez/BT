@@ -17,6 +17,7 @@ class GreenhouseSource(SourceConnector):
         dead_token_count = 0
         max_error_logs = 10
         logged_errors = 0
+        item_results: list[dict[str, str]] = []
         results: list[dict] = []
         for board in self.board_tokens:
             try:
@@ -30,8 +31,10 @@ class GreenhouseSource(SourceConnector):
                 if logged_errors < max_error_logs:
                     LOG.warning("greenhouse_board_fetch_failed board=%s error=%s", board, exc)
                     logged_errors += 1
+                item_results.append({"item": board, "status": "failure", "error": str(exc)})
                 continue
 
+            item_results.append({"item": board, "status": "success", "error": ""})
             jobs = data.get("jobs", []) if isinstance(data, dict) else []
             for item in jobs:
                 if not isinstance(item, dict):
@@ -51,7 +54,7 @@ class GreenhouseSource(SourceConnector):
                         "skills": [],
                     }
                 )
-        self._fetch_meta = {"dead_token_count": dead_token_count}
+        self._fetch_meta = {"dead_token_count": dead_token_count, "item_results": item_results}
         suppressed = dead_token_count - logged_errors
         if suppressed > 0:
             LOG.warning("greenhouse_board_fetch_failures_suppressed count=%s", suppressed)

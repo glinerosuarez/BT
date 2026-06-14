@@ -21,6 +21,7 @@ class RssSource(SourceConnector):
         feed_error_count = 0
         max_error_logs = 10
         logged_errors = 0
+        item_results: list[dict[str, str]] = []
         results: list[dict] = []
         for feed_url in self.feeds:
             try:
@@ -32,6 +33,7 @@ class RssSource(SourceConnector):
                 if logged_errors < max_error_logs:
                     LOG.warning("rss_feed_fetch_failed feed=%s error=%s", feed_url, exc)
                     logged_errors += 1
+                item_results.append({"item": feed_url, "status": "failure", "error": str(exc)})
                 continue
 
             try:
@@ -41,8 +43,10 @@ class RssSource(SourceConnector):
                 if logged_errors < max_error_logs:
                     LOG.warning("rss_feed_parse_failed feed=%s error=%s", feed_url, exc)
                     logged_errors += 1
+                item_results.append({"item": feed_url, "status": "failure", "error": str(exc)})
                 continue
 
+            item_results.append({"item": feed_url, "status": "success", "error": ""})
             items = _find_items(root)
             for item in items:
                 title = _text(item, "title")
@@ -67,7 +71,7 @@ class RssSource(SourceConnector):
                         "skills": [],
                     }
                 )
-        self._fetch_meta = {"feed_error_count": feed_error_count}
+        self._fetch_meta = {"feed_error_count": feed_error_count, "item_results": item_results}
         suppressed = feed_error_count - logged_errors
         if suppressed > 0:
             LOG.warning("rss_feed_failures_suppressed count=%s", suppressed)

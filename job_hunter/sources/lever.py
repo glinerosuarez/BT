@@ -18,6 +18,7 @@ class LeverSource(SourceConnector):
         dead_token_count = 0
         max_error_logs = 10
         logged_errors = 0
+        item_results: list[dict[str, str]] = []
         results: list[dict] = []
         for company in self.companies:
             try:
@@ -31,8 +32,10 @@ class LeverSource(SourceConnector):
                 if logged_errors < max_error_logs:
                     LOG.warning("lever_company_fetch_failed company=%s error=%s", company, exc)
                     logged_errors += 1
+                item_results.append({"item": company, "status": "failure", "error": str(exc)})
                 continue
 
+            item_results.append({"item": company, "status": "success", "error": ""})
             if not isinstance(jobs, list):
                 continue
 
@@ -61,7 +64,7 @@ class LeverSource(SourceConnector):
                         "skills": [],
                     }
                 )
-        self._fetch_meta = {"dead_token_count": dead_token_count}
+        self._fetch_meta = {"dead_token_count": dead_token_count, "item_results": item_results}
         suppressed = dead_token_count - logged_errors
         if suppressed > 0:
             LOG.warning("lever_company_fetch_failures_suppressed count=%s", suppressed)

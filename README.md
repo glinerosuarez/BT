@@ -37,6 +37,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 
 - `python -m job_hunter.run_once`
 - `python -m job_hunter.run_loop --interval-minutes N`
+- `python -m job_hunter.maintain_sources --probe-active`
 
 ## SQLite tables
 
@@ -44,6 +45,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `seen_events`: dedupe and notification tracking.
 - `run_logs`: per-run metrics.
 - `source_run_logs`: per-source funnel diagnostics (fetched, dead tokens/feed errors, rejected by rule, persisted, notified).
+- `source_item_health`: per-token/feed health state used for quarantine/restore automation.
 
 ## Core environment variables
 
@@ -60,6 +62,11 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `JOB_HUNTER_GREENHOUSE_TOKEN_FILE`
 - `JOB_HUNTER_LEVER_TOKEN_FILE`
 - `JOB_HUNTER_RSS_FEED_FILE`
+- `JOB_HUNTER_GREENHOUSE_QUARANTINE_FILE`
+- `JOB_HUNTER_LEVER_QUARANTINE_FILE`
+- `JOB_HUNTER_RSS_QUARANTINE_FILE`
+- `JOB_HUNTER_SOURCE_FAILURE_QUARANTINE_THRESHOLD`
+- `JOB_HUNTER_SOURCE_RESTORE_SUCCESS_THRESHOLD`
 - `JOB_HUNTER_MIN_RELEVANCE_SCORE`
 - `JOB_HUNTER_MIN_ELIGIBILITY_CONFIDENCE`
 - `JOB_HUNTER_NOTIFY_AMBIGUOUS`

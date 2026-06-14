@@ -4,6 +4,7 @@ import re
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -60,6 +61,11 @@ def make_settings(db_path: str) -> Settings:
         greenhouse_token_file=None,
         lever_token_file=None,
         rss_feed_file=None,
+        greenhouse_quarantine_file=None,
+        lever_quarantine_file=None,
+        rss_quarantine_file=None,
+        source_failure_quarantine_threshold=3,
+        source_restore_success_threshold=2,
         usajobs_user_agent=None,
         usajobs_auth_key=None,
         usajobs_results_per_page=250,
@@ -68,6 +74,10 @@ def make_settings(db_path: str) -> Settings:
         adzuna_country="us",
         adzuna_pages=2,
     )
+
+
+def recent_posted_at(days_ago: int = 1) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
 
 
 class FakeSource:
@@ -298,7 +308,7 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "title": "Machine Learning Intern",
                 "company": "Acme",
                 "location": "Remote - US",
-                "posted_at": "2026-05-21",
+                "posted_at": recent_posted_at(),
                 "description": "Build NLP models in Python for our summer internship program.",
                 "skills": ["python", "nlp"],
             }
@@ -324,7 +334,7 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "title": "Business Transformation Lead",
                 "company": "Expion Health",
                 "location": "USA",
-                "posted_at": "2026-05-21",
+                "posted_at": recent_posted_at(),
                 "description": (
                     "Expion Health is building the future of pharmacy economics. "
                     "Work across international teams and optimize business operations "
@@ -371,7 +381,7 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "title": "Data Science Intern",
                 "company": "Acme",
                 "location": "Remote - US",
-                "posted_at": "2026-05-21",
+                "posted_at": recent_posted_at(),
                 "description": "Summer internship program for ML and Python",
                 "skills": ["python"],
             }
@@ -403,7 +413,7 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "title": "Machine Learning Intern",
                 "company": "Acme",
                 "location": "Remote - US",
-                "posted_at": "2026-05-21",
+                "posted_at": recent_posted_at(),
                 "description": "Summer internship program for ML and Python",
                 "skills": ["python"],
             }
@@ -428,7 +438,7 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "title": "University Recruiter (Contract)",
                 "company": "Acme",
                 "location": "Remote - US",
-                "posted_at": "2026-05-21",
+                "posted_at": recent_posted_at(),
                 "description": "Join internship program operations for campus hiring",
                 "skills": ["coordination"],
             }
@@ -449,7 +459,7 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "title": "Developer Advocacy Intern",
                 "company": "Twilio",
                 "location": "Remote - US",
-                "posted_at": "2026-05-22T11:33:44-04:00",
+                "posted_at": recent_posted_at(),
                 "description": "Empower developers and create Python-focused content.",
                 "skills": ["python"],
             },
@@ -460,7 +470,7 @@ class PipelineIntegrationTests(unittest.TestCase):
                 "title": "Technical Video Content Intern, Developer Ecosystem",
                 "company": "Twilio",
                 "location": "Remote - US",
-                "posted_at": "2026-05-22T11:33:44-04:00",
+                "posted_at": recent_posted_at(),
                 "description": "Produce technical videos for developer ecosystem analytics dashboards.",
                 "skills": ["analytics"],
             },
