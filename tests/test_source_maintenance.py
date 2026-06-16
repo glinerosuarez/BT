@@ -38,6 +38,12 @@ def make_settings(db_path: str, data_dir: Path) -> Settings:
         title_blacklist_patterns=[r"\\brecruiter\\b"],
         data_role_title_patterns=[r"\\bdata (science|scientist)\\b"],
         non_data_title_patterns=[r"\\bdeveloper advocacy\\b"],
+        policy_reject_patterns=[
+            r"\\bph\\.?d\\.?\\b",
+            r"\\bdoctoral\\b",
+            r"\\beconomics team\\b",
+            r"\\boperations research\\b",
+        ],
         min_data_signal_count=2,
         greenhouse_token_file=str(data_dir / "greenhouse_tokens.txt"),
         lever_token_file=str(data_dir / "lever_tokens.txt"),

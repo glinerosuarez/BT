@@ -44,6 +44,9 @@ class JobStore:
                 age_days REAL,
                 age_unknown INTEGER NOT NULL DEFAULT 1,
                 source_detail TEXT,
+                manual_fit_label TEXT,
+                manual_fit_reason_codes TEXT,
+                manual_labeled_at TEXT,
                 notified INTEGER NOT NULL DEFAULT 0,
                 notified_at TEXT
             );
@@ -78,6 +81,7 @@ class JobStore:
                 rejected_us_scope_count INTEGER NOT NULL,
                 rejected_title_blacklist_count INTEGER NOT NULL DEFAULT 0,
                 rejected_data_role_count INTEGER NOT NULL DEFAULT 0,
+                rejected_policy_gate_count INTEGER NOT NULL DEFAULT 0,
                 rejected_eligibility_count INTEGER NOT NULL,
                 rejected_relevance_count INTEGER NOT NULL,
                 persisted_count INTEGER NOT NULL,
@@ -106,8 +110,12 @@ class JobStore:
         self._ensure_column("jobs", "age_days", "REAL")
         self._ensure_column("jobs", "age_unknown", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("jobs", "source_detail", "TEXT")
+        self._ensure_column("jobs", "manual_fit_label", "TEXT")
+        self._ensure_column("jobs", "manual_fit_reason_codes", "TEXT")
+        self._ensure_column("jobs", "manual_labeled_at", "TEXT")
         self._ensure_column("source_run_logs", "rejected_title_blacklist_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "rejected_data_role_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "rejected_policy_gate_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "dead_token_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "feed_error_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_item_health", "consecutive_successes", "INTEGER NOT NULL DEFAULT 0")
@@ -122,7 +130,11 @@ class JobStore:
         existing = {str(row["name"]) for row in rows}
         if column_name in existing:
             return
-        self._conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+        try:
+            self._conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
 
     def is_seen(self, dedupe_key: str) -> bool:
         row = self._conn.execute(
@@ -244,11 +256,11 @@ class JobStore:
                 INSERT INTO source_run_logs (
                     run_log_id, source_name, fetched_count, rejected_age_count,
                     rejected_internship_count, rejected_us_scope_count, rejected_title_blacklist_count,
-                    rejected_data_role_count,
+                    rejected_data_role_count, rejected_policy_gate_count,
                     rejected_eligibility_count, rejected_relevance_count,
                     persisted_count, notified_count, duplicate_count, error_count,
                     dead_token_count, feed_error_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_log_id,
@@ -259,6 +271,7 @@ class JobStore:
                     stats.rejected_us_scope_count,
                     stats.rejected_title_blacklist_count,
                     stats.rejected_data_role_count,
+                    stats.rejected_policy_gate_count,
                     stats.rejected_eligibility_count,
                     stats.rejected_relevance_count,
                     stats.persisted_count,
@@ -378,6 +391,128 @@ class JobStore:
             """,
             (source_name,),
         ).fetchall()
+
+    def list_jobs_for_labeling(self, limit: int = 20, unlabeled_only: bool = True) -> list[sqlite3.Row]:
+        safe_limit = max(limit, 1)
+        if unlabeled_only:
+            query = """
+                SELECT id, source, company, title, location, posted_at, url,
+                       relevance_score, manual_fit_label, manual_fit_reason_codes, manual_labeled_at
+                FROM jobs
+                WHERE manual_fit_label IS NULL OR TRIM(manual_fit_label) = ''
+                ORDER BY ingested_at DESC, id DESC
+                LIMIT ?
+            """
+            return self._conn.execute(query, (safe_limit,)).fetchall()
+
+        query = """
+            SELECT id, source, company, title, location, posted_at, url,
+                   relevance_score, manual_fit_label, manual_fit_reason_codes, manual_labeled_at
+            FROM jobs
+            ORDER BY ingested_at DESC, id DESC
+            LIMIT ?
+        """
+        return self._conn.execute(query, (safe_limit,)).fetchall()
+
+    def list_jobs_for_export(
+        self,
+        limit: int = 50,
+        unlabeled_only: bool = True,
+        source: str | None = None,
+    ) -> list[sqlite3.Row]:
+        safe_limit = max(limit, 1)
+        clauses: list[str] = []
+        params: list[object] = []
+        if unlabeled_only:
+            clauses.append("(manual_fit_label IS NULL OR TRIM(manual_fit_label) = '')")
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+
+        where_sql = ""
+        if clauses:
+            where_sql = "WHERE " + " AND ".join(clauses)
+
+        query = f"""
+            SELECT id, source, company, title, location, posted_at, url, description,
+                   relevance_score, eligibility_status, eligibility_confidence,
+                   manual_fit_label, manual_fit_reason_codes, manual_labeled_at
+            FROM jobs
+            {where_sql}
+            ORDER BY ingested_at DESC, id DESC
+            LIMIT ?
+        """
+        params.append(safe_limit)
+        return self._conn.execute(query, tuple(params)).fetchall()
+
+    def get_job_for_labeling(self, job_id: int) -> sqlite3.Row | None:
+        return self._conn.execute(
+            """
+            SELECT id, source, company, title, location, posted_at, url, description,
+                   relevance_score, manual_fit_label, manual_fit_reason_codes, manual_labeled_at
+            FROM jobs
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (job_id,),
+        ).fetchone()
+
+    def set_manual_fit_label(self, job_id: int, label: str, reason_codes: list[str]) -> bool:
+        cursor = self._conn.execute(
+            """
+            UPDATE jobs
+            SET manual_fit_label = ?, manual_fit_reason_codes = ?, manual_labeled_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (label, json.dumps(reason_codes), job_id),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def get_labeling_stats(self) -> dict[str, object]:
+        totals = self._conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total_jobs,
+                SUM(CASE WHEN manual_fit_label IS NOT NULL AND TRIM(manual_fit_label) <> '' THEN 1 ELSE 0 END) AS labeled_jobs,
+                SUM(CASE WHEN manual_fit_label IS NULL OR TRIM(manual_fit_label) = '' THEN 1 ELSE 0 END) AS unlabeled_jobs
+            FROM jobs
+            """
+        ).fetchone()
+        by_label_rows = self._conn.execute(
+            """
+            SELECT COALESCE(NULLIF(TRIM(manual_fit_label), ''), 'unlabeled') AS fit_label, COUNT(*) AS count
+            FROM jobs
+            GROUP BY COALESCE(NULLIF(TRIM(manual_fit_label), ''), 'unlabeled')
+            ORDER BY count DESC, fit_label
+            """
+        ).fetchall()
+        by_source_rows = self._conn.execute(
+            """
+            SELECT source,
+                   COUNT(*) AS total_jobs,
+                   SUM(CASE WHEN manual_fit_label IS NOT NULL AND TRIM(manual_fit_label) <> '' THEN 1 ELSE 0 END) AS labeled_jobs,
+                   SUM(CASE WHEN manual_fit_label IS NULL OR TRIM(manual_fit_label) = '' THEN 1 ELSE 0 END) AS unlabeled_jobs
+            FROM jobs
+            GROUP BY source
+            ORDER BY total_jobs DESC, source
+            """
+        ).fetchall()
+        return {
+            "total_jobs": int(totals["total_jobs"] or 0),
+            "labeled_jobs": int(totals["labeled_jobs"] or 0),
+            "unlabeled_jobs": int(totals["unlabeled_jobs"] or 0),
+            "by_fit_label": {str(row["fit_label"]): int(row["count"] or 0) for row in by_label_rows},
+            "by_source": [
+                {
+                    "source": str(row["source"]),
+                    "total_jobs": int(row["total_jobs"] or 0),
+                    "labeled_jobs": int(row["labeled_jobs"] or 0),
+                    "unlabeled_jobs": int(row["unlabeled_jobs"] or 0),
+                }
+                for row in by_source_rows
+            ],
+        }
 
 
 def ensure_parent_dir(db_path: str) -> None:

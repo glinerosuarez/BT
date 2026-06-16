@@ -79,6 +79,12 @@ DEFAULT_NON_DATA_TITLE_PATTERNS = [
     r"\b(sales|marketing|partnerships?)\b",
     r"\bcustomer success\b",
 ]
+DEFAULT_POLICY_REJECT_PATTERNS = [
+    r"\bph\.?d\.?\b",
+    r"\bdoctoral\b",
+    r"\beconomics team\b",
+    r"\boperations research\b",
+]
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
 DEFAULT_GREENHOUSE_TOKEN_FILE = str(DEFAULT_DATA_DIR / "greenhouse_tokens.txt")
 DEFAULT_LEVER_TOKEN_FILE = str(DEFAULT_DATA_DIR / "lever_tokens.txt")
@@ -147,6 +153,7 @@ class Settings:
     title_blacklist_patterns: list[str]
     data_role_title_patterns: list[str]
     non_data_title_patterns: list[str]
+    policy_reject_patterns: list[str]
     min_data_signal_count: int
     greenhouse_token_file: str | None
     lever_token_file: str | None
@@ -225,6 +232,7 @@ def load_settings() -> Settings:
         title_blacklist_patterns=_env_csv("JOB_HUNTER_TITLE_BLACKLIST_PATTERNS", DEFAULT_TITLE_BLACKLIST_PATTERNS),
         data_role_title_patterns=_env_csv("JOB_HUNTER_DATA_ROLE_TITLE_PATTERNS", DEFAULT_DATA_ROLE_TITLE_PATTERNS),
         non_data_title_patterns=_env_csv("JOB_HUNTER_NON_DATA_TITLE_PATTERNS", DEFAULT_NON_DATA_TITLE_PATTERNS),
+        policy_reject_patterns=_env_csv("JOB_HUNTER_POLICY_REJECT_PATTERNS", DEFAULT_POLICY_REJECT_PATTERNS),
         min_data_signal_count=_env_int("JOB_HUNTER_MIN_DATA_SIGNAL_COUNT", 2),
         greenhouse_token_file=greenhouse_token_file,
         lever_token_file=lever_token_file,

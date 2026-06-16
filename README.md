@@ -38,10 +38,21 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `python -m job_hunter.run_once`
 - `python -m job_hunter.run_loop --interval-minutes N`
 - `python -m job_hunter.maintain_sources --probe-active`
+- `python -m job_hunter.label_jobs stats`
+- `python -m job_hunter.label_jobs list --limit 20`
+- `python -m job_hunter.label_jobs show --job-id N`
+- `python -m job_hunter.label_jobs export --output /tmp/label-batch.json --limit 50`
+- `python -m job_hunter.label_jobs export --output /tmp/label-batch.md --limit 50 --format markdown`
+- `python -m job_hunter.label_jobs label --job-id N --fit-label bad_fit --reason-codes bad_fit_phd_only`
+
+## Design notes
+
+- [Two-stage reranking plan](</Users/gabriel.linero/repos/job-hunter/TWO_STAGE_RERANKING_PLAN.md>)
 
 ## SQLite tables
 
 - `jobs`: normalized postings with score/eligibility fields and notification state.
+  - also stores manual fit labels for evaluation work
 - `seen_events`: dedupe and notification tracking.
 - `run_logs`: per-run metrics.
 - `source_run_logs`: per-source funnel diagnostics (fetched, dead tokens/feed errors, rejected by rule, persisted, notified).
@@ -74,6 +85,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `JOB_HUNTER_TITLE_BLACKLIST_PATTERNS`
 - `JOB_HUNTER_DATA_ROLE_TITLE_PATTERNS`
 - `JOB_HUNTER_NON_DATA_TITLE_PATTERNS`
+- `JOB_HUNTER_POLICY_REJECT_PATTERNS`
 - `JOB_HUNTER_MIN_DATA_SIGNAL_COUNT`
 - `JOB_HUNTER_GREENHOUSE_BOARDS`
 - `JOB_HUNTER_LEVER_COMPANIES`

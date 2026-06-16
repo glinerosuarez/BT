@@ -151,6 +151,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
     title_blacklist_regexes = _compile_title_blacklist(settings.title_blacklist_patterns)
     data_role_title_regexes = _compile_title_blacklist(settings.data_role_title_patterns)
     non_data_role_title_regexes = _compile_title_blacklist(settings.non_data_title_patterns)
+    policy_reject_regexes = _compile_title_blacklist(settings.policy_reject_patterns)
 
     for source in build_sources(settings, store=store):
         source_stats = outcome.source_stats.setdefault(source.name, SourceRunStats())
@@ -200,6 +201,9 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 min_data_signal_count=settings.min_data_signal_count,
             ):
                 source_stats.rejected_data_role_count += 1
+                continue
+            if _fails_policy_gate(job, policy_reject_regexes):
+                source_stats.rejected_policy_gate_count += 1
                 continue
 
             eligibility_status, eligibility_confidence, work_auth_hits, sponsor_hits = _evaluate_eligibility(job)
@@ -365,6 +369,24 @@ def _passes_data_role_gate(
             high_signal_hits += 1
             if high_signal_hits >= max(min_data_signal_count, 1):
                 return True
+    return False
+
+
+def _fails_policy_gate(job: JobRecord, policy_reject_regexes: list[re.Pattern[str]]) -> bool:
+    if not policy_reject_regexes:
+        return False
+    blob = " ".join(
+        [
+            job.title or "",
+            job.company or "",
+            job.location or "",
+            job.description or "",
+            job.source_detail or "",
+        ]
+    )
+    for pattern in policy_reject_regexes:
+        if pattern.search(blob):
+            return True
     return False
 
 

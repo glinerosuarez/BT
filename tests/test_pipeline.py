@@ -13,6 +13,7 @@ from job_hunter.models import JobRecord
 from job_hunter.pipeline import (
     _dedupe_key,
     _evaluate_eligibility,
+    _fails_policy_gate,
     _is_internship,
     _passes_data_role_gate,
     _is_us_scope,
@@ -56,6 +57,12 @@ def make_settings(db_path: str) -> Settings:
             r"\bdeveloper advocacy\b",
             r"\bgo[- ]to[- ]market\b",
             r"\b(content|video content)\b",
+        ],
+        policy_reject_patterns=[
+            r"\bph\.?d\.?\b",
+            r"\bdoctoral\b",
+            r"\beconomics team\b",
+            r"\boperations research\b",
         ],
         min_data_signal_count=2,
         greenhouse_token_file=None,
@@ -250,6 +257,28 @@ class PipelineUnitTests(unittest.TestCase):
             posted_at=None,
             description="Build developer communities with Python tutorials.",
             ingested_at="now",
+        )
+
+    def test_policy_gate_rejects_phd_research_roles(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="1",
+            url="https://example.com",
+            title="PhD Fall Machine Learning Intern",
+            company="Pinterest",
+            location="US",
+            is_internship=True,
+            posted_at=None,
+            description="Publications and causal inference research required.",
+            ingested_at="now",
+        )
+        self.assertTrue(
+            _fails_policy_gate(
+                job,
+                policy_reject_regexes=[
+                    re.compile(r"\bph\.?d\.?\b", re.IGNORECASE),
+                ],
+            )
         )
         self.assertFalse(
             _passes_data_role_gate(
@@ -481,6 +510,30 @@ class PipelineIntegrationTests(unittest.TestCase):
 
         self.assertEqual(outcome.persisted_count, 0)
         self.assertEqual(outcome.source_stats["fake"].rejected_data_role_count, 2)
+
+    def test_research_heavy_ms_role_is_not_hard_rejected(self) -> None:
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "pinterest-ms-1",
+                "url": "https://example.com/pinterest-ms-1",
+                "title": "Master's Fall Machine Learning Internship (ATG - Visual Search)",
+                "company": "Pinterest",
+                "location": "US",
+                "posted_at": recent_posted_at(),
+                "description": (
+                    "Working towards a Master's degree in Computer Science. "
+                    "Preferred qualifications: Publications in machine learning and strong passion for research."
+                ),
+                "skills": ["python", "pytorch"],
+            }
+        ]
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertEqual(outcome.source_stats["fake"].rejected_policy_gate_count, 0)
+        self.assertEqual(outcome.persisted_count, 1)
 
 
 if __name__ == "__main__":
