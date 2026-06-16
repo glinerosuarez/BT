@@ -64,6 +64,11 @@ class JobStore:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 source_count INTEGER NOT NULL,
+                normalized_count INTEGER NOT NULL DEFAULT 0,
+                rejected_missing_core_fields_count INTEGER NOT NULL DEFAULT 0,
+                after_stage_1a_count INTEGER NOT NULL DEFAULT 0,
+                after_stage_1b_count INTEGER NOT NULL DEFAULT 0,
+                after_stage_1c_count INTEGER NOT NULL DEFAULT 0,
                 passed_filter_count INTEGER NOT NULL,
                 persisted_count INTEGER NOT NULL,
                 notified_count INTEGER NOT NULL,
@@ -76,12 +81,17 @@ class JobStore:
                 run_log_id INTEGER NOT NULL,
                 source_name TEXT NOT NULL,
                 fetched_count INTEGER NOT NULL,
+                normalized_count INTEGER NOT NULL DEFAULT 0,
+                rejected_missing_core_fields_count INTEGER NOT NULL DEFAULT 0,
                 rejected_age_count INTEGER NOT NULL,
+                after_stage_1a_count INTEGER NOT NULL DEFAULT 0,
                 rejected_internship_count INTEGER NOT NULL,
                 rejected_us_scope_count INTEGER NOT NULL,
                 rejected_title_blacklist_count INTEGER NOT NULL DEFAULT 0,
                 rejected_data_role_count INTEGER NOT NULL DEFAULT 0,
+                after_stage_1b_count INTEGER NOT NULL DEFAULT 0,
                 rejected_policy_gate_count INTEGER NOT NULL DEFAULT 0,
+                after_stage_1c_count INTEGER NOT NULL DEFAULT 0,
                 rejected_eligibility_count INTEGER NOT NULL,
                 rejected_relevance_count INTEGER NOT NULL,
                 persisted_count INTEGER NOT NULL,
@@ -113,9 +123,19 @@ class JobStore:
         self._ensure_column("jobs", "manual_fit_label", "TEXT")
         self._ensure_column("jobs", "manual_fit_reason_codes", "TEXT")
         self._ensure_column("jobs", "manual_labeled_at", "TEXT")
+        self._ensure_column("run_logs", "normalized_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("run_logs", "rejected_missing_core_fields_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("run_logs", "after_stage_1a_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("run_logs", "after_stage_1b_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("run_logs", "after_stage_1c_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "normalized_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "rejected_missing_core_fields_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "after_stage_1a_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "rejected_title_blacklist_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "rejected_data_role_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "after_stage_1b_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "rejected_policy_gate_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "after_stage_1c_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "dead_token_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "feed_error_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_item_health", "consecutive_successes", "INTEGER NOT NULL DEFAULT 0")
@@ -236,12 +256,19 @@ class JobStore:
         cursor = self._conn.execute(
             """
             INSERT INTO run_logs (
-                source_count, passed_filter_count, persisted_count,
+                source_count, normalized_count, rejected_missing_core_fields_count,
+                after_stage_1a_count, after_stage_1b_count, after_stage_1c_count,
+                passed_filter_count, persisted_count,
                 notified_count, duplicate_count, error_count
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 outcome.source_count,
+                outcome.normalized_count,
+                outcome.rejected_missing_core_fields_count,
+                outcome.after_stage_1a_count,
+                outcome.after_stage_1b_count,
+                outcome.after_stage_1c_count,
                 outcome.passed_filter_count,
                 outcome.persisted_count,
                 outcome.notified_count,
@@ -254,24 +281,32 @@ class JobStore:
             self._conn.execute(
                 """
                 INSERT INTO source_run_logs (
-                    run_log_id, source_name, fetched_count, rejected_age_count,
+                    run_log_id, source_name, fetched_count, normalized_count,
+                    rejected_missing_core_fields_count, rejected_age_count,
+                    after_stage_1a_count,
                     rejected_internship_count, rejected_us_scope_count, rejected_title_blacklist_count,
-                    rejected_data_role_count, rejected_policy_gate_count,
+                    rejected_data_role_count, after_stage_1b_count, rejected_policy_gate_count,
+                    after_stage_1c_count,
                     rejected_eligibility_count, rejected_relevance_count,
                     persisted_count, notified_count, duplicate_count, error_count,
                     dead_token_count, feed_error_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_log_id,
                     source_name,
                     stats.fetched_count,
+                    stats.normalized_count,
+                    stats.rejected_missing_core_fields_count,
                     stats.rejected_age_count,
+                    stats.after_stage_1a_count,
                     stats.rejected_internship_count,
                     stats.rejected_us_scope_count,
                     stats.rejected_title_blacklist_count,
                     stats.rejected_data_role_count,
+                    stats.after_stage_1b_count,
                     stats.rejected_policy_gate_count,
+                    stats.after_stage_1c_count,
                     stats.rejected_eligibility_count,
                     stats.rejected_relevance_count,
                     stats.persisted_count,
@@ -511,6 +546,77 @@ class JobStore:
                     "unlabeled_jobs": int(row["unlabeled_jobs"] or 0),
                 }
                 for row in by_source_rows
+            ],
+        }
+
+    def get_latest_run_report(self) -> dict[str, object] | None:
+        run_row = self._conn.execute(
+            """
+            SELECT id, run_at, source_count, normalized_count, rejected_missing_core_fields_count,
+                   after_stage_1a_count, after_stage_1b_count, after_stage_1c_count,
+                   passed_filter_count, persisted_count, notified_count, duplicate_count, error_count
+            FROM run_logs
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if run_row is None:
+            return None
+
+        source_rows = self._conn.execute(
+            """
+            SELECT source_name, fetched_count, normalized_count, rejected_missing_core_fields_count,
+                   rejected_age_count, after_stage_1a_count, rejected_internship_count,
+                   rejected_us_scope_count, rejected_title_blacklist_count, rejected_data_role_count,
+                   after_stage_1b_count, rejected_policy_gate_count, after_stage_1c_count,
+                   rejected_eligibility_count, rejected_relevance_count, persisted_count,
+                   notified_count, duplicate_count, error_count, dead_token_count, feed_error_count
+            FROM source_run_logs
+            WHERE run_log_id = ?
+            ORDER BY source_name
+            """,
+            (int(run_row["id"]),),
+        ).fetchall()
+
+        return {
+            "run_id": int(run_row["id"]),
+            "run_at": str(run_row["run_at"]),
+            "source_count": int(run_row["source_count"] or 0),
+            "normalized_count": int(run_row["normalized_count"] or 0),
+            "rejected_missing_core_fields_count": int(run_row["rejected_missing_core_fields_count"] or 0),
+            "after_stage_1a_count": int(run_row["after_stage_1a_count"] or 0),
+            "after_stage_1b_count": int(run_row["after_stage_1b_count"] or 0),
+            "after_stage_1c_count": int(run_row["after_stage_1c_count"] or 0),
+            "passed_filter_count": int(run_row["passed_filter_count"] or 0),
+            "persisted_count": int(run_row["persisted_count"] or 0),
+            "notified_count": int(run_row["notified_count"] or 0),
+            "duplicate_count": int(run_row["duplicate_count"] or 0),
+            "error_count": int(run_row["error_count"] or 0),
+            "source_stats": [
+                {
+                    "source_name": str(row["source_name"]),
+                    "fetched_count": int(row["fetched_count"] or 0),
+                    "normalized_count": int(row["normalized_count"] or 0),
+                    "rejected_missing_core_fields_count": int(row["rejected_missing_core_fields_count"] or 0),
+                    "rejected_age_count": int(row["rejected_age_count"] or 0),
+                    "after_stage_1a_count": int(row["after_stage_1a_count"] or 0),
+                    "rejected_internship_count": int(row["rejected_internship_count"] or 0),
+                    "rejected_us_scope_count": int(row["rejected_us_scope_count"] or 0),
+                    "rejected_title_blacklist_count": int(row["rejected_title_blacklist_count"] or 0),
+                    "rejected_data_role_count": int(row["rejected_data_role_count"] or 0),
+                    "after_stage_1b_count": int(row["after_stage_1b_count"] or 0),
+                    "rejected_policy_gate_count": int(row["rejected_policy_gate_count"] or 0),
+                    "after_stage_1c_count": int(row["after_stage_1c_count"] or 0),
+                    "rejected_eligibility_count": int(row["rejected_eligibility_count"] or 0),
+                    "rejected_relevance_count": int(row["rejected_relevance_count"] or 0),
+                    "persisted_count": int(row["persisted_count"] or 0),
+                    "notified_count": int(row["notified_count"] or 0),
+                    "duplicate_count": int(row["duplicate_count"] or 0),
+                    "error_count": int(row["error_count"] or 0),
+                    "dead_token_count": int(row["dead_token_count"] or 0),
+                    "feed_error_count": int(row["feed_error_count"] or 0),
+                }
+                for row in source_rows
             ],
         }
 

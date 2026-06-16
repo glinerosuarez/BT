@@ -38,6 +38,8 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `python -m job_hunter.run_once`
 - `python -m job_hunter.run_loop --interval-minutes N`
 - `python -m job_hunter.maintain_sources --probe-active`
+- `python -m job_hunter.funnel_report`
+- `python -m job_hunter.funnel_report --format json`
 - `python -m job_hunter.label_jobs stats`
 - `python -m job_hunter.label_jobs list --limit 20`
 - `python -m job_hunter.label_jobs show --job-id N`

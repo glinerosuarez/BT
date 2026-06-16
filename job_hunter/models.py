@@ -6,12 +6,17 @@ from dataclasses import dataclass, field
 @dataclass(slots=True)
 class SourceRunStats:
     fetched_count: int = 0
+    normalized_count: int = 0
+    rejected_missing_core_fields_count: int = 0
     rejected_age_count: int = 0
+    after_stage_1a_count: int = 0
     rejected_internship_count: int = 0
     rejected_us_scope_count: int = 0
     rejected_title_blacklist_count: int = 0
     rejected_data_role_count: int = 0
+    after_stage_1b_count: int = 0
     rejected_policy_gate_count: int = 0
+    after_stage_1c_count: int = 0
     rejected_eligibility_count: int = 0
     rejected_relevance_count: int = 0
     persisted_count: int = 0
@@ -50,6 +55,11 @@ class JobRecord:
 @dataclass(slots=True)
 class PipelineOutcome:
     source_count: int = 0
+    normalized_count: int = 0
+    rejected_missing_core_fields_count: int = 0
+    after_stage_1a_count: int = 0
+    after_stage_1b_count: int = 0
+    after_stage_1c_count: int = 0
     passed_filter_count: int = 0
     persisted_count: int = 0
     notified_count: int = 0

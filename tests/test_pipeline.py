@@ -348,6 +348,11 @@ class PipelineIntegrationTests(unittest.TestCase):
             outcome1 = run_pipeline(self.settings, self.store, notifier)
             outcome2 = run_pipeline(self.settings, self.store, notifier)
 
+        self.assertEqual(outcome1.normalized_count, 1)
+        self.assertEqual(outcome1.rejected_missing_core_fields_count, 0)
+        self.assertEqual(outcome1.after_stage_1a_count, 1)
+        self.assertEqual(outcome1.after_stage_1b_count, 1)
+        self.assertEqual(outcome1.after_stage_1c_count, 1)
         self.assertEqual(outcome1.persisted_count, 1)
         self.assertEqual(outcome1.notified_count, 1)
         self.assertEqual(outcome2.persisted_count, 0)
@@ -398,6 +403,8 @@ class PipelineIntegrationTests(unittest.TestCase):
         with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(stale_payload)]):
             outcome = run_pipeline(self.settings, self.store, None)
 
+        self.assertEqual(outcome.normalized_count, 1)
+        self.assertEqual(outcome.after_stage_1a_count, 0)
         self.assertEqual(outcome.persisted_count, 0)
         self.assertEqual(outcome.source_stats["fake"].rejected_age_count, 1)
 
@@ -455,8 +462,35 @@ class PipelineIntegrationTests(unittest.TestCase):
         with patch("job_hunter.pipeline.build_sources", return_value=[FakeMetaSource(payload)]):
             outcome = run_pipeline(self.settings, self.store, None)
 
+        self.assertEqual(outcome.source_stats["fake"].normalized_count, 1)
+        self.assertEqual(outcome.source_stats["fake"].after_stage_1a_count, 1)
+        self.assertEqual(outcome.source_stats["fake"].after_stage_1b_count, 1)
+        self.assertEqual(outcome.source_stats["fake"].after_stage_1c_count, 1)
         self.assertEqual(outcome.source_stats["fake"].dead_token_count, 3)
         self.assertEqual(outcome.source_stats["fake"].feed_error_count, 2)
+
+    def test_missing_core_fields_are_tracked_separately(self) -> None:
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "missing-url",
+                "url": "",
+                "title": "Machine Learning Intern",
+                "company": "Acme",
+                "location": "Remote - US",
+                "posted_at": recent_posted_at(),
+                "description": "Summer internship program for ML and Python",
+                "skills": ["python"],
+            }
+        ]
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertEqual(outcome.normalized_count, 1)
+        self.assertEqual(outcome.rejected_missing_core_fields_count, 1)
+        self.assertEqual(outcome.after_stage_1a_count, 0)
+        self.assertEqual(outcome.source_stats["fake"].rejected_missing_core_fields_count, 1)
 
     def test_title_blacklist_blocks_non_target_roles(self) -> None:
         payload = [

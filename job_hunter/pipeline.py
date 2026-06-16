@@ -177,13 +177,18 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
 
         for raw_job in raw_jobs:
             job = _normalize_record(raw_job, ingested_at=now_iso)
+            outcome.normalized_count += 1
+            source_stats.normalized_count += 1
             if not job.url or not job.title:
-                source_stats.rejected_relevance_count += 1
+                outcome.rejected_missing_core_fields_count += 1
+                source_stats.rejected_missing_core_fields_count += 1
                 continue
 
             if _is_too_old(job, now, settings.max_posting_age_days):
                 source_stats.rejected_age_count += 1
                 continue
+            outcome.after_stage_1a_count += 1
+            source_stats.after_stage_1a_count += 1
 
             if not _is_internship(job):
                 source_stats.rejected_internship_count += 1
@@ -202,9 +207,13 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
             ):
                 source_stats.rejected_data_role_count += 1
                 continue
+            outcome.after_stage_1b_count += 1
+            source_stats.after_stage_1b_count += 1
             if _fails_policy_gate(job, policy_reject_regexes):
                 source_stats.rejected_policy_gate_count += 1
                 continue
+            outcome.after_stage_1c_count += 1
+            source_stats.after_stage_1c_count += 1
 
             eligibility_status, eligibility_confidence, work_auth_hits, sponsor_hits = _evaluate_eligibility(job)
             job.eligibility_status = eligibility_status
