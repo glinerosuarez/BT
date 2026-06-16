@@ -4,6 +4,7 @@ import unittest
 
 from job_hunter.sources.handshake import (
     _build_row,
+    _dedupe_rows,
     _extract_cards_from_page_text,
     _parse_card_text,
     _parse_detail_text,
@@ -90,6 +91,20 @@ class HandshakeSourceTests(unittest.TestCase):
         self.assertEqual(len(cards), 2)
         self.assertEqual(cards[0]["company"], "National Journal")
         self.assertEqual(cards[1]["title"], "Urology Sales Intern")
+
+    def test_dedupe_rows_keeps_first_external_id(self) -> None:
+        rows = [
+            {"external_id": "a", "url": "u1", "title": "one"},
+            {"external_id": "a", "url": "u2", "title": "two"},
+            {"external_id": "b", "url": "u3", "title": "three"},
+        ]
+        self.assertEqual(
+            _dedupe_rows(rows),
+            [
+                {"external_id": "a", "url": "u1", "title": "one"},
+                {"external_id": "b", "url": "u3", "title": "three"},
+            ],
+        )
 
 
 if __name__ == "__main__":

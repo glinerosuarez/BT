@@ -66,7 +66,7 @@ class HandshakeSource(SourceConnector):
                 results: list[dict] = []
                 for search_url in self.search_urls:
                     results.extend(self._fetch_search_page(page, search_url))
-                return results
+                return _dedupe_rows(results)
             finally:
                 context.close()
 
@@ -107,6 +107,18 @@ class HandshakeSource(SourceConnector):
             if parsed is not None:
                 rows.append(parsed)
         return rows
+
+
+def _dedupe_rows(rows: list[dict]) -> list[dict]:
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for row in rows:
+        key = str(row.get("external_id") or row.get("url") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
 
 
 def _extract_cards_from_page_text(body_text: str) -> list[dict[str, str]]:
