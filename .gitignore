@@ -4,3 +4,4 @@ __pycache__/
 .env
 job_hunter.db
 labeling/
+.handshake-profile/

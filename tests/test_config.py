@@ -17,6 +17,8 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.use_lever)
         self.assertTrue(settings.use_rss)
         self.assertFalse(settings.use_github_repos)
+        self.assertTrue(settings.use_ashby)
+        self.assertFalse(settings.use_handshake)
         self.assertEqual(settings.min_relevance_score, 3.0)
         self.assertEqual(settings.min_eligibility_confidence, 0.4)
         self.assertTrue(settings.notify_on_ambiguous_eligibility)
@@ -25,6 +27,8 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.lever_companies)
         self.assertTrue(settings.rss_feeds)
         self.assertTrue(settings.github_repo_readmes)
+        self.assertTrue(settings.ashby_boards)
+        self.assertEqual(settings.handshake_search_urls, [])
         self.assertTrue(settings.title_blacklist_patterns)
         self.assertTrue(settings.data_role_title_patterns)
         self.assertTrue(settings.non_data_title_patterns)
@@ -36,6 +40,10 @@ class ConfigTests(unittest.TestCase):
         self.assertIsNotNone(settings.rss_quarantine_file)
         self.assertEqual(settings.source_failure_quarantine_threshold, 2)
         self.assertEqual(settings.source_restore_success_threshold, 2)
+        self.assertTrue(settings.handshake_profile_dir.endswith(".handshake-profile"))
+        self.assertTrue(settings.handshake_headless)
+        self.assertEqual(settings.handshake_max_results, 25)
+        self.assertEqual(settings.handshake_page_timeout_seconds, 30)
 
 
 if __name__ == "__main__":

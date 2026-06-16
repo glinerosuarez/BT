@@ -4,7 +4,8 @@ Automated sourcing pipeline for US-based ML/Data internships with eligibility-aw
 
 ## What it does
 
-- Pulls postings from multi-source connectors (`Arbeitnow`, `Remotive`, `The Muse`, `Greenhouse`, `Lever`, `RSS`, optional public GitHub internship repos).
+- Pulls postings from multi-source connectors (`Arbeitnow`, `Remotive`, `The Muse`, `Greenhouse`, `Lever`, `RSS`, `Ashby`, optional public GitHub internship repos).
+- Supports an optional logged-in `Handshake` browser automation source for personal account searches.
 - Supports optional keyed connectors (`USAJobs`, `Adzuna`) when credentials are provided.
 - Loads large default ATS/RSS source lists from `job_hunter/data/*.txt` (with env overrides).
 - Normalizes jobs into a unified schema.
@@ -33,6 +34,19 @@ set -a; source .env; set +a
 python -m job_hunter.run_loop --interval-minutes 15
 ```
 
+## Handshake usage
+
+- Bootstrap the saved browser session once:
+  - `python -m job_hunter.handshake_login`
+- Prefer multiple narrow saved-search URLs over one broad semantic query.
+- A practical starting set is:
+  - `machine learning`
+  - `data science`
+  - `applied scientist`
+  - `software and ai`
+- `JOB_HUNTER_HANDSHAKE_SEARCH_URLS` accepts a comma-separated list of quoted URLs in `.env`.
+- Handshake source quality depends heavily on the search URLs you give it. Broad searches like `data` tend to surface many adjacent non-target internships.
+
 ## CLI entrypoints
 
 - `python -m job_hunter.run_once`
@@ -40,6 +54,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `python -m job_hunter.maintain_sources --probe-active`
 - `python -m job_hunter.funnel_report`
 - `python -m job_hunter.funnel_report --format json`
+- `python -m job_hunter.handshake_login`
 - `python -m job_hunter.label_jobs stats`
 - `python -m job_hunter.label_jobs list --limit 20`
 - `python -m job_hunter.label_jobs show --job-id N`
@@ -71,6 +86,8 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `JOB_HUNTER_SOURCE_LEVER`
 - `JOB_HUNTER_SOURCE_RSS`
 - `JOB_HUNTER_SOURCE_GITHUB_REPOS`
+- `JOB_HUNTER_SOURCE_ASHBY`
+- `JOB_HUNTER_SOURCE_HANDSHAKE`
 - `JOB_HUNTER_SOURCE_USAJOBS`
 - `JOB_HUNTER_SOURCE_ADZUNA`
 - `JOB_HUNTER_GREENHOUSE_TOKEN_FILE`
@@ -94,6 +111,12 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `JOB_HUNTER_LEVER_COMPANIES`
 - `JOB_HUNTER_RSS_FEEDS`
 - `JOB_HUNTER_GITHUB_REPO_READMES`
+- `JOB_HUNTER_ASHBY_BOARDS`
+- `JOB_HUNTER_HANDSHAKE_SEARCH_URLS`
+- `JOB_HUNTER_HANDSHAKE_PROFILE_DIR`
+- `JOB_HUNTER_HANDSHAKE_HEADLESS`
+- `JOB_HUNTER_HANDSHAKE_MAX_RESULTS`
+- `JOB_HUNTER_HANDSHAKE_PAGE_TIMEOUT_SECONDS`
 - `JOB_HUNTER_USAJOBS_USER_AGENT`
 - `JOB_HUNTER_USAJOBS_AUTH_KEY`
 - `JOB_HUNTER_ADZUNA_APP_ID`

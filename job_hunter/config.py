@@ -57,6 +57,12 @@ DEFAULT_RSS_FEEDS = [
 DEFAULT_GITHUB_REPO_READMES = [
     "https://raw.githubusercontent.com/vanshb03/Summer2027-Internships/dev/README.md",
 ]
+DEFAULT_ASHBY_BOARDS = [
+    "Etched",
+    "apex-technology-inc",
+    "homebase",
+]
+DEFAULT_HANDSHAKE_PROFILE_DIR = str(Path(__file__).resolve().parent.parent / ".handshake-profile")
 DEFAULT_TITLE_BLACKLIST_PATTERNS = [
     r"\brecruiter\b",
     r"\brecruiting\b",
@@ -139,6 +145,8 @@ class Settings:
     use_lever: bool
     use_rss: bool
     use_github_repos: bool
+    use_ashby: bool
+    use_handshake: bool
     use_usajobs: bool
     use_adzuna: bool
 
@@ -155,6 +163,8 @@ class Settings:
     lever_companies: list[str]
     rss_feeds: list[str]
     github_repo_readmes: list[str]
+    ashby_boards: list[str]
+    handshake_search_urls: list[str]
     title_blacklist_patterns: list[str]
     data_role_title_patterns: list[str]
     non_data_title_patterns: list[str]
@@ -168,6 +178,10 @@ class Settings:
     rss_quarantine_file: str | None
     source_failure_quarantine_threshold: int
     source_restore_success_threshold: int
+    handshake_profile_dir: str
+    handshake_headless: bool
+    handshake_max_results: int
+    handshake_page_timeout_seconds: int
 
     usajobs_user_agent: str | None
     usajobs_auth_key: str | None
@@ -212,6 +226,8 @@ def load_settings() -> Settings:
         _env_csv("JOB_HUNTER_RSS_FEEDS", DEFAULT_RSS_FEEDS),
     )
     github_repo_readmes = _env_csv("JOB_HUNTER_GITHUB_REPO_READMES", DEFAULT_GITHUB_REPO_READMES)
+    ashby_boards = _env_csv("JOB_HUNTER_ASHBY_BOARDS", DEFAULT_ASHBY_BOARDS)
+    handshake_search_urls = _env_csv("JOB_HUNTER_HANDSHAKE_SEARCH_URLS", [])
 
     return Settings(
         db_path=os.getenv("JOB_HUNTER_DB_PATH", DEFAULT_DB_PATH),
@@ -224,6 +240,8 @@ def load_settings() -> Settings:
         use_lever=_env_bool("JOB_HUNTER_SOURCE_LEVER", True),
         use_rss=_env_bool("JOB_HUNTER_SOURCE_RSS", True),
         use_github_repos=_env_bool("JOB_HUNTER_SOURCE_GITHUB_REPOS", False),
+        use_ashby=_env_bool("JOB_HUNTER_SOURCE_ASHBY", True),
+        use_handshake=_env_bool("JOB_HUNTER_SOURCE_HANDSHAKE", False),
         use_usajobs=_env_bool("JOB_HUNTER_SOURCE_USAJOBS", False),
         use_adzuna=_env_bool("JOB_HUNTER_SOURCE_ADZUNA", False),
         min_relevance_score=_env_float("JOB_HUNTER_MIN_RELEVANCE_SCORE", 3.0),
@@ -237,6 +255,8 @@ def load_settings() -> Settings:
         lever_companies=lever_companies,
         rss_feeds=rss_feeds,
         github_repo_readmes=github_repo_readmes,
+        ashby_boards=ashby_boards,
+        handshake_search_urls=handshake_search_urls,
         title_blacklist_patterns=_env_csv("JOB_HUNTER_TITLE_BLACKLIST_PATTERNS", DEFAULT_TITLE_BLACKLIST_PATTERNS),
         data_role_title_patterns=_env_csv("JOB_HUNTER_DATA_ROLE_TITLE_PATTERNS", DEFAULT_DATA_ROLE_TITLE_PATTERNS),
         non_data_title_patterns=_env_csv("JOB_HUNTER_NON_DATA_TITLE_PATTERNS", DEFAULT_NON_DATA_TITLE_PATTERNS),
@@ -250,6 +270,10 @@ def load_settings() -> Settings:
         rss_quarantine_file=rss_quarantine_file,
         source_failure_quarantine_threshold=_env_int("JOB_HUNTER_SOURCE_FAILURE_QUARANTINE_THRESHOLD", 2),
         source_restore_success_threshold=_env_int("JOB_HUNTER_SOURCE_RESTORE_SUCCESS_THRESHOLD", 2),
+        handshake_profile_dir=os.getenv("JOB_HUNTER_HANDSHAKE_PROFILE_DIR", DEFAULT_HANDSHAKE_PROFILE_DIR),
+        handshake_headless=_env_bool("JOB_HUNTER_HANDSHAKE_HEADLESS", True),
+        handshake_max_results=_env_int("JOB_HUNTER_HANDSHAKE_MAX_RESULTS", 25),
+        handshake_page_timeout_seconds=_env_int("JOB_HUNTER_HANDSHAKE_PAGE_TIMEOUT_SECONDS", 30),
         usajobs_user_agent=os.getenv("JOB_HUNTER_USAJOBS_USER_AGENT"),
         usajobs_auth_key=os.getenv("JOB_HUNTER_USAJOBS_AUTH_KEY"),
         usajobs_results_per_page=_env_int("JOB_HUNTER_USAJOBS_RESULTS_PER_PAGE", 250),

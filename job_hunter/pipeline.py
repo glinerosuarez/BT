@@ -25,8 +25,10 @@ from job_hunter.models import JobRecord, PipelineOutcome, SourceRunStats
 from job_hunter.notify import TelegramNotifier
 from job_hunter.sources import (
     AdzunaSource,
+    AshbySource,
     ArbeitnowSource,
     GithubRepoSource,
+    HandshakeSource,
     GreenhouseSource,
     LeverSource,
     RemotiveSource,
@@ -71,6 +73,10 @@ POSITIVE_SPONSORSHIP_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
     for name, pattern in POSITIVE_SPONSORSHIP_PATTERNS.items()
 }
+US_CITY_STATE_RE = re.compile(
+    r"\b[a-z][a-z .'-]+,\s*(al|ak|az|ar|ca|co|ct|de|dc|fl|ga|hi|ia|id|il|in|ks|ky|la|ma|md|me|mi|mn|mo|ms|mt|nc|nd|ne|nh|nj|nm|nv|ny|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|va|vt|wa|wi|wv|wy)\b",
+    flags=re.IGNORECASE,
+)
 NEGATED_SPONSORSHIP_REGEXES = {
     "no_sponsorship": re.compile(r"\b(no|not|without)\s+(visa\s+)?sponsorship\b", flags=re.IGNORECASE),
     "cannot_sponsor": re.compile(r"\b(cannot|can't|unable to)\s+sponsor\b", flags=re.IGNORECASE),
@@ -84,6 +90,8 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
     lever_companies = settings.lever_companies
     rss_feeds = settings.rss_feeds
     github_repo_readmes = settings.github_repo_readmes
+    ashby_boards = settings.ashby_boards
+    handshake_search_urls = settings.handshake_search_urls
 
     if store is not None:
         greenhouse_boards = _filter_suppressed_items(
@@ -119,6 +127,18 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
         sources.append(RssSource(feeds=rss_feeds))
     if settings.use_github_repos and github_repo_readmes:
         sources.append(GithubRepoSource(readme_urls=github_repo_readmes))
+    if settings.use_ashby and ashby_boards:
+        sources.append(AshbySource(board_slugs=ashby_boards))
+    if settings.use_handshake and handshake_search_urls:
+        sources.append(
+            HandshakeSource(
+                search_urls=handshake_search_urls,
+                profile_dir=settings.handshake_profile_dir,
+                headless=settings.handshake_headless,
+                max_results=settings.handshake_max_results,
+                page_timeout_seconds=settings.handshake_page_timeout_seconds,
+            )
+        )
 
     if settings.use_usajobs:
         if settings.usajobs_user_agent and settings.usajobs_auth_key:
@@ -473,6 +493,8 @@ def _is_us_scope(job: JobRecord) -> bool:
     if not location:
         return True
     if "remote" in location:
+        return True
+    if US_CITY_STATE_RE.search(location):
         return True
     return any(hint in location for hint in US_LOCATION_HINTS)
 

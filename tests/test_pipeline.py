@@ -35,6 +35,8 @@ def make_settings(db_path: str) -> Settings:
         use_lever=False,
         use_rss=False,
         use_github_repos=False,
+        use_ashby=False,
+        use_handshake=False,
         use_usajobs=False,
         use_adzuna=False,
         min_relevance_score=3.0,
@@ -48,6 +50,8 @@ def make_settings(db_path: str) -> Settings:
         lever_companies=[],
         rss_feeds=[],
         github_repo_readmes=[],
+        ashby_boards=[],
+        handshake_search_urls=[],
         title_blacklist_patterns=[r"\brecruiter\b"],
         data_role_title_patterns=[
             r"\b(machine learning|ml)\b",
@@ -75,6 +79,10 @@ def make_settings(db_path: str) -> Settings:
         rss_quarantine_file=None,
         source_failure_quarantine_threshold=3,
         source_restore_success_threshold=2,
+        handshake_profile_dir=".handshake-profile",
+        handshake_headless=True,
+        handshake_max_results=25,
+        handshake_page_timeout_seconds=30,
         usajobs_user_agent=None,
         usajobs_auth_key=None,
         usajobs_results_per_page=250,
@@ -142,6 +150,21 @@ class PipelineUnitTests(unittest.TestCase):
             ingested_at="now",
         )
         self.assertTrue(_is_internship(job))
+        self.assertTrue(_is_us_scope(job))
+
+    def test_us_scope_accepts_city_state_locations(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="1",
+            url="https://example.com",
+            title="Data Science Intern",
+            company="Example",
+            location="Washington, DC",
+            is_internship=True,
+            posted_at=None,
+            description="Python and SQL",
+            ingested_at="now",
+        )
         self.assertTrue(_is_us_scope(job))
 
     def test_description_based_internship_match(self) -> None:
