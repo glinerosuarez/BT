@@ -26,6 +26,7 @@ from job_hunter.notify import TelegramNotifier
 from job_hunter.sources import (
     AdzunaSource,
     ArbeitnowSource,
+    GithubRepoSource,
     GreenhouseSource,
     LeverSource,
     RemotiveSource,
@@ -82,6 +83,7 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
     greenhouse_boards = settings.greenhouse_boards
     lever_companies = settings.lever_companies
     rss_feeds = settings.rss_feeds
+    github_repo_readmes = settings.github_repo_readmes
 
     if store is not None:
         greenhouse_boards = _filter_suppressed_items(
@@ -115,6 +117,8 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
         sources.append(LeverSource(companies=lever_companies))
     if settings.use_rss and rss_feeds:
         sources.append(RssSource(feeds=rss_feeds))
+    if settings.use_github_repos and github_repo_readmes:
+        sources.append(GithubRepoSource(readme_urls=github_repo_readmes))
 
     if settings.use_usajobs:
         if settings.usajobs_user_agent and settings.usajobs_auth_key:

@@ -34,6 +34,7 @@ def make_settings(db_path: str) -> Settings:
         use_greenhouse=False,
         use_lever=False,
         use_rss=False,
+        use_github_repos=False,
         use_usajobs=False,
         use_adzuna=False,
         min_relevance_score=3.0,
@@ -46,6 +47,7 @@ def make_settings(db_path: str) -> Settings:
         greenhouse_boards=[],
         lever_companies=[],
         rss_feeds=[],
+        github_repo_readmes=[],
         title_blacklist_patterns=[r"\brecruiter\b"],
         data_role_title_patterns=[
             r"\b(machine learning|ml)\b",

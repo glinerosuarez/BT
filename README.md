@@ -4,7 +4,7 @@ Automated sourcing pipeline for US-based ML/Data internships with eligibility-aw
 
 ## What it does
 
-- Pulls postings from multi-source connectors (`Arbeitnow`, `Remotive`, `The Muse`, `Greenhouse`, `Lever`, `RSS`).
+- Pulls postings from multi-source connectors (`Arbeitnow`, `Remotive`, `The Muse`, `Greenhouse`, `Lever`, `RSS`, optional public GitHub internship repos).
 - Supports optional keyed connectors (`USAJobs`, `Adzuna`) when credentials are provided.
 - Loads large default ATS/RSS source lists from `job_hunter/data/*.txt` (with env overrides).
 - Normalizes jobs into a unified schema.
@@ -70,6 +70,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `JOB_HUNTER_SOURCE_GREENHOUSE`
 - `JOB_HUNTER_SOURCE_LEVER`
 - `JOB_HUNTER_SOURCE_RSS`
+- `JOB_HUNTER_SOURCE_GITHUB_REPOS`
 - `JOB_HUNTER_SOURCE_USAJOBS`
 - `JOB_HUNTER_SOURCE_ADZUNA`
 - `JOB_HUNTER_GREENHOUSE_TOKEN_FILE`
@@ -92,6 +93,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `JOB_HUNTER_GREENHOUSE_BOARDS`
 - `JOB_HUNTER_LEVER_COMPANIES`
 - `JOB_HUNTER_RSS_FEEDS`
+- `JOB_HUNTER_GITHUB_REPO_READMES`
 - `JOB_HUNTER_USAJOBS_USER_AGENT`
 - `JOB_HUNTER_USAJOBS_AUTH_KEY`
 - `JOB_HUNTER_ADZUNA_APP_ID`

@@ -54,6 +54,9 @@ DEFAULT_RSS_FEEDS = [
     "https://remoteok.com/remote-internship-jobs.rss",
     "https://weworkremotely.com/categories/remote-programming-jobs.rss",
 ]
+DEFAULT_GITHUB_REPO_READMES = [
+    "https://raw.githubusercontent.com/vanshb03/Summer2027-Internships/dev/README.md",
+]
 DEFAULT_TITLE_BLACKLIST_PATTERNS = [
     r"\brecruiter\b",
     r"\brecruiting\b",
@@ -135,6 +138,7 @@ class Settings:
     use_greenhouse: bool
     use_lever: bool
     use_rss: bool
+    use_github_repos: bool
     use_usajobs: bool
     use_adzuna: bool
 
@@ -150,6 +154,7 @@ class Settings:
     greenhouse_boards: list[str]
     lever_companies: list[str]
     rss_feeds: list[str]
+    github_repo_readmes: list[str]
     title_blacklist_patterns: list[str]
     data_role_title_patterns: list[str]
     non_data_title_patterns: list[str]
@@ -206,6 +211,7 @@ def load_settings() -> Settings:
         _read_list_file(rss_feed_file),
         _env_csv("JOB_HUNTER_RSS_FEEDS", DEFAULT_RSS_FEEDS),
     )
+    github_repo_readmes = _env_csv("JOB_HUNTER_GITHUB_REPO_READMES", DEFAULT_GITHUB_REPO_READMES)
 
     return Settings(
         db_path=os.getenv("JOB_HUNTER_DB_PATH", DEFAULT_DB_PATH),
@@ -217,6 +223,7 @@ def load_settings() -> Settings:
         use_greenhouse=_env_bool("JOB_HUNTER_SOURCE_GREENHOUSE", True),
         use_lever=_env_bool("JOB_HUNTER_SOURCE_LEVER", True),
         use_rss=_env_bool("JOB_HUNTER_SOURCE_RSS", True),
+        use_github_repos=_env_bool("JOB_HUNTER_SOURCE_GITHUB_REPOS", False),
         use_usajobs=_env_bool("JOB_HUNTER_SOURCE_USAJOBS", False),
         use_adzuna=_env_bool("JOB_HUNTER_SOURCE_ADZUNA", False),
         min_relevance_score=_env_float("JOB_HUNTER_MIN_RELEVANCE_SCORE", 3.0),
@@ -229,6 +236,7 @@ def load_settings() -> Settings:
         greenhouse_boards=greenhouse_boards,
         lever_companies=lever_companies,
         rss_feeds=rss_feeds,
+        github_repo_readmes=github_repo_readmes,
         title_blacklist_patterns=_env_csv("JOB_HUNTER_TITLE_BLACKLIST_PATTERNS", DEFAULT_TITLE_BLACKLIST_PATTERNS),
         data_role_title_patterns=_env_csv("JOB_HUNTER_DATA_ROLE_TITLE_PATTERNS", DEFAULT_DATA_ROLE_TITLE_PATTERNS),
         non_data_title_patterns=_env_csv("JOB_HUNTER_NON_DATA_TITLE_PATTERNS", DEFAULT_NON_DATA_TITLE_PATTERNS),
