@@ -327,6 +327,11 @@ def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
     title = _clean_text(str(raw.get("title", "")))
     company = _clean_text(str(raw.get("company", "")))
     location = _clean_text(str(raw.get("location", "")))
+    raw_compensation_type = str(raw.get("compensation_type", "")).strip().lower()
+    if raw_compensation_type in {"paid", "unpaid", "unknown"}:
+        compensation_type = raw_compensation_type
+    else:
+        compensation_type = _classify_compensation(title=title, description=description)
 
     raw_skills = raw.get("skills", [])
     if isinstance(raw_skills, list):
@@ -346,6 +351,7 @@ def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
         is_internship=False,
         posted_at=_nullable_str(raw.get("posted_at")),
         description=description,
+        compensation_type=compensation_type,
         skills=skills,
         ingested_at=ingested_at,
         source_detail=str(raw.get("source_detail", "")),
@@ -368,6 +374,21 @@ def _nullable_str(value: object) -> str | None:
 
 def _job_blob(job: JobRecord) -> str:
     return " ".join([job.title, job.description, " ".join(job.skills)]).lower()
+
+
+def _classify_compensation(title: str, description: str) -> str:
+    primary_description = description
+    for marker in ("Similar Jobs", "About the employer", "Alumni in similar roles", "Alumni at this employer"):
+        if marker in primary_description:
+            primary_description = primary_description.split(marker, 1)[0]
+    blob = f"{title} {primary_description}".lower()
+    if "unpaid" in blob:
+        return "unpaid"
+    if re.search(r"\$\s*\d", blob) or re.search(r"\b\d+\s*-\s*\d+\s*/\s*(hr|hour|year)\b", blob):
+        return "paid"
+    if re.search(r"\b(pay|paid|salary|stipend|compensation|hourly)\b", blob):
+        return "paid"
+    return "unknown"
 
 
 def _compile_title_blacklist(patterns: list[str]) -> list[re.Pattern[str]]:

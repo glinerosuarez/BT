@@ -90,6 +90,7 @@ class HandshakeSourceTests(unittest.TestCase):
             row["url"],
             "https://app.joinhandshake.com/job-search/11120024?query=data+engineer+intern",
         )
+        self.assertEqual(row["compensation_type"], "paid")
 
     def test_relative_age_to_iso(self) -> None:
         self.assertIsNotNone(_relative_age_to_iso("Posted 4 days ago"))

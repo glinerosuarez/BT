@@ -46,12 +46,14 @@ def _format_alert(job: JobRecord) -> str:
     sponsor = ", ".join(job.sponsorship_signals[:3]) if job.sponsorship_signals else "none"
     work_auth = ", ".join(job.work_auth_signals[:3]) if job.work_auth_signals else "none"
     posted = job.posted_at or "unknown"
+    compensation = job.compensation_type or "unknown"
 
     return (
         f"[Internship Alert] {job.title}\n"
         f"Company: {job.company}\n"
         f"Location: {job.location or 'unknown'}\n"
         f"Posted: {posted}\n"
+        f"Compensation: {compensation}\n"
         f"Score: {job.relevance_score:.2f}\n"
         f"Eligibility: {job.eligibility_status} ({job.eligibility_confidence:.2f})\n"
         f"Sponsorship signals: {sponsor}\n"

@@ -38,6 +38,7 @@ class JobRecord:
     is_internship: bool
     posted_at: str | None
     description: str
+    compensation_type: str = "unknown"
     work_auth_signals: list[str] = field(default_factory=list)
     sponsorship_signals: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)

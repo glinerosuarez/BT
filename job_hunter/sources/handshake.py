@@ -173,6 +173,7 @@ def _build_row(card_text: str, detail_text: str, search_url: str, card_url: str 
     location = detail.get("location") or card["location"]
     posted_at = detail.get("posted_at") or card["posted_at"]
     description = detail.get("description") or detail_text or card_text
+    compensation_type = _classify_compensation_from_source(card_text=card_text, detail_text=detail_text)
     external_id = f"{company}|{title}|{location}|{posted_at or ''}"
     url = card_url or f"{search_url}#jobhunter-{sha1(external_id.encode('utf-8')).hexdigest()[:12]}"
     return {
@@ -185,8 +186,24 @@ def _build_row(card_text: str, detail_text: str, search_url: str, card_url: str 
         "location": location,
         "posted_at": posted_at,
         "description": description,
+        "compensation_type": compensation_type,
         "skills": [],
     }
+
+
+def _classify_compensation_from_source(card_text: str, detail_text: str) -> str:
+    primary_detail = detail_text
+    for marker in ("Similar Jobs", "About the employer", "Alumni in similar roles", "Alumni at this employer"):
+        if marker in primary_detail:
+            primary_detail = primary_detail.split(marker, 1)[0]
+    blob = f"{card_text}\n{primary_detail}".lower()
+    if "unpaid" in blob:
+        return "unpaid"
+    if re.search(r"\$\s*\d", blob) or re.search(r"\b\d+\s*-\s*\d+\s*/\s*(hr|hour|year)\b", blob):
+        return "paid"
+    if re.search(r"\b(pay|paid|salary|stipend|compensation|hourly)\b", blob):
+        return "paid"
+    return "unknown"
 
 
 def _infer_card_url(page_url: str, search_url: str, title: str) -> str:

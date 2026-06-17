@@ -11,6 +11,7 @@ from unittest.mock import patch
 from job_hunter.config import Settings
 from job_hunter.models import JobRecord
 from job_hunter.pipeline import (
+    _classify_compensation,
     _dedupe_key,
     _evaluate_eligibility,
     _fails_policy_gate,
@@ -119,6 +120,18 @@ class FakeNotifier:
 
 
 class PipelineUnitTests(unittest.TestCase):
+    def test_compensation_classification(self) -> None:
+        self.assertEqual(_classify_compensation("Data Engineering Intern", "Unpaid · Internship Remote"), "unpaid")
+        self.assertEqual(_classify_compensation("Data Science Internship", "$18-50/hr · Internship"), "paid")
+        self.assertEqual(_classify_compensation("ML Intern", "Build models and pipelines"), "unknown")
+        self.assertEqual(
+            _classify_compensation(
+                "Data Science Internship",
+                "Data Science Internship $18-50/hr Internship Pasadena, CA Similar Jobs Unpaid Internship Remote",
+            ),
+            "paid",
+        )
+
     def test_eligibility_negative_rule_excludes(self) -> None:
         job = JobRecord(
             source="x",

@@ -172,6 +172,7 @@ def _cmd_show(store: JobStore, job_id: int) -> int:
     print(f"title={row['title']}")
     print(f"location={row['location']}")
     print(f"posted_at={row['posted_at']}")
+    print(f"compensation_type={row['compensation_type']}")
     print(f"relevance_score={row['relevance_score']}")
     print(f"manual_fit_label={row['manual_fit_label'] or '-'}")
     print(f"manual_fit_reason_codes={_format_reasons(row['manual_fit_reason_codes'])}")
@@ -262,6 +263,7 @@ def _row_payload(row: object) -> dict[str, object]:
         "relevance_score": float(row["relevance_score"] or 0.0),
         "eligibility_status": str(row["eligibility_status"] or ""),
         "eligibility_confidence": float(row["eligibility_confidence"] or 0.0),
+        "compensation_type": str(row["compensation_type"] or "unknown"),
         "description": str(row["description"] or ""),
         "manual_fit_label": str(row["manual_fit_label"] or ""),
         "manual_fit_reason_codes": _decode_reasons(row["manual_fit_reason_codes"]),
@@ -282,6 +284,7 @@ def _render_markdown(payloads: list[dict[str, object]]) -> str:
                 f"- source: {payload['source']}",
                 f"- location: {payload['location']}",
                 f"- posted_at: {payload['posted_at']}",
+                f"- compensation_type: {payload['compensation_type']}",
                 f"- relevance_score: {payload['relevance_score']}",
                 f"- eligibility_status: {payload['eligibility_status']} ({payload['eligibility_confidence']})",
                 f"- manual_fit_label: {payload['manual_fit_label'] or '-'}",

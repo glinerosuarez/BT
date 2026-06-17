@@ -33,6 +33,7 @@ class JobStore:
                 is_internship INTEGER NOT NULL,
                 posted_at TEXT,
                 description TEXT,
+                compensation_type TEXT NOT NULL DEFAULT 'unknown',
                 work_auth_signals TEXT,
                 sponsorship_signals TEXT,
                 skills TEXT,
@@ -123,6 +124,7 @@ class JobStore:
         self._ensure_column("jobs", "manual_fit_label", "TEXT")
         self._ensure_column("jobs", "manual_fit_reason_codes", "TEXT")
         self._ensure_column("jobs", "manual_labeled_at", "TEXT")
+        self._ensure_column("jobs", "compensation_type", "TEXT NOT NULL DEFAULT 'unknown'")
         self._ensure_column("run_logs", "normalized_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("run_logs", "rejected_missing_core_fields_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("run_logs", "after_stage_1a_count", "INTEGER NOT NULL DEFAULT 0")
@@ -181,10 +183,11 @@ class JobStore:
                 INSERT INTO jobs (
                     dedupe_key, source, external_id, url, title, company,
                     location, is_internship, posted_at, description,
+                    compensation_type,
                     work_auth_signals, sponsorship_signals, skills, ingested_at,
                     relevance_score, eligibility_confidence, eligibility_status,
                     relevance_hits, age_days, age_unknown, source_detail
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     dedupe_key,
@@ -197,6 +200,7 @@ class JobStore:
                     int(payload["is_internship"]),
                     payload["posted_at"],
                     payload["description"],
+                    payload["compensation_type"],
                     json.dumps(payload["work_auth_signals"]),
                     json.dumps(payload["sponsorship_signals"]),
                     json.dumps(payload["skills"]),
@@ -267,6 +271,7 @@ class JobStore:
             UPDATE jobs
             SET url = ?,
                 description = ?,
+                compensation_type = ?,
                 location = ?,
                 posted_at = ?,
                 work_auth_signals = ?,
@@ -283,6 +288,7 @@ class JobStore:
             (
                 url,
                 description,
+                job.compensation_type,
                 job.location,
                 job.posted_at,
                 json.dumps(job.work_auth_signals),
@@ -537,7 +543,7 @@ class JobStore:
 
         query = f"""
             SELECT id, source, company, title, location, posted_at, url, description,
-                   relevance_score, eligibility_status, eligibility_confidence,
+                   relevance_score, eligibility_status, eligibility_confidence, compensation_type,
                    manual_fit_label, manual_fit_reason_codes, manual_labeled_at
             FROM jobs
             {where_sql}
@@ -551,7 +557,7 @@ class JobStore:
         return self._conn.execute(
             """
             SELECT id, source, company, title, location, posted_at, url, description,
-                   relevance_score, manual_fit_label, manual_fit_reason_codes, manual_labeled_at
+                   relevance_score, compensation_type, manual_fit_label, manual_fit_reason_codes, manual_labeled_at
             FROM jobs
             WHERE id = ?
             LIMIT 1
