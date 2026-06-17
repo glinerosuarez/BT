@@ -21,6 +21,19 @@ _FLAG_PATTERNS: dict[str, re.Pattern[str]] = {
     "mentions_production_ml": re.compile(r"\bproduction ml\b|\bml systems\b|\bmodel deployment\b|\bdeployed models?\b", re.IGNORECASE),
 }
 
+_BUILDER_SIGNAL_PATTERNS: dict[str, re.Pattern[str]] = {
+    "builder_build_ship": re.compile(r"\b(build|building|ship|shipping|builder)\b", re.IGNORECASE),
+    "builder_automation": re.compile(r"\b(automation|automate|workflow|workflows|agentic)\b", re.IGNORECASE),
+    "builder_data_platform": re.compile(r"\b(etl|pipeline|pipelines|data lakehouse|data platform|data engineering)\b", re.IGNORECASE),
+    "builder_deploy": re.compile(r"\b(deploy|deployment|deploying|production)\b", re.IGNORECASE),
+}
+
+_RESEARCH_HEAVY_PATTERNS: dict[str, re.Pattern[str]] = {
+    "research_background_preferred": re.compile(r"\bresearch background\b", re.IGNORECASE),
+    "publications_preferred": re.compile(r"\bpublications?\b", re.IGNORECASE),
+    "research_preferred": re.compile(r"\bpreferred\b.{0,80}\bresearch\b|\bresearch\b.{0,80}\bpreferred\b", re.IGNORECASE),
+}
+
 _BOILERPLATE_MARKERS = (
     "about the employer",
     "what this job offers",
@@ -31,6 +44,24 @@ _BOILERPLATE_MARKERS = (
     "alumni at this employer",
     "save apply",
     "save share apply",
+)
+
+_SUMMARY_NEGATIVE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bwe('?| a)re on a mission\b", re.IGNORECASE),
+    re.compile(r"\bdiscover a career\b", re.IGNORECASE),
+    re.compile(r"\bcreating a career you love\b", re.IGNORECASE),
+    re.compile(r"\bcelebrate each other('?s)? unique experiences\b", re.IGNORECASE),
+    re.compile(r"\bflexibility to do your best work\b", re.IGNORECASE),
+    re.compile(r"\byou match all qualifications\b", re.IGNORECASE),
+    re.compile(r"\bnice!\b", re.IGNORECASE),
+    re.compile(r"\bmore save apply\b", re.IGNORECASE),
+)
+
+_SUMMARY_POSITIVE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(build|building|ship|shipping|deploy|deployment|automation|automating|workflow|agentic)\b", re.IGNORECASE),
+    re.compile(r"\b(data engineering|etl|pipeline|pipelines|sql|python|aws|lakehouse)\b", re.IGNORECASE),
+    re.compile(r"\b(machine learning|ml|llm|ai-powered|ai/ml|data science|analytics)\b", re.IGNORECASE),
+    re.compile(r"\b(intern|internship|student|master'?s|ph\\.?d\\.?)\b", re.IGNORECASE),
 )
 
 
@@ -53,7 +84,7 @@ class ShadowProfileScorer:
     def score(self, job: JobRecord) -> Stage2Result:
         job_text = build_job_text_v1(job)
         flags = extract_job_flags(job_text)
-        score, label, reasons = _score_shadow_rules(job, flags)
+        score, label, reasons = _score_shadow_rules(job, job_text, flags)
         return Stage2Result(
             profile_match_score=score,
             profile_match_label=label,
@@ -101,23 +132,29 @@ def extract_job_flags(text: str) -> list[str]:
     return sorted(found)
 
 
-def _score_shadow_rules(job: JobRecord, flags: list[str]) -> tuple[float, str, list[str]]:
+def _score_shadow_rules(job: JobRecord, job_text: str, flags: list[str]) -> tuple[float, str, list[str]]:
     score = 0.5
     reasons: list[str] = []
     title = (job.title or "").lower()
-    blob = f"{job.title} {job.description}".lower()
+    blob = job_text.lower()
 
     if any(token in title for token in ("data engineer", "machine learning", "ml ", "data science", "ai/ml", "applied scientist")):
         score += 0.2
         reasons.append("target_title_alignment")
-    if "unpaid" in blob:
+    if _has_builder_signals(blob):
+        score += 0.25
+        reasons.append("builder_signal_alignment")
+    if job.compensation_type == "unpaid":
         reasons.append("compensation_unpaid")
     if "mentions_phd" in flags:
         score -= 0.35
         reasons.append("flag_phd")
     if "mentions_research" in flags:
-        score -= 0.1
+        score -= 0.15
         reasons.append("flag_research")
+    if _has_research_heavy_signals(blob):
+        score -= 0.2
+        reasons.append("research_heavy_signal")
     if "mentions_economics" in flags or "mentions_operations_research" in flags:
         score -= 0.15
         reasons.append("flag_domain_mismatch")
@@ -138,29 +175,74 @@ def _score_shadow_rules(job: JobRecord, flags: list[str]) -> tuple[float, str, l
     return score, label, sorted(set(reasons))
 
 
+def _has_builder_signals(blob: str) -> bool:
+    hits = sum(1 for pattern in _BUILDER_SIGNAL_PATTERNS.values() if pattern.search(blob))
+    return hits >= 1
+
+
+def _has_research_heavy_signals(blob: str) -> bool:
+    return any(pattern.search(blob) for pattern in _RESEARCH_HEAVY_PATTERNS.values())
+
+
 def _strip_boilerplate_lines(text: str) -> list[str]:
     lines = [line.rstrip() for line in (text or "").splitlines()]
     kept: list[str] = []
     for line in lines:
-        lowered = line.strip().lower()
-        if lowered in _BOILERPLATE_MARKERS:
+        candidate = line
+        lowered = candidate.strip().lower()
+        should_break = False
+        for marker in _BOILERPLATE_MARKERS:
+            idx = lowered.find(marker)
+            if idx == -1:
+                continue
+            if idx == 0:
+                should_break = True
+                candidate = ""
+                break
+            candidate = candidate[:idx].rstrip()
+            should_break = True
             break
-        kept.append(line)
+        if candidate.strip():
+            kept.append(candidate)
+        if should_break:
+            break
     return kept
 
 
 def _extract_summary_sentences(text: str, limit: int) -> list[str]:
-    sentences = []
-    for sentence in _SENTENCE_SPLIT_RE.split(text):
-        normalized = _WHITESPACE_RE.sub(" ", sentence).strip()
+    candidates: list[tuple[int, int, str]] = []
+    for idx, sentence in enumerate(_SENTENCE_SPLIT_RE.split(text)):
+        normalized = _normalize_summary_sentence(sentence)
         if not normalized:
             continue
         if normalized.lower().startswith(("job description", "about ")):
             continue
-        sentences.append(normalized)
-        if len(sentences) >= limit:
-            break
-    return sentences
+        if any(pattern.search(normalized) for pattern in _SUMMARY_NEGATIVE_PATTERNS):
+            continue
+        priority = sum(1 for pattern in _SUMMARY_POSITIVE_PATTERNS if pattern.search(normalized))
+        candidates.append((priority, idx, normalized))
+
+    if not candidates:
+        return []
+
+    ranked = sorted(candidates, key=lambda item: (-item[0], item[1]))
+    selected = ranked[:limit]
+    return [text for _, _, text in sorted(selected, key=lambda item: item[1])]
+
+
+def _normalize_summary_sentence(sentence: str) -> str:
+    cleaned = sentence
+    for marker in (
+        "More Save Apply",
+        "What they're looking for",
+        "You match all qualifications.",
+        "Nice!",
+        "Matching is based on your profile.",
+        "Update profile.",
+    ):
+        cleaned = cleaned.replace(marker, " ")
+    cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip(" .")
+    return cleaned
 
 
 def _extract_section_bullets(lines: list[str], heading_keywords: tuple[str, ...], limit: int) -> list[str]:

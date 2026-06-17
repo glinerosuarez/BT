@@ -76,6 +76,113 @@ class Stage2Tests(unittest.TestCase):
         self.assertIn(result.profile_match_label, {"pass", "review", "reject"})
         self.assertTrue(result.job_text_snapshot.startswith("TITLE: Data Science Internship"))
 
+    def test_shadow_profile_scorer_rewards_builder_signals(self) -> None:
+        job = JobRecord(
+            source="fake",
+            external_id="3",
+            url="https://example.com/job-3",
+            title="AI Builder Intern",
+            company="Scale AI",
+            location="San Francisco, CA",
+            is_internship=True,
+            posted_at="2026-06-12",
+            description=(
+                "You'll spend the summer building AI-powered tools, automating workflows, "
+                "and deploying agentic systems used by real teams."
+            ),
+            compensation_type="paid",
+            ingested_at="2026-06-17T00:00:00+00:00",
+        )
+        result = ShadowProfileScorer().score(job)
+        self.assertEqual(result.profile_match_label, "pass")
+        self.assertIn("builder_signal_alignment", result.profile_match_reason_codes)
+
+    def test_shadow_profile_scorer_uses_normalized_compensation_type(self) -> None:
+        job = JobRecord(
+            source="fake",
+            external_id="4",
+            url="https://example.com/job-4",
+            title="AI/ML Data Engineering Intern",
+            company="Hyphenova",
+            location="Remote",
+            is_internship=True,
+            posted_at="2026-06-12",
+            description="Build ETL pipelines and deploy production ML systems.",
+            compensation_type="paid",
+            ingested_at="2026-06-17T00:00:00+00:00",
+        )
+        result = ShadowProfileScorer().score(job)
+        self.assertNotIn("compensation_unpaid", result.profile_match_reason_codes)
+
+    def test_shadow_profile_scorer_penalizes_research_heavy_roles(self) -> None:
+        job = JobRecord(
+            source="fake",
+            external_id="5",
+            url="https://example.com/job-5",
+            title="Master's Fall Machine Learning Internship",
+            company="Pinterest",
+            location="US",
+            is_internship=True,
+            posted_at="2026-06-12",
+            description=(
+                "Preferred qualifications: Publications in machine learning and strong passion for research. "
+                "Research background in search relevance is preferred."
+            ),
+            compensation_type="paid",
+            ingested_at="2026-06-17T00:00:00+00:00",
+        )
+        result = ShadowProfileScorer().score(job)
+        self.assertEqual(result.profile_match_label, "reject")
+        self.assertLess(result.profile_match_score, 0.45)
+        self.assertIn("research_heavy_signal", result.profile_match_reason_codes)
+
+    def test_job_text_summary_prefers_job_specific_sentences_over_brand_copy(self) -> None:
+        job = JobRecord(
+            source="fake",
+            external_id="6",
+            url="https://example.com/job-6",
+            title="Machine Learning Internship",
+            company="Pinterest",
+            location="US",
+            is_internship=True,
+            posted_at="2026-06-12",
+            description=(
+                "At Pinterest, we're on a mission to bring everyone the inspiration to create a life they love. "
+                "Discover a career where you ignite innovation for millions. "
+                "Build ML systems for visual search and recommendation pipelines. "
+                "Deploy production models for ranking."
+            ),
+            compensation_type="paid",
+            ingested_at="2026-06-17T00:00:00+00:00",
+        )
+        text = build_job_text_v1(job)
+        self.assertIn("Build ML systems for visual search and recommendation pipelines", text)
+        self.assertIn("Deploy production models for ranking", text)
+        self.assertNotIn("we're on a mission", text.lower())
+        self.assertNotIn("discover a career", text.lower())
+
+    def test_job_text_summary_strips_handshake_ui_residue(self) -> None:
+        job = JobRecord(
+            source="fake",
+            external_id="7",
+            url="https://example.com/job-7",
+            title="AI/ML Data Engineering Intern",
+            company="Hyphenova",
+            location="Remote",
+            is_internship=True,
+            posted_at="2026-06-12",
+            description=(
+                "The Opportunity: Build ETL pipelines and support AWS data systems. "
+                "More Save Apply What they're looking for You match all qualifications. Nice!"
+            ),
+            compensation_type="paid",
+            ingested_at="2026-06-17T00:00:00+00:00",
+        )
+        text = build_job_text_v1(job)
+        self.assertIn("Build ETL pipelines and support AWS data systems", text)
+        self.assertNotIn("More Save Apply", text)
+        self.assertNotIn("You match all qualifications", text)
+
 
 if __name__ == "__main__":
     unittest.main()
