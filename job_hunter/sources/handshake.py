@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from hashlib import sha1
 from pathlib import Path
+from urllib.parse import urljoin
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -97,16 +98,25 @@ class HandshakeSource(SourceConnector):
             if not company or not title:
                 continue
             card_text = "\n".join([company, title, meta, location, freshness])
+            card_url = ""
             detail_text = ""
             if self.fetch_details:
                 locator = page.get_by_role("button", name=title, exact=False).first
                 try:
+                    card_url = urljoin(page.url, locator.get_attribute("href") or "")
                     locator.click(timeout=5000)
                     page.wait_for_timeout(1500)
                     detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
                 except PlaywrightTimeoutError:
                     detail_text = ""
-            parsed = _build_row(card_text=card_text, detail_text=detail_text, search_url=search_url)
+            if not card_url:
+                card_url = _infer_card_url(page.url, search_url, title)
+            parsed = _build_row(
+                card_text=card_text,
+                detail_text=detail_text,
+                search_url=search_url,
+                card_url=card_url,
+            )
             if parsed is not None:
                 rows.append(parsed)
         return rows
@@ -153,7 +163,7 @@ def _extract_cards_from_page_text(body_text: str) -> list[dict[str, str]]:
     return cards
 
 
-def _build_row(card_text: str, detail_text: str, search_url: str) -> dict | None:
+def _build_row(card_text: str, detail_text: str, search_url: str, card_url: str = "") -> dict | None:
     card = _parse_card_text(card_text)
     if card is None:
         return None
@@ -164,7 +174,7 @@ def _build_row(card_text: str, detail_text: str, search_url: str) -> dict | None
     posted_at = detail.get("posted_at") or card["posted_at"]
     description = detail.get("description") or detail_text or card_text
     external_id = f"{company}|{title}|{location}|{posted_at or ''}"
-    url = f"{search_url}#jobhunter-{sha1(external_id.encode('utf-8')).hexdigest()[:12]}"
+    url = card_url or f"{search_url}#jobhunter-{sha1(external_id.encode('utf-8')).hexdigest()[:12]}"
     return {
         "source": "handshake",
         "source_detail": search_url,
@@ -177,6 +187,13 @@ def _build_row(card_text: str, detail_text: str, search_url: str) -> dict | None
         "description": description,
         "skills": [],
     }
+
+
+def _infer_card_url(page_url: str, search_url: str, title: str) -> str:
+    _ = title
+    if "/job-search/" in page_url:
+        return page_url
+    return search_url
 
 
 def _parse_card_text(card_text: str) -> dict[str, str] | None:

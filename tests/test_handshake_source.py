@@ -75,12 +75,21 @@ class HandshakeSourceTests(unittest.TestCase):
         self.assertIn("Location: Lake Forest, CA", parsed["description"])
 
     def test_build_row_prefers_detail_fields(self) -> None:
-        row = _build_row(CARD_TEXT, DETAIL_TEXT, "https://app.joinhandshake.com/job-search/example")
+        row = _build_row(
+            CARD_TEXT,
+            DETAIL_TEXT,
+            "https://app.joinhandshake.com/job-search/example",
+            "https://app.joinhandshake.com/job-search/11120024?query=data+engineer+intern",
+        )
         self.assertIsNotNone(row)
         self.assertEqual(row["source"], "handshake")
         self.assertEqual(row["title"], "Software Intern")
         self.assertEqual(row["company"], "Advantest America, Inc.")
         self.assertIn("Location: Lake Forest, CA", row["description"])
+        self.assertEqual(
+            row["url"],
+            "https://app.joinhandshake.com/job-search/11120024?query=data+engineer+intern",
+        )
 
     def test_relative_age_to_iso(self) -> None:
         self.assertIsNotNone(_relative_age_to_iso("Posted 4 days ago"))
