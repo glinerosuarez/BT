@@ -23,6 +23,7 @@ from job_hunter.keywords import (
 )
 from job_hunter.models import JobRecord, PipelineOutcome, SourceRunStats
 from job_hunter.notify import TelegramNotifier
+from job_hunter.stage2 import ShadowProfileScorer
 from job_hunter.sources import (
     AdzunaSource,
     AshbySource,
@@ -185,6 +186,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
     outcome = PipelineOutcome()
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
+    shadow_scorer = ShadowProfileScorer()
     title_blacklist_regexes = _compile_title_blacklist(settings.title_blacklist_patterns)
     data_role_title_regexes = _compile_title_blacklist(settings.data_role_title_patterns)
     non_data_role_title_regexes = _compile_title_blacklist(settings.non_data_title_patterns)
@@ -244,11 +246,15 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
             ):
                 source_stats.rejected_data_role_count += 1
                 continue
+            job.role_relevance_label = "pass"
+            job.role_relevance_reason_codes = _role_relevance_reason_codes(job)
             outcome.after_stage_1b_count += 1
             source_stats.after_stage_1b_count += 1
             if _fails_policy_gate(job, policy_reject_regexes):
                 source_stats.rejected_policy_gate_count += 1
                 continue
+            job.policy_gate_status = "pass"
+            job.policy_gate_reason_codes = []
             outcome.after_stage_1c_count += 1
             source_stats.after_stage_1c_count += 1
 
@@ -265,6 +271,14 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
             relevance_score, relevance_hits = _score_relevance(job)
             job.relevance_score = relevance_score
             job.relevance_hits = relevance_hits
+            stage2_result = shadow_scorer.score(job)
+            job.profile_match_score = stage2_result.profile_match_score
+            job.profile_match_label = stage2_result.profile_match_label
+            job.profile_match_reason_codes = stage2_result.profile_match_reason_codes
+            job.profile_version = stage2_result.profile_version
+            job.scorer_version = stage2_result.scorer_version
+            job.job_text_version = stage2_result.job_text_version
+            job.job_text_snapshot = stage2_result.job_text_snapshot
 
             if job.relevance_score < settings.min_relevance_score:
                 source_stats.rejected_relevance_count += 1
@@ -456,6 +470,16 @@ def _fails_policy_gate(job: JobRecord, policy_reject_regexes: list[re.Pattern[st
         if pattern.search(blob):
             return True
     return False
+
+
+def _role_relevance_reason_codes(job: JobRecord) -> list[str]:
+    reasons = ["internship_gate_pass", "us_scope_pass", "data_role_gate_pass"]
+    title = (job.title or "").lower()
+    if any(token in title for token in ("machine learning", "data science", "data engineer", "analytics engineer", "ai/ml")):
+        reasons.append("target_title_signal")
+    if any(pattern.search((job.description or "").lower()) for pattern in HIGH_SIGNAL_KEYWORD_PATTERNS.values()):
+        reasons.append("high_signal_keyword_match")
+    return sorted(set(reasons))
 
 
 def _is_too_old(job: JobRecord, now: datetime, max_days: int) -> bool:

@@ -42,6 +42,17 @@ class JobStore:
                 eligibility_confidence REAL NOT NULL,
                 eligibility_status TEXT NOT NULL,
                 relevance_hits TEXT,
+                role_relevance_label TEXT,
+                role_relevance_reason_codes TEXT,
+                policy_gate_status TEXT,
+                policy_gate_reason_codes TEXT,
+                profile_match_score REAL NOT NULL DEFAULT 0.0,
+                profile_match_label TEXT,
+                profile_match_reason_codes TEXT,
+                profile_version TEXT,
+                scorer_version TEXT,
+                job_text_version TEXT,
+                job_text_snapshot TEXT,
                 age_days REAL,
                 age_unknown INTEGER NOT NULL DEFAULT 1,
                 source_detail TEXT,
@@ -125,6 +136,17 @@ class JobStore:
         self._ensure_column("jobs", "manual_fit_reason_codes", "TEXT")
         self._ensure_column("jobs", "manual_labeled_at", "TEXT")
         self._ensure_column("jobs", "compensation_type", "TEXT NOT NULL DEFAULT 'unknown'")
+        self._ensure_column("jobs", "role_relevance_label", "TEXT")
+        self._ensure_column("jobs", "role_relevance_reason_codes", "TEXT")
+        self._ensure_column("jobs", "policy_gate_status", "TEXT")
+        self._ensure_column("jobs", "policy_gate_reason_codes", "TEXT")
+        self._ensure_column("jobs", "profile_match_score", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("jobs", "profile_match_label", "TEXT")
+        self._ensure_column("jobs", "profile_match_reason_codes", "TEXT")
+        self._ensure_column("jobs", "profile_version", "TEXT")
+        self._ensure_column("jobs", "scorer_version", "TEXT")
+        self._ensure_column("jobs", "job_text_version", "TEXT")
+        self._ensure_column("jobs", "job_text_snapshot", "TEXT")
         self._ensure_column("run_logs", "normalized_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("run_logs", "rejected_missing_core_fields_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("run_logs", "after_stage_1a_count", "INTEGER NOT NULL DEFAULT 0")
@@ -186,8 +208,12 @@ class JobStore:
                     compensation_type,
                     work_auth_signals, sponsorship_signals, skills, ingested_at,
                     relevance_score, eligibility_confidence, eligibility_status,
-                    relevance_hits, age_days, age_unknown, source_detail
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    relevance_hits, role_relevance_label, role_relevance_reason_codes,
+                    policy_gate_status, policy_gate_reason_codes, profile_match_score,
+                    profile_match_label, profile_match_reason_codes, profile_version,
+                    scorer_version, job_text_version, job_text_snapshot,
+                    age_days, age_unknown, source_detail
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     dedupe_key,
@@ -209,6 +235,17 @@ class JobStore:
                     payload["eligibility_confidence"],
                     payload["eligibility_status"],
                     json.dumps(payload["relevance_hits"]),
+                    payload["role_relevance_label"],
+                    json.dumps(payload["role_relevance_reason_codes"]),
+                    payload["policy_gate_status"],
+                    json.dumps(payload["policy_gate_reason_codes"]),
+                    payload["profile_match_score"],
+                    payload["profile_match_label"],
+                    json.dumps(payload["profile_match_reason_codes"]),
+                    payload["profile_version"],
+                    payload["scorer_version"],
+                    payload["job_text_version"],
+                    payload["job_text_snapshot"],
                     payload["age_days"],
                     int(payload["age_unknown"]),
                     payload["source_detail"],
@@ -240,6 +277,7 @@ class JobStore:
         row = self._conn.execute(
             """
             SELECT description, url, source_detail
+            , job_text_snapshot
             FROM jobs
             WHERE dedupe_key = ?
             LIMIT 1
@@ -265,6 +303,10 @@ class JobStore:
         source_detail = str(row["source_detail"] or "")
         if job.source_detail:
             source_detail = job.source_detail
+        existing_job_text_snapshot = str(row["job_text_snapshot"] or "")
+        job_text_snapshot = existing_job_text_snapshot
+        if job.job_text_snapshot:
+            job_text_snapshot = job.job_text_snapshot
 
         self._conn.execute(
             """
@@ -280,6 +322,17 @@ class JobStore:
                 eligibility_confidence = ?,
                 eligibility_status = ?,
                 relevance_hits = ?,
+                role_relevance_label = ?,
+                role_relevance_reason_codes = ?,
+                policy_gate_status = ?,
+                policy_gate_reason_codes = ?,
+                profile_match_score = ?,
+                profile_match_label = ?,
+                profile_match_reason_codes = ?,
+                profile_version = ?,
+                scorer_version = ?,
+                job_text_version = ?,
+                job_text_snapshot = ?,
                 age_days = ?,
                 age_unknown = ?,
                 source_detail = ?
@@ -297,6 +350,17 @@ class JobStore:
                 job.eligibility_confidence,
                 job.eligibility_status,
                 json.dumps(job.relevance_hits),
+                job.role_relevance_label,
+                json.dumps(job.role_relevance_reason_codes),
+                job.policy_gate_status,
+                json.dumps(job.policy_gate_reason_codes),
+                job.profile_match_score,
+                job.profile_match_label,
+                json.dumps(job.profile_match_reason_codes),
+                job.profile_version,
+                job.scorer_version,
+                job.job_text_version,
+                job_text_snapshot,
                 job.age_days,
                 int(job.age_unknown),
                 source_detail,
@@ -692,6 +756,44 @@ class JobStore:
                 for row in source_rows
             ],
         }
+
+    def list_stage2_jobs(self, limit: int = 20, label: str | None = None, source: str | None = None) -> list[sqlite3.Row]:
+        safe_limit = max(limit, 1)
+        clauses = ["job_text_version IS NOT NULL", "TRIM(job_text_version) <> ''"]
+        params: list[object] = []
+        if label:
+            clauses.append("profile_match_label = ?")
+            params.append(label)
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        where_sql = " AND ".join(clauses)
+        query = f"""
+            SELECT id, source, company, title, location, posted_at, compensation_type,
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   profile_version, scorer_version, job_text_version
+            FROM jobs
+            WHERE {where_sql}
+            ORDER BY ingested_at DESC, id DESC
+            LIMIT ?
+        """
+        params.append(safe_limit)
+        return self._conn.execute(query, tuple(params)).fetchall()
+
+    def get_stage2_job(self, job_id: int) -> sqlite3.Row | None:
+        return self._conn.execute(
+            """
+            SELECT id, source, company, title, location, posted_at, url, compensation_type,
+                   relevance_score, eligibility_status, eligibility_confidence,
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   profile_version, scorer_version, job_text_version, job_text_snapshot,
+                   manual_fit_label, manual_fit_reason_codes
+            FROM jobs
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (job_id,),
+        ).fetchone()
 
 
 def ensure_parent_dir(db_path: str) -> None:

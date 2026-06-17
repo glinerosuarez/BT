@@ -544,6 +544,50 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertIn("multi-tenant data lakehouse", row["description"])
 
+    def test_persisted_jobs_include_stage2_shadow_fields(self) -> None:
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "job-stage2-1",
+                "url": "https://example.com/job-stage2-1",
+                "title": "AI/ML Data Engineering Intern",
+                "company": "Example",
+                "location": "Remote - US",
+                "posted_at": recent_posted_at(),
+                "description": (
+                    "Build production ML systems.\n"
+                    "Requirements\n"
+                    "- Python\n"
+                    "- SQL\n"
+                    "Responsibilities\n"
+                    "- Build ETL pipelines\n"
+                ),
+                "skills": ["python", "sql"],
+            }
+        ]
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertEqual(outcome.persisted_count, 1)
+        row = self.store._conn.execute(
+            """
+            SELECT role_relevance_label, role_relevance_reason_codes, policy_gate_status,
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   profile_version, scorer_version, job_text_version, job_text_snapshot
+            FROM jobs
+            WHERE id = 1
+            """
+        ).fetchone()
+        self.assertEqual(row["role_relevance_label"], "pass")
+        self.assertEqual(row["policy_gate_status"], "pass")
+        self.assertGreaterEqual(float(row["profile_match_score"]), 0.0)
+        self.assertIn(row["profile_match_label"], {"pass", "review", "reject"})
+        self.assertEqual(row["profile_version"], "default_v1")
+        self.assertEqual(row["scorer_version"], "shadow_rules_v1")
+        self.assertEqual(row["job_text_version"], "job_text_v1")
+        self.assertIn("TITLE: AI/ML Data Engineering Intern", row["job_text_snapshot"])
+
     def test_source_meta_counters_are_recorded(self) -> None:
         payload = [
             {

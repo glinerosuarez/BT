@@ -48,6 +48,17 @@ class JobRecord:
     eligibility_confidence: float = 0.0
     eligibility_status: str = "ambiguous"
     relevance_hits: list[str] = field(default_factory=list)
+    role_relevance_label: str = ""
+    role_relevance_reason_codes: list[str] = field(default_factory=list)
+    policy_gate_status: str = ""
+    policy_gate_reason_codes: list[str] = field(default_factory=list)
+    profile_match_score: float = 0.0
+    profile_match_label: str = ""
+    profile_match_reason_codes: list[str] = field(default_factory=list)
+    profile_version: str = ""
+    scorer_version: str = ""
+    job_text_version: str = ""
+    job_text_snapshot: str = ""
     age_days: float | None = None
     age_unknown: bool = True
     source_detail: str = ""

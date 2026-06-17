@@ -55,6 +55,8 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `python -m job_hunter.funnel_report`
 - `python -m job_hunter.funnel_report --format json`
 - `python -m job_hunter.handshake_login`
+- `python -m job_hunter.stage2_report list --limit 20`
+- `python -m job_hunter.stage2_report show --job-id N`
 - `python -m job_hunter.label_jobs stats`
 - `python -m job_hunter.label_jobs list --limit 20`
 - `python -m job_hunter.label_jobs show --job-id N`
@@ -69,7 +71,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 ## SQLite tables
 
 - `jobs`: normalized postings with score/eligibility fields and notification state.
-  - also stores manual fit labels for evaluation work
+  - also stores manual fit labels and Stage 2 shadow-mode reranking fields
 - `seen_events`: dedupe and notification tracking.
 - `run_logs`: per-run metrics.
 - `source_run_logs`: per-source funnel diagnostics (fetched, dead tokens/feed errors, rejected by rule, persisted, notified).
