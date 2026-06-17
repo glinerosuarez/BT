@@ -30,8 +30,10 @@ DETAIL_TEXT_SCRIPT = """
   return best || '';
 }
 """
-POSTED_RELATIVE_RE = re.compile(r"\bPosted\s+(\d+)\s+days?\s+ago\b", re.IGNORECASE)
-CARD_AGE_RE = re.compile(r"\b(\d+)\s*d\s+ago\b", re.IGNORECASE)
+RELATIVE_AGE_RE = re.compile(
+    r"\b(?:(?:posted)\s+)?(\d+)\s*(hours?|hrs?|hr|days?|d|weeks?|wks?|wk|w|months?|mos?|mo)\s+ago\b",
+    re.IGNORECASE,
+)
 
 
 class HandshakeSource(SourceConnector):
@@ -272,14 +274,13 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
 
 
 def _relative_age_to_iso(text: str) -> str | None:
-    match = POSTED_RELATIVE_RE.search(text)
+    match = RELATIVE_AGE_RE.search(text)
     if match:
-        days = int(match.group(1))
-        return (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
-    match = CARD_AGE_RE.search(text)
-    if match:
-        days = int(match.group(1))
-        return (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+        amount = int(match.group(1))
+        unit = match.group(2).lower()
+        delta = _relative_unit_to_delta(amount, unit)
+        if delta is not None:
+            return (datetime.now(timezone.utc) - delta).date().isoformat()
     lowered = text.lower()
     if "new" == lowered.strip() or lowered.strip().endswith("∙ new") or lowered.strip().endswith("· new"):
         return datetime.now(timezone.utc).date().isoformat()
@@ -290,9 +291,27 @@ def _relative_age_to_iso(text: str) -> str | None:
     return None
 
 
+def _relative_unit_to_delta(amount: int, unit: str) -> timedelta | None:
+    if unit in {"hour", "hours", "hr", "hrs"}:
+        return timedelta(hours=amount)
+    if unit in {"day", "days", "d"}:
+        return timedelta(days=amount)
+    if unit in {"week", "weeks", "wk", "wks", "w"}:
+        return timedelta(days=amount * 7)
+    if unit in {"month", "months", "mo", "mos"}:
+        return timedelta(days=amount * 30)
+    return None
+
+
 def _looks_like_card(meta: str, bullet: str, freshness: str) -> bool:
     if not re.search(r"\bintern(ship)?\b|\bco[- ]?op\b", meta, flags=re.IGNORECASE):
         return False
     if bullet != "∙":
         return False
-    return bool(re.match(r"^(new|\d+[dhw] ago)$", freshness, flags=re.IGNORECASE))
+    return bool(
+        re.match(
+            r"^(new|\d+\s*(hours?|hrs?|hr|days?|d|weeks?|wks?|wk|w|months?|mos?|mo)\s+ago)$",
+            freshness,
+            flags=re.IGNORECASE,
+        )
+    )

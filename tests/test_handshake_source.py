@@ -57,6 +57,25 @@ National Journal
 Social Impact & Reputational Risk Intern
 """
 
+MONTH_CARD_TEXT = """Hyphenova
+AI/ML Data Engineering Intern
+$300-450/yr · Internship · May 14—Aug 30
+Remote
+1mo ago
+"""
+
+MONTH_DETAIL_TEXT = """Hyphenova
+Movies, TV, Music, Gaming
+AI/ML Data Engineering Intern
+Posted 1 month ago∙Apply by June 25, 2026 at 10:59 PM
+At a glance
+$300-450/yr
+Remote, based in United States
+Internship
+Job description
+The Opportunity
+"""
+
 
 class HandshakeSourceTests(unittest.TestCase):
     def test_parse_card_text(self) -> None:
@@ -95,12 +114,24 @@ class HandshakeSourceTests(unittest.TestCase):
     def test_relative_age_to_iso(self) -> None:
         self.assertIsNotNone(_relative_age_to_iso("Posted 4 days ago"))
         self.assertIsNotNone(_relative_age_to_iso("Lake Forest, CA · 4d ago"))
+        self.assertIsNotNone(_relative_age_to_iso("Posted 1 month ago"))
+        self.assertIsNotNone(_relative_age_to_iso("Remote · 4wk ago"))
+        self.assertIsNotNone(_relative_age_to_iso("1mo ago"))
 
     def test_extract_cards_from_page_text(self) -> None:
         cards = _extract_cards_from_page_text(PAGE_TEXT)
         self.assertEqual(len(cards), 2)
         self.assertEqual(cards[0]["company"], "National Journal")
         self.assertEqual(cards[1]["title"], "Urology Sales Intern")
+
+    def test_parse_month_based_card_text(self) -> None:
+        parsed = _parse_card_text(MONTH_CARD_TEXT)
+        self.assertIsNotNone(parsed)
+        self.assertTrue(parsed["posted_at"].startswith("20"))
+
+    def test_parse_month_based_detail_text(self) -> None:
+        parsed = _parse_detail_text(MONTH_DETAIL_TEXT)
+        self.assertTrue(parsed["posted_at"].startswith("20"))
 
     def test_dedupe_rows_keeps_first_external_id(self) -> None:
         rows = [
