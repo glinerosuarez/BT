@@ -41,9 +41,9 @@ class LabelJobsTests(unittest.TestCase):
 
     def test_parse_reason_codes_deduplicates(self) -> None:
         values = _parse_reason_codes(
-            "bad_fit_phd_only,bad_fit_phd_only,borderline_adjacent_role,bad_fit_domain_mismatch"
+            "bad_fit_phd_only,bad_fit_phd_only,borderline_conflicting_work_auth,bad_fit_domain_mismatch"
         )
-        self.assertEqual(values, ["bad_fit_phd_only", "borderline_adjacent_role", "bad_fit_domain_mismatch"])
+        self.assertEqual(values, ["bad_fit_phd_only", "borderline_conflicting_work_auth", "bad_fit_domain_mismatch"])
 
     def test_parse_reason_codes_rejects_unknown_values(self) -> None:
         with self.assertRaises(SystemExit):

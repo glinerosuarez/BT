@@ -228,8 +228,75 @@ class JobStore:
                 """,
                 (now_iso, dedupe_key),
             )
+            self.update_existing_job(job, dedupe_key)
             self._conn.commit()
             return False
+
+    def update_existing_job(self, job: JobRecord, dedupe_key: str) -> None:
+        row = self._conn.execute(
+            """
+            SELECT description, url, source_detail
+            FROM jobs
+            WHERE dedupe_key = ?
+            LIMIT 1
+            """,
+            (dedupe_key,),
+        ).fetchone()
+        if row is None:
+            return
+
+        existing_description = str(row["description"] or "")
+        new_description = job.description or ""
+        description = existing_description
+        if len(new_description.strip()) > len(existing_description.strip()):
+            description = new_description
+
+        existing_url = str(row["url"] or "")
+        url = existing_url
+        if job.url and "#jobhunter-" not in job.url:
+            url = job.url
+        elif not existing_url:
+            url = job.url
+
+        source_detail = str(row["source_detail"] or "")
+        if job.source_detail:
+            source_detail = job.source_detail
+
+        self._conn.execute(
+            """
+            UPDATE jobs
+            SET url = ?,
+                description = ?,
+                location = ?,
+                posted_at = ?,
+                work_auth_signals = ?,
+                sponsorship_signals = ?,
+                relevance_score = ?,
+                eligibility_confidence = ?,
+                eligibility_status = ?,
+                relevance_hits = ?,
+                age_days = ?,
+                age_unknown = ?,
+                source_detail = ?
+            WHERE dedupe_key = ?
+            """,
+            (
+                url,
+                description,
+                job.location,
+                job.posted_at,
+                json.dumps(job.work_auth_signals),
+                json.dumps(job.sponsorship_signals),
+                job.relevance_score,
+                job.eligibility_confidence,
+                job.eligibility_status,
+                json.dumps(job.relevance_hits),
+                job.age_days,
+                int(job.age_unknown),
+                source_detail,
+                dedupe_key,
+            ),
+        )
 
     def mark_notified(self, dedupe_key: str, notified: bool) -> None:
         if not notified:

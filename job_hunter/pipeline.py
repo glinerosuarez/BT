@@ -81,6 +81,18 @@ NEGATED_SPONSORSHIP_REGEXES = {
     "no_sponsorship": re.compile(r"\b(no|not|without)\s+(visa\s+)?sponsorship\b", flags=re.IGNORECASE),
     "cannot_sponsor": re.compile(r"\b(cannot|can't|unable to)\s+sponsor\b", flags=re.IGNORECASE),
     "do_not_sponsor": re.compile(r"\b(do not|does not|don't|doesn't)\s+.*\bsponsor(ship)?\b", flags=re.IGNORECASE),
+    "no_current_future_sponsorship": re.compile(
+        r"\bwithout the need for current or future sponsorship\b",
+        flags=re.IGNORECASE,
+    ),
+    "no_current_future_sponsorship_company": re.compile(
+        r"\bwithout the need for current or future sponsorship by the company\b",
+        flags=re.IGNORECASE,
+    ),
+    "future_sponsorship_not_available": re.compile(
+        r"\b(no|not|without)\s+(current|future)\s+sponsorship\b",
+        flags=re.IGNORECASE,
+    ),
 }
 
 
@@ -266,6 +278,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
             outcome.passed_filter_count += 1
             dedupe_key = _dedupe_key(job)
             if store.is_seen(dedupe_key):
+                store.update_existing_job(job, dedupe_key)
                 outcome.duplicate_count += 1
                 source_stats.duplicate_count += 1
                 if notifier is not None and pass_notify and not store.was_notified(dedupe_key):
@@ -503,9 +516,11 @@ def _is_us_scope(job: JobRecord) -> bool:
 def _evaluate_eligibility(job: JobRecord) -> tuple[str, float, list[str], list[str]]:
     blob = _job_blob(job)
     negative = [name for name, pattern in NEGATIVE_WORK_AUTH_REGEXES.items() if pattern.search(blob)]
-    has_negated_sponsorship = any(pattern.search(blob) for pattern in NEGATED_SPONSORSHIP_REGEXES.values())
+    negated_sponsorship = [name for name, pattern in NEGATED_SPONSORSHIP_REGEXES.items() if pattern.search(blob)]
+    if negated_sponsorship:
+        negative.extend(negated_sponsorship)
     positive = []
-    if not has_negated_sponsorship:
+    if not negated_sponsorship:
         positive = [name for name, pattern in POSITIVE_SPONSORSHIP_REGEXES.items() if pattern.search(blob)]
 
     if negative:

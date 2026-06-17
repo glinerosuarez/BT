@@ -137,6 +137,28 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertEqual(confidence, 0.0)
         self.assertTrue(negative)
 
+    def test_eligibility_rejects_current_or_future_sponsorship_block(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="2",
+            url="https://example.com/2",
+            title="Data Science Internship",
+            company="Example",
+            location="Pasadena, CA",
+            is_internship=True,
+            posted_at="2026-06-12",
+            description=(
+                "Open to candidates with OPT/CPT. "
+                "Legally authorized to work in the United States without the need for current or future sponsorship by the company."
+            ),
+            ingested_at="2026-06-17T00:00:00+00:00",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("no_current_future_sponsorship", negative)
+        self.assertEqual(positive, [])
+
     def test_internship_and_us_scope_filters(self) -> None:
         job = JobRecord(
             source="x",
@@ -216,9 +238,9 @@ class PipelineUnitTests(unittest.TestCase):
             ingested_at="now",
         )
         status, confidence, negative, positive = _evaluate_eligibility(job)
-        self.assertEqual(status, "ambiguous")
-        self.assertEqual(confidence, 0.6)
-        self.assertEqual(negative, [])
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertTrue(negative)
         self.assertEqual(positive, [])
 
     def test_relevance_scoring(self) -> None:
@@ -465,6 +487,49 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(outcome2.duplicate_count, 1)
         self.assertEqual(outcome2.notified_count, 1)
         self.assertEqual(notifier2.sent, 1)
+
+    def test_duplicate_refreshes_enriched_description(self) -> None:
+        first_payload = [
+            {
+                "source": "handshake",
+                "external_id": "job-5",
+                "url": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+                "title": "Data Engineering Intern",
+                "company": "Finz",
+                "location": "Remote",
+                "posted_at": recent_posted_at(),
+                "description": "Finz Data Engineering Intern Unpaid · Internship Remote 5d ago",
+                "skills": [],
+                "source_detail": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern",
+            }
+        ]
+        second_payload = [
+            {
+                "source": "handshake",
+                "external_id": "job-5",
+                "url": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+                "title": "Data Engineering Intern",
+                "company": "Finz",
+                "location": "Remote, based in United States",
+                "posted_at": recent_posted_at(),
+                "description": (
+                    "We are looking for a Data Engineering Intern to help build a multi-tenant "
+                    "data lakehouse from the ground up."
+                ),
+                "skills": [],
+                "source_detail": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+            }
+        ]
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(first_payload)]):
+            outcome1 = run_pipeline(self.settings, self.store, None)
+        self.assertEqual(outcome1.persisted_count, 1)
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(second_payload)]):
+            outcome2 = run_pipeline(self.settings, self.store, None)
+        self.assertEqual(outcome2.persisted_count, 0)
+        row = self.store.get_job_for_labeling(1)
+        self.assertIsNotNone(row)
+        self.assertIn("multi-tenant data lakehouse", row["description"])
 
     def test_source_meta_counters_are_recorded(self) -> None:
         payload = [
