@@ -41,6 +41,7 @@ class HandshakeSource(SourceConnector):
         headless: bool,
         max_results: int,
         page_timeout_seconds: int,
+        fetch_details: bool = True,
     ) -> None:
         super().__init__(name="handshake")
         self.search_urls = search_urls
@@ -48,6 +49,7 @@ class HandshakeSource(SourceConnector):
         self.headless = headless
         self.max_results = max(max_results, 1)
         self.page_timeout_seconds = max(page_timeout_seconds, 5)
+        self.fetch_details = fetch_details
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
         _ = timeout_seconds
@@ -95,14 +97,15 @@ class HandshakeSource(SourceConnector):
             if not company or not title:
                 continue
             card_text = "\n".join([company, title, meta, location, freshness])
-            locator = page.get_by_text(title, exact=True).first
             detail_text = ""
-            try:
-                locator.click(timeout=5000)
-                page.wait_for_timeout(1500)
-                detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
-            except PlaywrightTimeoutError:
-                detail_text = ""
+            if self.fetch_details:
+                locator = page.get_by_role("button", name=title, exact=False).first
+                try:
+                    locator.click(timeout=5000)
+                    page.wait_for_timeout(1500)
+                    detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
+                except PlaywrightTimeoutError:
+                    detail_text = ""
             parsed = _build_row(card_text=card_text, detail_text=detail_text, search_url=search_url)
             if parsed is not None:
                 rows.append(parsed)

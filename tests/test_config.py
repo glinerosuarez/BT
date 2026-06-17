@@ -44,6 +44,7 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.handshake_headless)
         self.assertEqual(settings.handshake_max_results, 25)
         self.assertEqual(settings.handshake_page_timeout_seconds, 30)
+        self.assertTrue(settings.handshake_fetch_details)
 
 
 if __name__ == "__main__":

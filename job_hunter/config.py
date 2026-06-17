@@ -182,6 +182,7 @@ class Settings:
     handshake_headless: bool
     handshake_max_results: int
     handshake_page_timeout_seconds: int
+    handshake_fetch_details: bool
 
     usajobs_user_agent: str | None
     usajobs_auth_key: str | None
@@ -274,6 +275,7 @@ def load_settings() -> Settings:
         handshake_headless=_env_bool("JOB_HUNTER_HANDSHAKE_HEADLESS", True),
         handshake_max_results=_env_int("JOB_HUNTER_HANDSHAKE_MAX_RESULTS", 25),
         handshake_page_timeout_seconds=_env_int("JOB_HUNTER_HANDSHAKE_PAGE_TIMEOUT_SECONDS", 30),
+        handshake_fetch_details=_env_bool("JOB_HUNTER_HANDSHAKE_FETCH_DETAILS", True),
         usajobs_user_agent=os.getenv("JOB_HUNTER_USAJOBS_USER_AGENT"),
         usajobs_auth_key=os.getenv("JOB_HUNTER_USAJOBS_AUTH_KEY"),
         usajobs_results_per_page=_env_int("JOB_HUNTER_USAJOBS_RESULTS_PER_PAGE", 250),

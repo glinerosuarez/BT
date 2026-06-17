@@ -63,6 +63,7 @@ def make_settings(db_path: str, data_dir: Path) -> Settings:
         handshake_headless=True,
         handshake_max_results=25,
         handshake_page_timeout_seconds=30,
+        handshake_fetch_details=True,
         usajobs_user_agent=None,
         usajobs_auth_key=None,
         usajobs_results_per_page=250,

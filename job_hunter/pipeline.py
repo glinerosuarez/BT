@@ -137,6 +137,7 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 headless=settings.handshake_headless,
                 max_results=settings.handshake_max_results,
                 page_timeout_seconds=settings.handshake_page_timeout_seconds,
+                fetch_details=settings.handshake_fetch_details,
             )
         )
 
