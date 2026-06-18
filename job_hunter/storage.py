@@ -795,6 +795,26 @@ class JobStore:
             (job_id,),
         ).fetchone()
 
+    def list_stage2_labeled_jobs(self, limit: int = 200) -> list[sqlite3.Row]:
+        safe_limit = max(limit, 1)
+        return self._conn.execute(
+            """
+            SELECT id, source, company, title, location, posted_at, url, compensation_type,
+                   eligibility_status, eligibility_confidence, relevance_score,
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   profile_version, scorer_version, job_text_version, job_text_snapshot,
+                   manual_fit_label, manual_fit_reason_codes
+            FROM jobs
+            WHERE manual_fit_label IS NOT NULL
+              AND TRIM(manual_fit_label) <> ''
+              AND job_text_version IS NOT NULL
+              AND TRIM(job_text_version) <> ''
+            ORDER BY manual_labeled_at DESC, id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        ).fetchall()
+
 
 def ensure_parent_dir(db_path: str) -> None:
     path = Path(db_path)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from job_hunter.config import load_settings
 from job_hunter.storage import JobStore, ensure_parent_dir
@@ -21,6 +22,10 @@ def main() -> int:
     show_parser.add_argument("--job-id", type=int, required=True)
     show_parser.add_argument("--format", choices=("text", "json"), default="text")
 
+    export_parser = subparsers.add_parser("export-labeled", help="Export labeled Stage 2 rows for embeddings/eval work")
+    export_parser.add_argument("--output", required=True)
+    export_parser.add_argument("--limit", type=int, default=200)
+
     args = parser.parse_args()
 
     settings = load_settings()
@@ -34,6 +39,15 @@ def main() -> int:
                 print(json.dumps(payload, indent=2, sort_keys=True))
             else:
                 print(_render_list_text(payload))
+            return 0
+
+        if args.command == "export-labeled":
+            rows = store.list_stage2_labeled_jobs(limit=args.limit)
+            payload = [_serialize_show_row(row) for row in rows]
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            print(f"Wrote {len(payload)} labeled Stage 2 rows to {output_path}")
             return 0
 
         row = store.get_stage2_job(args.job_id)

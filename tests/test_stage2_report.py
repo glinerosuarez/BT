@@ -129,6 +129,25 @@ class Stage2ReportTests(unittest.TestCase):
         self.assertIn("job_text_snapshot:", output)
         self.assertIn("TITLE: Data Engineering Intern", output)
 
+    def test_export_labeled_writes_json(self) -> None:
+        store = JobStore(self.db_path)
+        store.set_manual_fit_label(1, "good_fit", ["good_fit_ml_engineering"])
+        store.close()
+
+        output_path = Path(self.temp_dir.name) / "stage2-labeled.json"
+        buffer = io.StringIO()
+        with patch("job_hunter.stage2_report.load_settings", return_value=self.settings):
+            with patch("sys.argv", ["stage2_report.py", "export-labeled", "--output", str(output_path), "--limit", "10"]):
+                with redirect_stdout(buffer):
+                    rc = main()
+        output = buffer.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertTrue(output_path.exists())
+        payload = output_path.read_text(encoding="utf-8")
+        self.assertIn("good_fit", payload)
+        self.assertIn("job_text_snapshot", payload)
+        self.assertIn("Wrote 1 labeled Stage 2 rows", output)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -57,6 +57,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `python -m job_hunter.handshake_login`
 - `python -m job_hunter.stage2_report list --limit 20`
 - `python -m job_hunter.stage2_report show --job-id N`
+- `python -m job_hunter.stage2_report export-labeled --output /tmp/stage2-labeled.json --limit 200`
 - `python -m job_hunter.label_jobs stats`
 - `python -m job_hunter.label_jobs list --limit 20`
 - `python -m job_hunter.label_jobs show --job-id N`
