@@ -24,6 +24,85 @@ class FakeSource:
         return self.payload
 
 
+class FakeEmbeddingDiagnostics:
+    def __init__(self) -> None:
+        self.model_name = "fake-model"
+        self.requested_device = "cpu"
+        self.device = "cpu"
+        self.device_source = "explicit"
+        self.local_files_only = True
+        self.batch_size = 16
+        self.total_texts = 1
+        self.total_batches = 1
+        self.embedding_dimension = 3
+        self.max_sequence_length = 8
+        self.token_lengths = [10]
+        self.overflow_tokens_per_text = [2]
+        self.total_input_tokens = 10
+        self.total_truncated_tokens = 2
+        self.max_observed_tokens = 10
+        self.truncated_count = 1
+        self.truncated_indices = [0]
+        self.truncated_job_rate = 1.0
+        self.truncated_token_share = 0.2
+        self.avg_overflow_tokens_on_truncated_jobs = 2.0
+        self.p95_overflow_tokens = 2
+
+
+class FakeEmbeddingResult:
+    def __init__(self) -> None:
+        self.diagnostics = FakeEmbeddingDiagnostics()
+
+
+class FakeEmbeddingBackend:
+    def __init__(
+        self,
+        model_name: str = "default",
+        device: str | None = None,
+        local_files_only: bool = True,
+    ) -> None:
+        self.model_name = model_name
+        self.requested_device = device or "cpu"
+        self.device = device or "cpu"
+        self.local_files_only = local_files_only
+        self.seen_texts: list[str] = []
+
+    def embed_texts(self, texts: list[str], *, batch_size: int):
+        self.seen_texts = list(texts)
+        result = FakeEmbeddingResult()
+        result.diagnostics.model_name = self.model_name
+        result.diagnostics.requested_device = self.device
+        result.diagnostics.device = self.device
+        result.diagnostics.device_source = "explicit" if self.device != "auto" else "detected"
+        result.diagnostics.local_files_only = self.local_files_only
+        result.diagnostics.batch_size = batch_size
+        result.diagnostics.total_texts = len(texts)
+        return result
+
+
+class FakeSemanticResult:
+    def __init__(self) -> None:
+        self.semantic_base_score = 0.84
+        self.semantic_match_score = 0.77
+        self.semantic_match_label = "pass"
+        self.semantic_match_reason_codes = ["semantic_profile_data_engineering", "semantic_similarity_high"]
+        self.semantic_research_heaviness_score = 0.07
+        self.semantic_adjustment_reason_codes = ["semantic_penalty_masters_signal"]
+        self.semantic_profile_id = "data_engineering"
+        self.semantic_model_name = "fake-semantic-model"
+        self.semantic_scorer_version = "semantic_shadow_v1"
+        self.semantic_text_hash = "semantic-hash-1"
+
+
+class FakeSemanticScorer:
+    def __init__(self, backend) -> None:
+        self.backend = backend
+
+    def score_job_text(self, job_text: str):
+        _ = job_text
+        return FakeSemanticResult()
+
+
 def make_settings(db_path: str) -> Settings:
     return Settings(
         db_path=db_path,
@@ -95,7 +174,7 @@ class Stage2ReportTests(unittest.TestCase):
                 "title": "Data Engineering Intern",
                 "company": "Finz",
                 "location": "Remote - US",
-                "posted_at": "2026-06-16T00:00:00+00:00",
+                "posted_at": "2026-06-25T00:00:00+00:00",
                 "description": "Build production ML systems with Python and SQL for our internship program.",
                 "skills": ["python", "sql"],
             }
@@ -147,6 +226,141 @@ class Stage2ReportTests(unittest.TestCase):
         self.assertIn("good_fit", payload)
         self.assertIn("job_text_snapshot", payload)
         self.assertIn("Wrote 1 labeled Stage 2 rows", output)
+
+    def test_embedding_diagnostics_renders_text(self) -> None:
+        buffer = io.StringIO()
+        with patch("job_hunter.stage2_report.load_settings", return_value=self.settings):
+            with patch("job_hunter.stage2_report._load_local_embedding_backend", return_value=FakeEmbeddingBackend):
+                with patch(
+                    "sys.argv",
+                    ["stage2_report.py", "embedding-diagnostics", "--limit", "5", "--batch-size", "16"],
+                ):
+                    with redirect_stdout(buffer):
+                        rc = main()
+        output = buffer.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("sample_size=1", output)
+        self.assertIn("requested_device=cpu", output)
+        self.assertIn("truncated_job_rate=1.0000", output)
+        self.assertIn("top_truncated_jobs:", output)
+        self.assertIn("Data Engineering Intern", output)
+
+    def test_embedding_diagnostics_renders_json(self) -> None:
+        buffer = io.StringIO()
+        with patch("job_hunter.stage2_report.load_settings", return_value=self.settings):
+            with patch("job_hunter.stage2_report._load_local_embedding_backend", return_value=FakeEmbeddingBackend):
+                with patch(
+                    "sys.argv",
+                    ["stage2_report.py", "embedding-diagnostics", "--limit", "5", "--format", "json"],
+                ):
+                    with redirect_stdout(buffer):
+                        rc = main()
+        output = buffer.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn('"sample_size": 1', output)
+        self.assertIn('"local_files_only": true', output)
+        self.assertIn('"truncated_token_share": 0.2', output)
+        self.assertIn('"top_truncated_jobs"', output)
+
+    def test_embedding_diagnostics_allow_network_flips_local_files_only(self) -> None:
+        buffer = io.StringIO()
+        with patch("job_hunter.stage2_report.load_settings", return_value=self.settings):
+            with patch("job_hunter.stage2_report._load_local_embedding_backend", return_value=FakeEmbeddingBackend):
+                with patch(
+                    "sys.argv",
+                    [
+                        "stage2_report.py",
+                        "embedding-diagnostics",
+                        "--limit",
+                        "5",
+                        "--allow-network",
+                        "--device",
+                        "mps",
+                        "--format",
+                        "json",
+                    ],
+                ):
+                    with redirect_stdout(buffer):
+                        rc = main()
+        output = buffer.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn('"requested_device": "mps"', output)
+        self.assertIn('"device_source": "explicit"', output)
+        self.assertIn('"local_files_only": false', output)
+
+    def test_semantic_backfill_updates_rows(self) -> None:
+        buffer = io.StringIO()
+        with patch("job_hunter.stage2_report.load_settings", return_value=self.settings):
+            with patch("job_hunter.stage2_report._load_local_embedding_backend", return_value=FakeEmbeddingBackend):
+                with patch("job_hunter.stage2_report._load_semantic_shadow_scorer", return_value=FakeSemanticScorer):
+                    with patch(
+                        "sys.argv",
+                        ["stage2_report.py", "semantic-backfill", "--limit", "5"],
+                    ):
+                        with redirect_stdout(buffer):
+                            rc = main()
+        output = buffer.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("updated_count=1", output)
+        self.assertIn("semantic=pass", output)
+        self.assertIn("base=0.84", output)
+        self.assertIn("penalty=0.07", output)
+        store = JobStore(self.db_path)
+        row = store.get_stage2_job(1)
+        store.close()
+        self.assertEqual(row["semantic_match_label"], "pass")
+        self.assertEqual(row["semantic_profile_id"], "data_engineering")
+
+    def test_semantic_backfill_renders_json(self) -> None:
+        buffer = io.StringIO()
+        with patch("job_hunter.stage2_report.load_settings", return_value=self.settings):
+            with patch("job_hunter.stage2_report._load_local_embedding_backend", return_value=FakeEmbeddingBackend):
+                with patch("job_hunter.stage2_report._load_semantic_shadow_scorer", return_value=FakeSemanticScorer):
+                    with patch(
+                        "sys.argv",
+                        ["stage2_report.py", "semantic-backfill", "--limit", "5", "--format", "json"],
+                    ):
+                        with redirect_stdout(buffer):
+                            rc = main()
+        output = buffer.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn('"updated_count": 1', output)
+        self.assertIn('"semantic_match_label": "pass"', output)
+
+    def test_disagreement_report_renders_counts_and_rows(self) -> None:
+        store = JobStore(self.db_path)
+        store.update_semantic_shadow(
+            1,
+            semantic_match_score=0.77,
+            semantic_match_label="pass",
+            semantic_match_reason_codes=["semantic_similarity_high"],
+            semantic_base_score=0.84,
+            semantic_research_heaviness_score=0.07,
+            semantic_adjustment_reason_codes=["semantic_penalty_masters_signal"],
+            semantic_profile_id="data_engineering",
+            semantic_model_name="fake-semantic-model",
+            semantic_scorer_version="semantic_shadow_v1",
+            semantic_text_hash="semantic-hash-1",
+        )
+        store.set_manual_fit_label(1, "bad_fit", ["bad_fit_content_role"])
+        store.close()
+
+        buffer = io.StringIO()
+        with patch("job_hunter.stage2_report.load_settings", return_value=self.settings):
+            with patch(
+                "sys.argv",
+                ["stage2_report.py", "disagreement-report", "--limit", "5", "--format", "text"],
+            ):
+                with redirect_stdout(buffer):
+                    rc = main()
+        output = buffer.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("disagreement_count=1", output)
+        self.assertIn("deterministic_vs_manual=1", output)
+        self.assertIn("semantic_vs_manual=1", output)
+        self.assertIn("Data Engineering Intern", output)
+        self.assertIn("normalized_manual=reject", output)
+        self.assertIn("axes=deterministic_vs_manual,semantic_vs_manual", output)
 
 
 if __name__ == "__main__":

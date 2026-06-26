@@ -59,6 +59,16 @@ class JobRecord:
     scorer_version: str = ""
     job_text_version: str = ""
     job_text_snapshot: str = ""
+    semantic_match_score: float = 0.0
+    semantic_match_label: str = ""
+    semantic_match_reason_codes: list[str] = field(default_factory=list)
+    semantic_base_score: float = 0.0
+    semantic_research_heaviness_score: float = 0.0
+    semantic_adjustment_reason_codes: list[str] = field(default_factory=list)
+    semantic_profile_id: str = ""
+    semantic_model_name: str = ""
+    semantic_scorer_version: str = ""
+    semantic_text_hash: str = ""
     age_days: float | None = None
     age_unknown: bool = True
     source_detail: str = ""

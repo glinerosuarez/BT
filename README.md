@@ -27,6 +27,21 @@ set -a; source .env; set +a
 python -m job_hunter.run_once
 ```
 
+## Optional local embeddings backend
+
+Install this only when you want to run the future Stage 2 semantic scorer locally:
+
+```bash
+pip install -e '.[local-embeddings]'
+```
+
+Current implementation status:
+
+- Local batching utilities are in `job_hunter/stage2_local_embeddings.py`.
+- Default model target is `BAAI/bge-small-en-v1.5`.
+- For this repo, diagnostics default to `cpu`; use `--device mps` only if you have verified that your local PyTorch runtime exposes MPS successfully.
+- This is packaged separately so the default install stays lightweight.
+
 ## Run continuously
 
 ```bash
@@ -58,6 +73,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `python -m job_hunter.stage2_report list --limit 20`
 - `python -m job_hunter.stage2_report show --job-id N`
 - `python -m job_hunter.stage2_report export-labeled --output /tmp/stage2-labeled.json --limit 200`
+- `python -m job_hunter.stage2_report embedding-diagnostics --limit 200`
 - `python -m job_hunter.label_jobs stats`
 - `python -m job_hunter.label_jobs list --limit 20`
 - `python -m job_hunter.label_jobs show --job-id N`

@@ -11,5 +11,11 @@ dependencies = [
     "playwright>=1.60,<2",
 ]
 
+[project.optional-dependencies]
+local-embeddings = [
+    "numpy>=1.26,<3",
+    "sentence-transformers>=3,<4",
+]
+
 [tool.setuptools]
 packages = ["job_hunter", "job_hunter.sources"]

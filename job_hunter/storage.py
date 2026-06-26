@@ -53,6 +53,16 @@ class JobStore:
                 scorer_version TEXT,
                 job_text_version TEXT,
                 job_text_snapshot TEXT,
+                semantic_match_score REAL NOT NULL DEFAULT 0.0,
+                semantic_match_label TEXT,
+                semantic_match_reason_codes TEXT,
+                semantic_base_score REAL NOT NULL DEFAULT 0.0,
+                semantic_research_heaviness_score REAL NOT NULL DEFAULT 0.0,
+                semantic_adjustment_reason_codes TEXT,
+                semantic_profile_id TEXT,
+                semantic_model_name TEXT,
+                semantic_scorer_version TEXT,
+                semantic_text_hash TEXT,
                 age_days REAL,
                 age_unknown INTEGER NOT NULL DEFAULT 1,
                 source_detail TEXT,
@@ -147,6 +157,16 @@ class JobStore:
         self._ensure_column("jobs", "scorer_version", "TEXT")
         self._ensure_column("jobs", "job_text_version", "TEXT")
         self._ensure_column("jobs", "job_text_snapshot", "TEXT")
+        self._ensure_column("jobs", "semantic_match_score", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("jobs", "semantic_match_label", "TEXT")
+        self._ensure_column("jobs", "semantic_match_reason_codes", "TEXT")
+        self._ensure_column("jobs", "semantic_base_score", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("jobs", "semantic_research_heaviness_score", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("jobs", "semantic_adjustment_reason_codes", "TEXT")
+        self._ensure_column("jobs", "semantic_profile_id", "TEXT")
+        self._ensure_column("jobs", "semantic_model_name", "TEXT")
+        self._ensure_column("jobs", "semantic_scorer_version", "TEXT")
+        self._ensure_column("jobs", "semantic_text_hash", "TEXT")
         self._ensure_column("run_logs", "normalized_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("run_logs", "rejected_missing_core_fields_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("run_logs", "after_stage_1a_count", "INTEGER NOT NULL DEFAULT 0")
@@ -212,8 +232,11 @@ class JobStore:
                     policy_gate_status, policy_gate_reason_codes, profile_match_score,
                     profile_match_label, profile_match_reason_codes, profile_version,
                     scorer_version, job_text_version, job_text_snapshot,
-                    age_days, age_unknown, source_detail
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    semantic_match_score, semantic_match_label, semantic_match_reason_codes,
+                    semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
+                    semantic_profile_id, semantic_model_name, semantic_scorer_version,
+                    semantic_text_hash, age_days, age_unknown, source_detail
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     dedupe_key,
@@ -246,6 +269,16 @@ class JobStore:
                     payload["scorer_version"],
                     payload["job_text_version"],
                     payload["job_text_snapshot"],
+                    payload["semantic_match_score"],
+                    payload["semantic_match_label"],
+                    json.dumps(payload["semantic_match_reason_codes"]),
+                    payload["semantic_base_score"],
+                    payload["semantic_research_heaviness_score"],
+                    json.dumps(payload["semantic_adjustment_reason_codes"]),
+                    payload["semantic_profile_id"],
+                    payload["semantic_model_name"],
+                    payload["semantic_scorer_version"],
+                    payload["semantic_text_hash"],
                     payload["age_days"],
                     int(payload["age_unknown"]),
                     payload["source_detail"],
@@ -333,6 +366,16 @@ class JobStore:
                 scorer_version = ?,
                 job_text_version = ?,
                 job_text_snapshot = ?,
+                semantic_match_score = ?,
+                semantic_match_label = ?,
+                semantic_match_reason_codes = ?,
+                semantic_base_score = ?,
+                semantic_research_heaviness_score = ?,
+                semantic_adjustment_reason_codes = ?,
+                semantic_profile_id = ?,
+                semantic_model_name = ?,
+                semantic_scorer_version = ?,
+                semantic_text_hash = ?,
                 age_days = ?,
                 age_unknown = ?,
                 source_detail = ?
@@ -361,6 +404,16 @@ class JobStore:
                 job.scorer_version,
                 job.job_text_version,
                 job_text_snapshot,
+                job.semantic_match_score,
+                job.semantic_match_label,
+                json.dumps(job.semantic_match_reason_codes),
+                job.semantic_base_score,
+                job.semantic_research_heaviness_score,
+                json.dumps(job.semantic_adjustment_reason_codes),
+                job.semantic_profile_id,
+                job.semantic_model_name,
+                job.semantic_scorer_version,
+                job.semantic_text_hash,
                 job.age_days,
                 int(job.age_unknown),
                 source_detail,
@@ -771,7 +824,10 @@ class JobStore:
         query = f"""
             SELECT id, source, company, title, location, posted_at, compensation_type,
                    profile_match_score, profile_match_label, profile_match_reason_codes,
-                   profile_version, scorer_version, job_text_version
+                   profile_version, scorer_version, job_text_version,
+                   semantic_match_score, semantic_match_label, semantic_match_reason_codes,
+                   semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
+                   semantic_profile_id, semantic_model_name, semantic_scorer_version
             FROM jobs
             WHERE {where_sql}
             ORDER BY ingested_at DESC, id DESC
@@ -787,6 +843,10 @@ class JobStore:
                    relevance_score, eligibility_status, eligibility_confidence,
                    profile_match_score, profile_match_label, profile_match_reason_codes,
                    profile_version, scorer_version, job_text_version, job_text_snapshot,
+                   semantic_match_score, semantic_match_label, semantic_match_reason_codes,
+                   semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
+                   semantic_profile_id, semantic_model_name, semantic_scorer_version,
+                   semantic_text_hash,
                    manual_fit_label, manual_fit_reason_codes
             FROM jobs
             WHERE id = ?
@@ -803,6 +863,10 @@ class JobStore:
                    eligibility_status, eligibility_confidence, relevance_score,
                    profile_match_score, profile_match_label, profile_match_reason_codes,
                    profile_version, scorer_version, job_text_version, job_text_snapshot,
+                   semantic_match_score, semantic_match_label, semantic_match_reason_codes,
+                   semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
+                   semantic_profile_id, semantic_model_name, semantic_scorer_version,
+                   semantic_text_hash,
                    manual_fit_label, manual_fit_reason_codes
             FROM jobs
             WHERE manual_fit_label IS NOT NULL
@@ -814,6 +878,122 @@ class JobStore:
             """,
             (safe_limit,),
         ).fetchall()
+
+    def list_stage2_job_text_rows(
+        self,
+        limit: int = 200,
+        *,
+        label: str | None = None,
+        source: str | None = None,
+        labeled_only: bool = False,
+    ) -> list[sqlite3.Row]:
+        safe_limit = max(limit, 1)
+        clauses = [
+            "job_text_snapshot IS NOT NULL",
+            "TRIM(job_text_snapshot) <> ''",
+            "job_text_version IS NOT NULL",
+            "TRIM(job_text_version) <> ''",
+        ]
+        params: list[object] = []
+        if labeled_only:
+            clauses.extend(["manual_fit_label IS NOT NULL", "TRIM(manual_fit_label) <> ''"])
+        if label:
+            clauses.append("profile_match_label = ?")
+            params.append(label)
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        where_sql = " AND ".join(clauses)
+        query = f"""
+            SELECT id, source, company, title, posted_at, profile_match_label, manual_fit_label,
+                   job_text_version, job_text_snapshot
+            FROM jobs
+            WHERE {where_sql}
+            ORDER BY ingested_at DESC, id DESC
+            LIMIT ?
+        """
+        params.append(safe_limit)
+        return self._conn.execute(query, tuple(params)).fetchall()
+
+    def update_semantic_shadow(
+        self,
+        job_id: int,
+        *,
+        semantic_match_score: float,
+        semantic_match_label: str,
+        semantic_match_reason_codes: list[str],
+        semantic_base_score: float,
+        semantic_research_heaviness_score: float,
+        semantic_adjustment_reason_codes: list[str],
+        semantic_profile_id: str,
+        semantic_model_name: str,
+        semantic_scorer_version: str,
+        semantic_text_hash: str,
+    ) -> bool:
+        cursor = self._conn.execute(
+            """
+            UPDATE jobs
+            SET semantic_match_score = ?,
+                semantic_match_label = ?,
+                semantic_match_reason_codes = ?,
+                semantic_base_score = ?,
+                semantic_research_heaviness_score = ?,
+                semantic_adjustment_reason_codes = ?,
+                semantic_profile_id = ?,
+                semantic_model_name = ?,
+                semantic_scorer_version = ?,
+                semantic_text_hash = ?
+            WHERE id = ?
+            """,
+            (
+                semantic_match_score,
+                semantic_match_label,
+                json.dumps(semantic_match_reason_codes),
+                semantic_base_score,
+                semantic_research_heaviness_score,
+                json.dumps(semantic_adjustment_reason_codes),
+                semantic_profile_id,
+                semantic_model_name,
+                semantic_scorer_version,
+                semantic_text_hash,
+                job_id,
+            ),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def list_stage2_comparison_rows(
+        self,
+        limit: int = 200,
+        *,
+        source: str | None = None,
+        labeled_only: bool = False,
+    ) -> list[sqlite3.Row]:
+        safe_limit = max(limit, 1)
+        clauses = [
+            "job_text_version IS NOT NULL",
+            "TRIM(job_text_version) <> ''",
+        ]
+        params: list[object] = []
+        if labeled_only:
+            clauses.extend(["manual_fit_label IS NOT NULL", "TRIM(manual_fit_label) <> ''"])
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        where_sql = " AND ".join(clauses)
+        query = f"""
+            SELECT id, source, company, title, location, posted_at, compensation_type,
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   semantic_match_score, semantic_match_label, semantic_match_reason_codes,
+                   semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
+                   semantic_profile_id, manual_fit_label, manual_fit_reason_codes
+            FROM jobs
+            WHERE {where_sql}
+            ORDER BY ingested_at DESC, id DESC
+            LIMIT ?
+        """
+        params.append(safe_limit)
+        return self._conn.execute(query, tuple(params)).fetchall()
 
 
 def ensure_parent_dir(db_path: str) -> None:

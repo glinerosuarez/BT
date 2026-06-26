@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import importlib.util
 import json
 import logging
 import re
@@ -187,6 +188,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
     shadow_scorer = ShadowProfileScorer()
+    semantic_scorer = _build_semantic_shadow_scorer()
     title_blacklist_regexes = _compile_title_blacklist(settings.title_blacklist_patterns)
     data_role_title_regexes = _compile_title_blacklist(settings.data_role_title_patterns)
     non_data_role_title_regexes = _compile_title_blacklist(settings.non_data_title_patterns)
@@ -279,6 +281,21 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
             job.scorer_version = stage2_result.scorer_version
             job.job_text_version = stage2_result.job_text_version
             job.job_text_snapshot = stage2_result.job_text_snapshot
+            if semantic_scorer is not None:
+                try:
+                    semantic_result = semantic_scorer.score(job)
+                    job.semantic_match_score = semantic_result.semantic_match_score
+                    job.semantic_match_label = semantic_result.semantic_match_label
+                    job.semantic_match_reason_codes = semantic_result.semantic_match_reason_codes
+                    job.semantic_base_score = semantic_result.semantic_base_score
+                    job.semantic_research_heaviness_score = semantic_result.semantic_research_heaviness_score
+                    job.semantic_adjustment_reason_codes = semantic_result.semantic_adjustment_reason_codes
+                    job.semantic_profile_id = semantic_result.semantic_profile_id
+                    job.semantic_model_name = semantic_result.semantic_model_name
+                    job.semantic_scorer_version = semantic_result.semantic_scorer_version
+                    job.semantic_text_hash = semantic_result.semantic_text_hash
+                except Exception:
+                    LOG.exception("semantic_shadow_scoring_failed", extra={"source": source.name, "url": job.url})
 
             if job.relevance_score < settings.min_relevance_score:
                 source_stats.rejected_relevance_count += 1
@@ -334,6 +351,22 @@ def _filter_suppressed_items(store: JobStore, source_name: str, items: list[str]
             continue
         kept.append(item)
     return kept
+
+
+def _build_semantic_shadow_scorer():
+    if importlib.util.find_spec("sentence_transformers") is None:
+        LOG.info("semantic_shadow_scorer_unavailable_missing_sentence_transformers")
+        return None
+    try:
+        from job_hunter.stage2_semantic import SemanticShadowScorer
+    except Exception:
+        LOG.info("semantic_shadow_scorer_unavailable")
+        return None
+    try:
+        return SemanticShadowScorer()
+    except Exception:
+        LOG.info("semantic_shadow_scorer_init_failed", exc_info=True)
+        return None
 
 
 def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:

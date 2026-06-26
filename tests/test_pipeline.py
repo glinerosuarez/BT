@@ -545,6 +545,23 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertIn("multi-tenant data lakehouse", row["description"])
 
     def test_persisted_jobs_include_stage2_shadow_fields(self) -> None:
+        class FakeSemanticResult:
+            semantic_base_score = 0.88
+            semantic_match_score = 0.81
+            semantic_match_label = "pass"
+            semantic_match_reason_codes = ["semantic_profile_data_engineering", "semantic_similarity_high"]
+            semantic_research_heaviness_score = 0.07
+            semantic_adjustment_reason_codes = ["semantic_penalty_masters_signal"]
+            semantic_profile_id = "data_engineering"
+            semantic_model_name = "fake-semantic-model"
+            semantic_scorer_version = "semantic_shadow_v1"
+            semantic_text_hash = "abc123"
+
+        class FakeSemanticScorer:
+            def score(self, job):
+                _ = job
+                return FakeSemanticResult()
+
         payload = [
             {
                 "source": "fake",
@@ -567,14 +584,18 @@ class PipelineIntegrationTests(unittest.TestCase):
         ]
 
         with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
-            outcome = run_pipeline(self.settings, self.store, None)
+            with patch("job_hunter.pipeline._build_semantic_shadow_scorer", return_value=FakeSemanticScorer()):
+                outcome = run_pipeline(self.settings, self.store, None)
 
         self.assertEqual(outcome.persisted_count, 1)
         row = self.store._conn.execute(
             """
             SELECT role_relevance_label, role_relevance_reason_codes, policy_gate_status,
                    profile_match_score, profile_match_label, profile_match_reason_codes,
-                   profile_version, scorer_version, job_text_version, job_text_snapshot
+                   profile_version, scorer_version, job_text_version, job_text_snapshot,
+                   semantic_match_score, semantic_match_label, semantic_match_reason_codes,
+                   semantic_profile_id, semantic_model_name, semantic_scorer_version,
+                   semantic_text_hash
             FROM jobs
             WHERE id = 1
             """
@@ -587,6 +608,13 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(row["scorer_version"], "shadow_rules_v1")
         self.assertEqual(row["job_text_version"], "job_text_v1")
         self.assertIn("TITLE: AI/ML Data Engineering Intern", row["job_text_snapshot"])
+        self.assertAlmostEqual(float(row["semantic_match_score"]), 0.81)
+        self.assertEqual(row["semantic_match_label"], "pass")
+        self.assertIn("semantic_similarity_high", str(row["semantic_match_reason_codes"]))
+        self.assertEqual(row["semantic_profile_id"], "data_engineering")
+        self.assertEqual(row["semantic_model_name"], "fake-semantic-model")
+        self.assertEqual(row["semantic_scorer_version"], "semantic_shadow_v1")
+        self.assertEqual(row["semantic_text_hash"], "abc123")
 
     def test_source_meta_counters_are_recorded(self) -> None:
         payload = [
