@@ -96,6 +96,27 @@ Job description
 The Opportunity
 """
 
+SUMMARY_BETA_DETAIL_TEXT = """Citizens for Responsibility and Ethics in Washington
+Non-Profit - Other
+Communications Intern
+Posted 10 hours ago∙Apply by July 27, 2026 at 1:59 AM
+Save
+Share
+Apply externally
+Summary Beta
+This role as a Data Engineer Intern aligns closely with the user's query
+It focuses on hands-on experience with data management tools, which can enhance skills relevant to their future career goals in tech fields such as software development or data science
+At a glance
+$18/hr
+Hybrid or onsite, based in Washington, DC
+Internship
+Open to candidates with OPT/CPT
+Job description
+The communications intern will assist in gaining coverage of CREW's fight for an ethical and transparent government.
+About the employer
+CREW
+"""
+
 
 class HandshakeSourceTests(unittest.TestCase):
     def test_parse_card_text(self) -> None:
@@ -175,6 +196,12 @@ class HandshakeSourceTests(unittest.TestCase):
     def test_parse_month_based_detail_text(self) -> None:
         parsed = _parse_detail_text(MONTH_DETAIL_TEXT)
         self.assertTrue(parsed["posted_at"].startswith("20"))
+
+    def test_parse_detail_text_strips_summary_beta_noise(self) -> None:
+        parsed = _parse_detail_text(SUMMARY_BETA_DETAIL_TEXT)
+        self.assertNotIn("Summary Beta", parsed["description"])
+        self.assertNotIn("This role as a Data Engineer Intern aligns closely", parsed["description"])
+        self.assertIn("The communications intern will assist", parsed["description"])
 
     def test_dedupe_rows_keeps_first_external_id(self) -> None:
         rows = [

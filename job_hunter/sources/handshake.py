@@ -312,10 +312,21 @@ def _trim_detail_text(lines: list[str]) -> str:
         "alumni in similar roles",
         "alumni at this employer",
     )
+    skipping_summary_beta = False
     for line in lines:
         lowered = line.lower()
         if any(marker in lowered for marker in stop_markers):
             break
+        if lowered == "summary beta":
+            skipping_summary_beta = True
+            continue
+        if skipping_summary_beta:
+            if lowered in {"at a glance", "job description"}:
+                skipping_summary_beta = False
+            else:
+                continue
+        if kept and kept[-1].lower().startswith("save") and lowered.startswith("apply"):
+            continue
         kept.append(line)
     return "\n".join(kept).strip()
 

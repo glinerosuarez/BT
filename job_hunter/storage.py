@@ -7,6 +7,8 @@ from pathlib import Path
 
 from job_hunter.models import JobRecord, PipelineOutcome
 
+SUMMARY_BETA_MARKER = "summary beta"
+
 
 class JobStore:
     def __init__(self, db_path: str) -> None:
@@ -323,7 +325,11 @@ class JobStore:
         existing_description = str(row["description"] or "")
         new_description = job.description or ""
         description = existing_description
-        if len(new_description.strip()) > len(existing_description.strip()):
+        existing_has_summary_beta = SUMMARY_BETA_MARKER in existing_description.lower()
+        new_has_summary_beta = SUMMARY_BETA_MARKER in new_description.lower()
+        if existing_has_summary_beta and not new_has_summary_beta and new_description.strip():
+            description = new_description
+        elif len(new_description.strip()) > len(existing_description.strip()):
             description = new_description
 
         existing_url = str(row["url"] or "")
@@ -338,8 +344,30 @@ class JobStore:
             source_detail = job.source_detail
         existing_job_text_snapshot = str(row["job_text_snapshot"] or "")
         job_text_snapshot = existing_job_text_snapshot
+        description_replaced = description != existing_description
+        snapshot_has_summary_beta = SUMMARY_BETA_MARKER in existing_job_text_snapshot.lower()
         if job.job_text_snapshot:
             job_text_snapshot = job.job_text_snapshot
+        elif description_replaced or snapshot_has_summary_beta:
+            from job_hunter.stage2 import build_job_text_v1
+
+            refreshed_job = JobRecord(
+                source=job.source,
+                external_id=job.external_id,
+                url=url,
+                title=job.title,
+                company=job.company,
+                location=job.location,
+                is_internship=job.is_internship,
+                posted_at=job.posted_at,
+                description=description,
+                compensation_type=job.compensation_type,
+                work_auth_signals=job.work_auth_signals,
+                sponsorship_signals=job.sponsorship_signals,
+                skills=job.skills,
+                ingested_at=job.ingested_at,
+            )
+            job_text_snapshot = build_job_text_v1(refreshed_job)
 
         self._conn.execute(
             """

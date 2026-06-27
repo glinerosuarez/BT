@@ -57,6 +57,23 @@ DATA_ROLE_TITLE_PATTERNS = {
     "quant_title": r"\bquant(itative)?\b",
 }
 
+BACKEND_ADJACENT_TITLE_PATTERNS = {
+    "software_engineer_intern": r"\bsoftware (development|engineer(?:ing)?)\b.*\bintern(ship)?\b|\bintern(ship)?\b.*\bsoftware (development|engineer(?:ing)?)\b",
+    "backend_engineer_intern": r"\bbackend\b.*\bintern(ship)?\b|\bintern(ship)?\b.*\bbackend\b",
+    "platform_engineer_intern": r"\bplatform engineer\b.*\bintern(ship)?\b|\bintern(ship)?\b.*\bplatform engineer\b",
+}
+
+BACKEND_ADJACENT_DESCRIPTION_PATTERNS = {
+    "backend": r"\bbackend systems?\b|\bbackend\b",
+    "api": r"\bapis?\b|\brest APIs?\b",
+    "distributed_systems": r"\bdistributed services?\b|\bdistributed systems?\b",
+    "databases": r"\b(relational|non-relational) databases?\b|\bdatabases?\b",
+    "messaging": r"\b(kafka|rabbitmq|redis|pub/sub|messaging|queuing systems?)\b",
+    "containers": r"\b(docker|kubernetes)\b",
+    "cloud": r"\bcloud-based solutions?\b|\bcloud\b",
+    "scalability": r"\bscal(e|able|ability)\b|\bhigh-transaction\b|\breal-time\b",
+}
+
 NON_DATA_ROLE_TITLE_PATTERNS = {
     "developer_advocacy": r"\bdeveloper advocacy\b",
     "go_to_market": r"\bgo[- ]to[- ]market\b",
@@ -64,6 +81,7 @@ NON_DATA_ROLE_TITLE_PATTERNS = {
     "sales_marketing": r"\b(sales|marketing|partnerships?)\b",
     "customer_success": r"\bcustomer success\b",
     "recruiting_ops": r"\b(recruit(er|ing)|talent|hr|human resources)\b",
+    "frontend_mobile_only": r"\b(frontend|front-end|ios|android|mobile app|react native)\b",
 }
 
 US_LOCATION_HINTS = {

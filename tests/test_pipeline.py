@@ -342,6 +342,70 @@ class PipelineUnitTests(unittest.TestCase):
             description="Build developer communities with Python tutorials.",
             ingested_at="now",
         )
+        self.assertFalse(
+            _passes_data_role_gate(
+                job,
+                data_role_title_regexes=[re.compile(r"\bdata (science|scientist)\b", re.IGNORECASE)],
+                non_data_role_title_regexes=[re.compile(r"\bdeveloper advocacy\b", re.IGNORECASE)],
+                min_data_signal_count=2,
+            )
+        )
+
+    def test_data_role_gate_accepts_backend_adjacent_software_intern(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="2",
+            url="https://example.com/backend",
+            title="Software Development Intern",
+            company="Example",
+            location="Remote - US",
+            is_internship=True,
+            posted_at=None,
+            description=(
+                "Build and maintain backend systems and APIs for warehouse operations. "
+                "Work with relational and non-relational databases, Kafka, Docker, and Kubernetes."
+            ),
+            ingested_at="now",
+        )
+        self.assertTrue(
+            _passes_data_role_gate(
+                job,
+                data_role_title_regexes=[re.compile(r"\bdata (science|scientist)\b", re.IGNORECASE)],
+                non_data_role_title_regexes=[
+                    re.compile(r"\bdeveloper advocacy\b", re.IGNORECASE),
+                    re.compile(r"\b(frontend|front-end|ios|android|mobile app|react native)\b", re.IGNORECASE),
+                ],
+                min_data_signal_count=2,
+            )
+        )
+
+    def test_data_role_gate_rejects_frontend_only_software_intern(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="3",
+            url="https://example.com/frontend",
+            title="Software Engineer Intern",
+            company="Example",
+            location="Remote - US",
+            is_internship=True,
+            posted_at=None,
+            description=(
+                "Build frontend interfaces in React Native for mobile experiences. "
+                "Focus on UI polish and client-side interactions."
+            ),
+            ingested_at="now",
+        )
+        self.assertFalse(
+            _passes_data_role_gate(
+                job,
+                data_role_title_regexes=[re.compile(r"\bdata (science|scientist)\b", re.IGNORECASE)],
+                non_data_role_title_regexes=[
+                    re.compile(r"\bdeveloper advocacy\b", re.IGNORECASE),
+                    re.compile(r"\b(frontend|front-end|ios|android|mobile app|react native)\b", re.IGNORECASE),
+                ],
+                min_data_signal_count=2,
+            )
+        )
 
     def test_policy_gate_rejects_phd_research_roles(self) -> None:
         job = JobRecord(
@@ -566,6 +630,91 @@ class PipelineIntegrationTests(unittest.TestCase):
         row = self.store.get_job_for_labeling(1)
         self.assertIsNotNone(row)
         self.assertIn("multi-tenant data lakehouse", row["description"])
+
+    def test_duplicate_refresh_prefers_cleaner_handshake_description(self) -> None:
+        first_payload = [
+            {
+                "source": "handshake",
+                "external_id": "job-5b",
+                "url": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+                "title": "Data Engineering Intern",
+                "company": "Example",
+                "location": "Remote",
+                "posted_at": recent_posted_at(),
+                "description": (
+                    "Summary Beta This role as a Data Engineer Intern aligns closely with the user's query. "
+                    "Build ETL pipelines and data workflows for analytics."
+                ),
+                "skills": [],
+                "source_detail": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern",
+            }
+        ]
+        second_payload = [
+            {
+                "source": "handshake",
+                "external_id": "job-5b",
+                "url": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+                "title": "Data Engineering Intern",
+                "company": "Example",
+                "location": "Remote",
+                "posted_at": recent_posted_at(),
+                "description": "Build ETL pipelines and data workflows for analytics.",
+                "skills": [],
+                "source_detail": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+            }
+        ]
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(first_payload)]):
+            outcome1 = run_pipeline(self.settings, self.store, None)
+        self.assertEqual(outcome1.persisted_count, 1)
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(second_payload)]):
+            outcome2 = run_pipeline(self.settings, self.store, None)
+        self.assertEqual(outcome2.persisted_count, 0)
+        row = self.store.get_job_for_labeling(1)
+        self.assertIsNotNone(row)
+        self.assertNotIn("Summary Beta", row["description"])
+        self.assertIn("Build ETL pipelines and data workflows for analytics.", row["description"])
+        snapshot_row = self.store._conn.execute("SELECT job_text_snapshot FROM jobs WHERE id = 1").fetchone()
+        self.assertIsNotNone(snapshot_row)
+        self.assertNotIn("Summary Beta", snapshot_row["job_text_snapshot"])
+        self.assertIn("Build ETL pipelines and data workflows for analytics", snapshot_row["job_text_snapshot"])
+
+    def test_duplicate_refresh_rebuilds_polluted_snapshot_even_when_description_is_clean(self) -> None:
+        payload = [
+            {
+                "source": "handshake",
+                "external_id": "job-5c",
+                "url": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+                "title": "Data Engineering Intern",
+                "company": "Example",
+                "location": "Remote",
+                "posted_at": recent_posted_at(),
+                "description": "Build ETL pipelines and data workflows for analytics.",
+                "skills": [],
+                "source_detail": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+            }
+        ]
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome1 = run_pipeline(self.settings, self.store, None)
+        self.assertEqual(outcome1.persisted_count, 1)
+
+        self.store._conn.execute(
+            """
+            UPDATE jobs
+            SET job_text_snapshot = ?
+            WHERE id = 1
+            """,
+            ("TITLE: Data Engineering Intern\nSUMMARY:\nSummary Beta fake text",),
+        )
+        self.store._conn.commit()
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome2 = run_pipeline(self.settings, self.store, None)
+        self.assertEqual(outcome2.persisted_count, 0)
+        snapshot_row = self.store._conn.execute("SELECT job_text_snapshot FROM jobs WHERE id = 1").fetchone()
+        self.assertIsNotNone(snapshot_row)
+        self.assertNotIn("Summary Beta", snapshot_row["job_text_snapshot"])
+        self.assertIn("Build ETL pipelines and data workflows for analytics", snapshot_row["job_text_snapshot"])
 
     def test_persisted_jobs_include_stage2_shadow_fields(self) -> None:
         class FakeSemanticResult:

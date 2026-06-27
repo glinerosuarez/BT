@@ -12,6 +12,8 @@ from email.utils import parsedate_to_datetime
 
 from job_hunter.config import Settings
 from job_hunter.keywords import (
+    BACKEND_ADJACENT_DESCRIPTION_PATTERNS,
+    BACKEND_ADJACENT_TITLE_PATTERNS,
     DATA_ROLE_TITLE_PATTERNS,
     HIGH_SIGNAL_ML_DATA_KEYWORDS,
     INTERNSHIP_DESCRIPTION_PATTERNS,
@@ -59,9 +61,17 @@ DEFAULT_DATA_ROLE_TITLE_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
     for name, pattern in DATA_ROLE_TITLE_PATTERNS.items()
 }
+DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in BACKEND_ADJACENT_TITLE_PATTERNS.items()
+}
 DEFAULT_NON_DATA_ROLE_TITLE_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
     for name, pattern in NON_DATA_ROLE_TITLE_PATTERNS.items()
+}
+BACKEND_ADJACENT_DESCRIPTION_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in BACKEND_ADJACENT_DESCRIPTION_PATTERNS.items()
 }
 INTERNSHIP_DESCRIPTION_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
@@ -477,6 +487,15 @@ def _passes_data_role_gate(
         return False
     if positive_title:
         return True
+
+    backend_adjacent_title = any(pattern.search(title) for pattern in DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES.values())
+    if backend_adjacent_title:
+        backend_signal_hits = 0
+        for pattern in BACKEND_ADJACENT_DESCRIPTION_REGEXES.values():
+            if pattern.search(desc_blob):
+                backend_signal_hits += 1
+                if backend_signal_hits >= 2:
+                    return True
 
     high_signal_hits = 0
     for keyword, pattern in HIGH_SIGNAL_KEYWORD_PATTERNS.items():
