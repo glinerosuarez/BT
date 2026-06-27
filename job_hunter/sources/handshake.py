@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from hashlib import sha1
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -16,18 +16,41 @@ LOG = logging.getLogger(__name__)
 DETAIL_TEXT_SCRIPT = """
 () => {
   let best = null;
-  let bestArea = 0;
+  let bestScore = 0;
   for (const node of Array.from(document.querySelectorAll('main, section, article, div'))) {
     const rect = node.getBoundingClientRect();
     const text = (node.innerText || '').trim();
-    if (!text || !text.includes('Job description')) continue;
+    if (!text) continue;
+    const hasJobDescription = text.includes('Job description');
+    const hasAtAGlance = text.includes('At a glance');
+    if (!hasJobDescription && !hasAtAGlance) continue;
     if (rect.left < window.innerWidth * 0.35) continue;
     const area = rect.width * rect.height;
-    if (area <= bestArea) continue;
-    bestArea = area;
+    let score = area;
+    if (hasJobDescription) score += 1_000_000_000;
+    if (hasAtAGlance) score += 500_000_000;
+    if (text.includes('US work authorization required')) score += 250_000_000;
+    if (text.includes('Open to candidates with OPT/CPT')) score += 250_000_000;
+    if (score <= bestScore) continue;
+    bestScore = score;
     best = text;
   }
   return best || '';
+}
+"""
+EXPAND_MORE_SCRIPT = """
+() => {
+  let clicked = 0;
+  for (const node of Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'))) {
+    const text = (node.innerText || '').trim();
+    if (text !== 'More') continue;
+    const rect = node.getBoundingClientRect();
+    if (rect.left < window.innerWidth * 0.35) continue;
+    if (rect.width === 0 || rect.height === 0) continue;
+    node.click();
+    clicked += 1;
+  }
+  return clicked;
 }
 """
 RELATIVE_AGE_RE = re.compile(
@@ -70,7 +93,8 @@ class HandshakeSource(SourceConnector):
                 page.set_default_timeout(self.page_timeout_seconds * 1000)
                 results: list[dict] = []
                 for search_url in self.search_urls:
-                    results.extend(self._fetch_search_page(page, search_url))
+                    normalized_search_url = _normalize_search_url(search_url)
+                    results.extend(self._fetch_search_page(page, normalized_search_url))
                 return _dedupe_rows(results)
             finally:
                 context.close()
@@ -108,6 +132,9 @@ class HandshakeSource(SourceConnector):
                     card_url = urljoin(page.url, locator.get_attribute("href") or "")
                     locator.click(timeout=5000)
                     page.wait_for_timeout(1500)
+                    expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
+                    if expanded:
+                        page.wait_for_timeout(750)
                     detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
                 except PlaywrightTimeoutError:
                     detail_text = ""
@@ -134,6 +161,15 @@ def _dedupe_rows(rows: list[dict]) -> list[dict]:
         seen.add(key)
         deduped.append(row)
     return deduped
+
+
+def _normalize_search_url(search_url: str) -> str:
+    parsed = urlparse(search_url)
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    filtered_pairs = [(key, value) for key, value in query_pairs if key != "sort"]
+    filtered_pairs.append(("sort", "posted_date_desc"))
+    normalized_query = urlencode(filtered_pairs, doseq=True)
+    return urlunparse(parsed._replace(query=normalized_query))
 
 
 def _extract_cards_from_page_text(body_text: str) -> list[dict[str, str]]:
@@ -240,7 +276,7 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
     company = ""
     location = ""
     posted_at = ""
-    description = detail_text
+    description = _trim_detail_text(lines) or detail_text
 
     for idx, line in enumerate(lines):
         if line.startswith("Posted "):
@@ -249,11 +285,6 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
                 title = lines[idx - 1]
             if lines and not company:
                 company = lines[0]
-            break
-
-    for idx, line in enumerate(lines):
-        if line == "Job description":
-            description = "\n".join(lines[idx + 1 :]).strip()
             break
 
     for idx, line in enumerate(lines):
@@ -271,6 +302,22 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
         "posted_at": posted_at,
         "description": description,
     }
+
+
+def _trim_detail_text(lines: list[str]) -> str:
+    kept: list[str] = []
+    stop_markers = (
+        "about the employer",
+        "similar jobs",
+        "alumni in similar roles",
+        "alumni at this employer",
+    )
+    for line in lines:
+        lowered = line.lower()
+        if any(marker in lowered for marker in stop_markers):
+            break
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 def _relative_age_to_iso(text: str) -> str | None:

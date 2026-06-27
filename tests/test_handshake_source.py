@@ -6,6 +6,7 @@ from job_hunter.sources.handshake import (
     _build_row,
     _dedupe_rows,
     _extract_cards_from_page_text,
+    _normalize_search_url,
     _parse_card_text,
     _parse_detail_text,
     _relative_age_to_iso,
@@ -32,6 +33,25 @@ Job description
 Software Intern
 Location: Lake Forest, CA (On-site, No Hybrid)
 Company: Advantest Test Solutions (ATS)
+"""
+
+SIEMENS_STYLE_DETAIL_TEXT = """Siemens Digital Industries Software
+Industrial Automation
+Data Science Internship
+Posted 5 days ago • Apply by July 12, 2026 at 1:59 AM
+At a glance
+$18–50/hr
+Onsite, based in Pasadena, CA
+Internship
+Open to candidates with OPT/CPT
+Legally authorized to work in the United States without the need for current or future sponsorship by the company
+Job description
+Siemens Digital Industries Software Strategic Student Program (SSP)
+Discover your career with us at Siemens Digital Industries Software!
+We are a leading global software company dedicated to the world of computer aided design, 3D
+3.0 GPA Masters Statistics major Data Science major
+About the employer
+Siemens employer profile
 """
 
 PAGE_TEXT = """Skip to content
@@ -91,7 +111,17 @@ class HandshakeSourceTests(unittest.TestCase):
         self.assertEqual(parsed["company"], "Advantest America, Inc.")
         self.assertEqual(parsed["title"], "Software Intern")
         self.assertIn("Lake Forest, CA", parsed["location"])
+        self.assertIn("US work authorization required", parsed["description"])
         self.assertIn("Location: Lake Forest, CA", parsed["description"])
+
+    def test_parse_detail_text_keeps_handshake_work_auth_lines(self) -> None:
+        parsed = _parse_detail_text(SIEMENS_STYLE_DETAIL_TEXT)
+        self.assertIn("Open to candidates with OPT/CPT", parsed["description"])
+        self.assertIn(
+            "Legally authorized to work in the United States without the need for current or future sponsorship by the company",
+            parsed["description"],
+        )
+        self.assertNotIn("About the employer", parsed["description"])
 
     def test_build_row_prefers_detail_fields(self) -> None:
         row = _build_row(
@@ -110,6 +140,19 @@ class HandshakeSourceTests(unittest.TestCase):
             "https://app.joinhandshake.com/job-search/11120024?query=data+engineer+intern",
         )
         self.assertEqual(row["compensation_type"], "paid")
+
+    def test_build_row_preserves_work_auth_language_for_pipeline(self) -> None:
+        row = _build_row(
+            CARD_TEXT,
+            SIEMENS_STYLE_DETAIL_TEXT,
+            "https://app.joinhandshake.com/job-search/example",
+            "https://app.joinhandshake.com/job-search/11120024?query=data+engineer+intern",
+        )
+        self.assertIsNotNone(row)
+        self.assertIn(
+            "without the need for current or future sponsorship by the company",
+            row["description"],
+        )
 
     def test_relative_age_to_iso(self) -> None:
         self.assertIsNotNone(_relative_age_to_iso("Posted 4 days ago"))
@@ -146,6 +189,25 @@ class HandshakeSourceTests(unittest.TestCase):
                 {"external_id": "b", "url": "u3", "title": "three"},
             ],
         )
+
+    def test_normalize_search_url_forces_newest_sort(self) -> None:
+        url = (
+            "https://app.joinhandshake.com/job-search/11120409"
+            "?jobType=3&query=data&per_page=25&page=1"
+        )
+        normalized = _normalize_search_url(url)
+        self.assertIn("sort=posted_date_desc", normalized)
+        self.assertIn("query=data", normalized)
+        self.assertIn("page=1", normalized)
+
+    def test_normalize_search_url_replaces_existing_sort(self) -> None:
+        url = (
+            "https://app.joinhandshake.com/job-search/11120409"
+            "?query=data&sort=relevance&page=1"
+        )
+        normalized = _normalize_search_url(url)
+        self.assertIn("sort=posted_date_desc", normalized)
+        self.assertNotIn("sort=relevance", normalized)
 
 
 if __name__ == "__main__":

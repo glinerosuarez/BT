@@ -172,6 +172,29 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertIn("no_current_future_sponsorship", negative)
         self.assertEqual(positive, [])
 
+    def test_eligibility_rejects_siemens_style_conflicting_handshake_text(self) -> None:
+        job = JobRecord(
+            source="handshake",
+            external_id="3",
+            url="https://example.com/3",
+            title="Data Science Internship",
+            company="Siemens Digital Industries Software",
+            location="Pasadena, CA",
+            is_internship=True,
+            posted_at="2026-06-12",
+            description=(
+                "Open to candidates with OPT/CPT. "
+                "Legally authorized to work in the United States without the need for current or future sponsorship by the company. "
+                "3.0 GPA Masters Statistics major Data Science major."
+            ),
+            ingested_at="2026-06-17T00:00:00+00:00",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("no_current_future_sponsorship", negative)
+        self.assertEqual(positive, [])
+
     def test_internship_and_us_scope_filters(self) -> None:
         job = JobRecord(
             source="x",
