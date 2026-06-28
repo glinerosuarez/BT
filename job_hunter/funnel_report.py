@@ -64,7 +64,9 @@ def _render_text(report: dict[str, object]) -> str:
                     "    rejected_policy_gate={rejected_policy_gate_count} "
                     "after_stage_1c={after_stage_1c_count} "
                     "rejected_eligibility={rejected_eligibility_count} "
-                    "rejected_relevance={rejected_relevance_count}"
+                    "rejected_relevance={rejected_relevance_count} "
+                    "rejected_source_quality={rejected_source_quality_count} "
+                    "recovered_source_quality={recovered_source_quality_count}"
                 ).format(**row),
                 (
                     "    duplicates={duplicate_count} persisted={persisted_count} "

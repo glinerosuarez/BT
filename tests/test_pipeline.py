@@ -917,6 +917,298 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(outcome.source_stats["fake"].rejected_policy_gate_count, 0)
         self.assertEqual(outcome.persisted_count, 1)
 
+    def test_handshake_card_only_rows_are_persisted_but_not_notified(self) -> None:
+        payload = [
+            {
+                "source": "handshake",
+                "external_id": "job-hs-card-only",
+                "url": "https://app.joinhandshake.com/jobs/11161550",
+                "title": "Data Engineering Intern",
+                "company": "Example",
+                "location": "Remote, based in United States",
+                "posted_at": recent_posted_at(),
+                "description": (
+                    "Data Engineering Intern Internship Remote, based in United States "
+                    "Build ETL pipelines with Python, SQL, databases, and analytics workflows."
+                ),
+                "skills": [],
+                "source_detail": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+                "source_metadata": {
+                    "detail_fetch_attempted": True,
+                    "detail_click_succeeded": False,
+                    "detail_panel_found": False,
+                    "detail_contains_job_description": False,
+                    "detail_contains_at_a_glance": False,
+                    "detail_text_length": 0,
+                    "detail_title_matches_card": True,
+                    "detail_quality_status": "card_only",
+                    "detail_fallback_reason": "missing_detail_text",
+                    "resolved_job_url": "https://app.joinhandshake.com/jobs/11161550",
+                },
+            }
+        ]
+
+        notifier = FakeNotifier()
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, notifier)
+
+        self.assertEqual(outcome.persisted_count, 1)
+        self.assertEqual(outcome.notified_count, 0)
+        self.assertEqual(notifier.sent, 0)
+        self.assertEqual(outcome.source_stats["fake"].rejected_source_quality_count, 1)
+        row = self.store._conn.execute(
+            """
+            SELECT source_quality_status, source_quality_reason_codes, notified
+            FROM jobs
+            WHERE id = 1
+            """
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_quality_status"], "card_only")
+        self.assertIn("handshake_card_only", row["source_quality_reason_codes"])
+        self.assertEqual(int(row["notified"] or 0), 0)
+
+    def test_handshake_source_quality_recovery_notifies_clean_duplicate(self) -> None:
+        first_payload = [
+            {
+                "source": "handshake",
+                "external_id": "job-hs-recovery-1",
+                "url": "https://app.joinhandshake.com/jobs/11161550",
+                "title": "Data Engineering Intern",
+                "company": "Example",
+                "location": "Remote, based in United States",
+                "posted_at": recent_posted_at(),
+                "description": (
+                    "Data Engineering Intern Internship Remote, based in United States "
+                    "Build ETL pipelines with Python, SQL, databases, and analytics workflows."
+                ),
+                "skills": [],
+                "source_detail": "https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+                "source_metadata": {
+                    "detail_fetch_attempted": True,
+                    "detail_click_succeeded": False,
+                    "detail_panel_found": False,
+                    "detail_contains_job_description": False,
+                    "detail_contains_at_a_glance": False,
+                    "detail_text_length": 0,
+                    "detail_title_matches_card": True,
+                    "detail_quality_status": "card_only",
+                    "detail_fallback_reason": "missing_detail_text",
+                    "resolved_job_url": "https://app.joinhandshake.com/jobs/11161550",
+                },
+            }
+        ]
+        second_payload = [
+            {
+                "source": "handshake",
+                "external_id": "job-hs-recovery-1",
+                "url": "https://app.joinhandshake.com/jobs/11161550",
+                "title": "Data Engineering Intern",
+                "company": "Example",
+                "location": "Remote, based in United States",
+                "posted_at": recent_posted_at(),
+                "description": (
+                    "Data Engineering Intern Internship Remote, based in United States "
+                    "Build ETL pipelines with Python, SQL, databases, analytics workflows, and orchestration systems."
+                ),
+                "skills": [],
+                "source_detail": "https://app.joinhandshake.com/jobs/11161550",
+                "source_metadata": {
+                    "detail_fetch_attempted": True,
+                    "detail_click_succeeded": True,
+                    "detail_panel_found": True,
+                    "detail_contains_job_description": True,
+                    "detail_contains_at_a_glance": True,
+                    "detail_text_length": 2400,
+                    "detail_title_matches_card": True,
+                    "detail_quality_status": "detail_complete",
+                    "detail_fallback_reason": "",
+                    "resolved_job_url": "https://app.joinhandshake.com/jobs/11161550",
+                },
+            }
+        ]
+
+        notifier1 = FakeNotifier()
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(first_payload)]):
+            outcome1 = run_pipeline(self.settings, self.store, notifier1)
+        self.assertEqual(outcome1.persisted_count, 1)
+        self.assertEqual(outcome1.notified_count, 0)
+        self.assertEqual(notifier1.sent, 0)
+
+        notifier2 = FakeNotifier()
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(second_payload)]):
+            outcome2 = run_pipeline(self.settings, self.store, notifier2)
+        self.assertEqual(outcome2.persisted_count, 0)
+        self.assertEqual(outcome2.duplicate_count, 1)
+        self.assertEqual(outcome2.notified_count, 1)
+        self.assertEqual(notifier2.sent, 1)
+        self.assertEqual(outcome2.source_stats["fake"].recovered_source_quality_count, 1)
+
+        row = self.store._conn.execute(
+            """
+            SELECT source_quality_status, source_quality_prev_status, source_quality_recovered_at, notified
+            FROM jobs
+            WHERE id = 1
+            """
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_quality_status"], "detail_complete")
+        self.assertEqual(row["source_quality_prev_status"], "card_only")
+        self.assertTrue(str(row["source_quality_recovered_at"] or "").strip())
+        self.assertEqual(int(row["notified"] or 0), 1)
+
+    def test_handshake_refresh_updates_existing_row_by_url_even_when_rejected_later(self) -> None:
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes, notified
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', 0)
+            """,
+            (
+                "old-polluted-key",
+                "job-old",
+                "https://app.joinhandshake.com/jobs/11161752?searchId=bb316b92-9d56-4ffb-9279-be3f051dcb78",
+                "Commercialization Intern",
+                "CRH",
+                "Remote, based in United States",
+                recent_posted_at(),
+                "Summary Beta polluted text",
+                datetime.now(timezone.utc).isoformat(),
+                "detail_polluted",
+            ),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO seen_events (dedupe_key, first_seen_at, last_seen_at, seen_count, notified)
+            VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 0)
+            """,
+            ("old-polluted-key",),
+        )
+        self.store._conn.commit()
+
+        payload = [
+            {
+                "source": "handshake",
+                "external_id": "job-refresh",
+                "url": "https://app.joinhandshake.com/jobs/11161752?searchId=bb316b92-9d56-4ffb-9279-be3f051dcb78",
+                "title": "AI Engineering Intern, Voice & LLM Systems",
+                "company": "CRH",
+                "location": "Remote, based in United States",
+                "posted_at": recent_posted_at(),
+                "description": "Support commercialization efforts and maintain documentation.",
+                "skills": [],
+                "source_detail": "https://app.joinhandshake.com/jobs/11161752?searchId=bb316b92-9d56-4ffb-9279-be3f051dcb78",
+                "source_metadata": {
+                    "detail_fetch_attempted": True,
+                    "detail_click_succeeded": True,
+                    "detail_panel_found": True,
+                    "detail_contains_job_description": True,
+                    "detail_contains_at_a_glance": True,
+                    "detail_text_length": 1200,
+                    "detail_title_matches_card": True,
+                    "detail_quality_status": "detail_complete",
+                    "detail_fallback_reason": "",
+                    "resolved_job_url": "https://app.joinhandshake.com/jobs/11161752?searchId=bb316b92-9d56-4ffb-9279-be3f051dcb78",
+                },
+            }
+        ]
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertEqual(outcome.source_stats["fake"].rejected_data_role_count, 0)
+        self.assertEqual(outcome.source_stats["fake"].after_stage_1b_count, 1)
+        row = self.store._conn.execute(
+            """
+            SELECT title, description, source_quality_status
+            FROM jobs
+            WHERE dedupe_key = 'old-polluted-key'
+            """
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["title"], "AI Engineering Intern, Voice & LLM Systems")
+        self.assertEqual(row["source_quality_status"], "detail_complete")
+        self.assertNotIn("Summary Beta", row["description"])
+        self.assertIn("Support commercialization efforts", row["description"])
+
+    def test_handshake_refresh_prefers_cleaner_shorter_description_without_page_chrome(self) -> None:
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes, notified
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', 0)
+            """,
+            (
+                "old-presto-key",
+                "job-old-presto",
+                "https://app.joinhandshake.com/jobs/11149721",
+                "Engineering Intern",
+                "Presto",
+                "Remote, based in United States",
+                recent_posted_at(),
+                "Skip to content Explore Jobs Inbox Feed AI showcase Events People Employers Career center AI work Get the app 28 Presto old noisy body",
+                datetime.now(timezone.utc).isoformat(),
+                "detail_complete",
+            ),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO seen_events (dedupe_key, first_seen_at, last_seen_at, seen_count, notified)
+            VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 0)
+            """,
+            ("old-presto-key",),
+        )
+        self.store._conn.commit()
+
+        payload = [
+            {
+                "source": "handshake",
+                "external_id": "job-refresh-presto",
+                "url": "https://app.joinhandshake.com/jobs/11149721",
+                "title": "AI Engineering Intern, Voice & LLM Systems",
+                "company": "Presto",
+                "location": "Remote, based in United States",
+                "posted_at": recent_posted_at(),
+                "description": "AI Engineering Intern, Voice & LLM Systems\nAbout Presto Phoenix, Inc.\nPresto is the leading Voice AI company for restaurant drive-thrus.",
+                "skills": [],
+                "source_detail": "https://app.joinhandshake.com/jobs/11149721",
+                "source_metadata": {
+                    "detail_fetch_attempted": True,
+                    "detail_click_succeeded": True,
+                    "detail_panel_found": True,
+                    "detail_contains_job_description": True,
+                    "detail_contains_at_a_glance": True,
+                    "detail_text_length": 1200,
+                    "detail_title_matches_card": True,
+                    "detail_quality_status": "detail_complete",
+                    "detail_fallback_reason": "",
+                    "resolved_job_url": "https://app.joinhandshake.com/jobs/11149721",
+                },
+            }
+        ]
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertEqual(outcome.source_stats["fake"].after_stage_1b_count, 1)
+        row = self.store._conn.execute(
+            """
+            SELECT title, description
+            FROM jobs
+            WHERE dedupe_key = 'old-presto-key'
+            """
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["title"], "AI Engineering Intern, Voice & LLM Systems")
+        self.assertNotIn("Skip to content", row["description"])
+        self.assertIn("About Presto Phoenix, Inc.", row["description"])
+
 
 if __name__ == "__main__":
     unittest.main()

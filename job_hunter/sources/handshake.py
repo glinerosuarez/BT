@@ -57,6 +57,16 @@ RELATIVE_AGE_RE = re.compile(
     r"\b(?:(?:posted)\s+)?(\d+)\s*(hours?|hrs?|hr|days?|d|weeks?|wks?|wk|w|months?|mos?|mo)\s+ago\b",
     re.IGNORECASE,
 )
+SUMMARY_BETA_POLLUTION_PHRASES = (
+    "aligns closely with the user's query",
+    "this job description highlights",
+    "this role as a",
+    "highly relevant to the user's interest",
+)
+INLINE_SUMMARY_BETA_RE = re.compile(
+    r"summary beta\b.*?(?=(at a glance\b|job description\b))",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 
 
 class HandshakeSource(SourceConnector):
@@ -67,6 +77,7 @@ class HandshakeSource(SourceConnector):
         headless: bool,
         max_results: int,
         page_timeout_seconds: int,
+        max_posting_age_days: int,
         fetch_details: bool = True,
     ) -> None:
         super().__init__(name="handshake")
@@ -75,6 +86,7 @@ class HandshakeSource(SourceConnector):
         self.headless = headless
         self.max_results = max(max_results, 1)
         self.page_timeout_seconds = max(page_timeout_seconds, 5)
+        self.max_posting_age_days = max(max_posting_age_days, 1)
         self.fetch_details = fetch_details
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
@@ -92,9 +104,14 @@ class HandshakeSource(SourceConnector):
                 page = context.pages[0] if context.pages else context.new_page()
                 page.set_default_timeout(self.page_timeout_seconds * 1000)
                 results: list[dict] = []
-                for search_url in self.search_urls:
+                search_urls, job_urls = _partition_handshake_urls(self.search_urls)
+                for search_url in search_urls:
                     normalized_search_url = _normalize_search_url(search_url)
                     results.extend(self._fetch_search_page(page, normalized_search_url))
+                for job_url in job_urls:
+                    parsed = self._fetch_job_page(page, job_url)
+                    if parsed is not None:
+                        results.append(parsed)
                 return _dedupe_rows(results)
             finally:
                 context.close()
@@ -116,6 +133,8 @@ class HandshakeSource(SourceConnector):
         card_payloads = _extract_cards_from_page_text(body_text)
         rows: list[dict] = []
         for card in card_payloads[: self.max_results]:
+            if _is_card_older_than_lookback(card, self.max_posting_age_days):
+                break
             company = str(card.get("company") or "")
             title = str(card.get("title") or "")
             meta = str(card.get("meta") or "")
@@ -126,11 +145,14 @@ class HandshakeSource(SourceConnector):
             card_text = "\n".join([company, title, meta, location, freshness])
             card_url = ""
             detail_text = ""
+            detail_fetch_attempted = self.fetch_details
+            detail_click_succeeded = False
             if self.fetch_details:
                 locator = page.get_by_role("button", name=title, exact=False).first
                 try:
                     card_url = urljoin(page.url, locator.get_attribute("href") or "")
                     locator.click(timeout=5000)
+                    detail_click_succeeded = True
                     page.wait_for_timeout(1500)
                     expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
                     if expanded:
@@ -146,10 +168,32 @@ class HandshakeSource(SourceConnector):
                 detail_text=detail_text,
                 search_url=search_url,
                 card_url=card_url,
+                detail_fetch_attempted=detail_fetch_attempted,
+                detail_click_succeeded=detail_click_succeeded,
             )
             if parsed is not None:
                 rows.append(parsed)
         return rows
+
+    def _fetch_job_page(self, page, job_url: str) -> dict | None:
+        page.goto(job_url, wait_until="domcontentloaded")
+        page.wait_for_timeout(1500)
+        if "joinhandshake.com/login" in page.url or "users/sign_in" in page.url:
+            raise RuntimeError(
+                "Handshake session not authenticated. Run `python -m job_hunter.handshake_login` first."
+            )
+        expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
+        if expanded:
+            page.wait_for_timeout(750)
+        detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
+        if not detail_text.strip():
+            detail_text = str(page.locator("body").inner_text() or "")
+        return _build_row_from_job_page(
+            detail_text=detail_text,
+            job_url=job_url,
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
 
 
 def _dedupe_rows(rows: list[dict]) -> list[dict]:
@@ -162,6 +206,18 @@ def _dedupe_rows(rows: list[dict]) -> list[dict]:
         seen.add(key)
         deduped.append(row)
     return deduped
+
+
+def _partition_handshake_urls(urls: list[str]) -> tuple[list[str], list[str]]:
+    search_urls: list[str] = []
+    job_urls: list[str] = []
+    for value in urls:
+        parsed = urlparse(value)
+        if "/jobs/" in parsed.path:
+            job_urls.append(value)
+        else:
+            search_urls.append(value)
+    return search_urls, job_urls
 
 
 def _normalize_search_url(search_url: str) -> str:
@@ -202,22 +258,58 @@ def _extract_cards_from_page_text(body_text: str) -> list[dict[str, str]]:
     return cards
 
 
-def _build_row(card_text: str, detail_text: str, search_url: str, card_url: str = "") -> dict | None:
+def _is_card_older_than_lookback(card: dict[str, str], max_posting_age_days: int) -> bool:
+    posted_at = _relative_age_to_iso(str(card.get("freshness") or ""))
+    if not posted_at:
+        return False
+    try:
+        posted_date = datetime.fromisoformat(posted_at).date()
+    except ValueError:
+        return False
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_posting_age_days)).date()
+    return posted_date < cutoff
+
+
+def _build_row(
+    card_text: str,
+    detail_text: str,
+    search_url: str,
+    card_url: str = "",
+    *,
+    detail_fetch_attempted: bool = True,
+    detail_click_succeeded: bool = False,
+) -> dict | None:
+    cleaned_detail_text = _clean_summary_beta_text(detail_text)
     card = _parse_card_text(card_text)
     if card is None:
         return None
-    detail = _parse_detail_text(detail_text)
+    detail = _parse_detail_text(cleaned_detail_text)
     title = detail.get("title") or card["title"]
     company = detail.get("company") or card["company"]
     location = detail.get("location") or card["location"]
     posted_at = detail.get("posted_at") or card["posted_at"]
-    description = detail.get("description") or detail_text or card_text
-    compensation_type = _classify_compensation_from_source(card_text=card_text, detail_text=detail_text)
     external_id = f"{company}|{title}|{location}|{posted_at or ''}"
     url = card_url or f"{search_url}#jobhunter-{sha1(external_id.encode('utf-8')).hexdigest()[:12]}"
+    source_metadata = _build_source_metadata(
+        card=card,
+        detail=detail,
+        card_text=card_text,
+        detail_text=cleaned_detail_text,
+        url=url,
+        detail_fetch_attempted=detail_fetch_attempted,
+        detail_click_succeeded=detail_click_succeeded,
+    )
+    description = _choose_description(
+        card_text=card_text,
+        cleaned_detail_text=cleaned_detail_text,
+        parsed_detail_description=str(detail.get("description") or ""),
+        detail_quality_status=str(source_metadata.get("detail_quality_status") or ""),
+    )
+    compensation_type = _classify_compensation_from_source(card_text=card_text, detail_text=cleaned_detail_text)
     return {
         "source": "handshake",
         "source_detail": search_url,
+        "source_metadata": source_metadata,
         "external_id": external_id,
         "url": url,
         "title": title,
@@ -228,6 +320,69 @@ def _build_row(card_text: str, detail_text: str, search_url: str, card_url: str 
         "compensation_type": compensation_type,
         "skills": [],
     }
+
+
+def _build_row_from_job_page(
+    *,
+    detail_text: str,
+    job_url: str,
+    detail_fetch_attempted: bool,
+    detail_click_succeeded: bool,
+) -> dict | None:
+    cleaned_detail_text = _clean_summary_beta_text(detail_text)
+    detail = _parse_detail_text(cleaned_detail_text)
+    title = str(detail.get("title") or "").strip()
+    company = str(detail.get("company") or "").strip()
+    location = str(detail.get("location") or "").strip()
+    posted_at = str(detail.get("posted_at") or "").strip()
+    if not title or not company:
+        return None
+    card_text = "\n".join(part for part in [company, title, location, posted_at] if part)
+    source_metadata = _build_source_metadata(
+        card={"title": title, "company": company},
+        detail=detail,
+        card_text=card_text,
+        detail_text=cleaned_detail_text,
+        url=job_url,
+        detail_fetch_attempted=detail_fetch_attempted,
+        detail_click_succeeded=detail_click_succeeded,
+    )
+    description = _choose_description(
+        card_text=card_text,
+        cleaned_detail_text=cleaned_detail_text,
+        parsed_detail_description=str(detail.get("description") or ""),
+        detail_quality_status=str(source_metadata.get("detail_quality_status") or ""),
+    )
+    compensation_type = _classify_compensation_from_source(card_text=card_text, detail_text=cleaned_detail_text)
+    external_id = f"{company}|{title}|{location}|{posted_at}"
+    return {
+        "source": "handshake",
+        "source_detail": job_url,
+        "source_metadata": source_metadata,
+        "external_id": external_id,
+        "url": job_url,
+        "title": title,
+        "company": company,
+        "location": location,
+        "posted_at": posted_at,
+        "description": description,
+        "compensation_type": compensation_type,
+        "skills": [],
+    }
+
+
+def _choose_description(
+    *,
+    card_text: str,
+    cleaned_detail_text: str,
+    parsed_detail_description: str,
+    detail_quality_status: str,
+) -> str:
+    if detail_quality_status in {"detail_polluted", "detail_mismatch"}:
+        if parsed_detail_description.strip():
+            return parsed_detail_description
+        return card_text
+    return parsed_detail_description or cleaned_detail_text or card_text
 
 
 def _classify_compensation_from_source(card_text: str, detail_text: str) -> str:
@@ -275,6 +430,78 @@ def _job_search_url_to_jobs_url(url: str) -> str:
     return urlunparse(parsed._replace(path=f"/jobs/{match.group(1)}", query=""))
 
 
+def _build_source_metadata(
+    *,
+    card: dict[str, str],
+    detail: dict[str, str],
+    card_text: str,
+    detail_text: str,
+    url: str,
+    detail_fetch_attempted: bool,
+    detail_click_succeeded: bool,
+) -> dict[str, object]:
+    raw_detail = detail_text.strip()
+    normalized_description = str(detail.get("description") or "").strip()
+    detail_title = str(detail.get("title") or "").strip()
+    title_matches = not detail_title or _normalize_title_token(detail_title) == _normalize_title_token(card["title"])
+    contains_job_description = "job description" in raw_detail.lower()
+    contains_at_a_glance = "at a glance" in raw_detail.lower()
+    detail_polluted = _looks_like_summary_beta_pollution(normalized_description) or _looks_like_summary_beta_pollution(raw_detail)
+    detail_complete = bool(raw_detail) and title_matches and contains_job_description and len(normalized_description) > len(card_text)
+    fallback_reason = ""
+
+    if not raw_detail:
+        detail_quality_status = "card_only"
+        fallback_reason = "missing_detail_text"
+    elif detail_polluted:
+        detail_quality_status = "detail_polluted"
+        fallback_reason = "summary_beta_pollution"
+    elif not title_matches:
+        detail_quality_status = "detail_mismatch"
+        fallback_reason = "title_mismatch"
+    elif detail_complete:
+        detail_quality_status = "detail_complete"
+    else:
+        detail_quality_status = "detail_partial"
+        if not contains_job_description:
+            fallback_reason = "missing_job_description_marker"
+        elif len(normalized_description) <= len(card_text):
+            fallback_reason = "detail_not_richer_than_card"
+
+    return {
+        "detail_fetch_attempted": detail_fetch_attempted,
+        "detail_click_succeeded": detail_click_succeeded,
+        "detail_panel_found": bool(raw_detail),
+        "detail_contains_job_description": contains_job_description,
+        "detail_contains_at_a_glance": contains_at_a_glance,
+        "detail_text_length": len(raw_detail),
+        "detail_title_matches_card": title_matches,
+        "detail_quality_status": detail_quality_status,
+        "detail_fallback_reason": fallback_reason,
+        "resolved_job_url": url,
+    }
+
+
+def _normalize_title_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def _looks_like_summary_beta_pollution(value: str) -> bool:
+    lowered = value.lower()
+    if "summary beta" in lowered:
+        return True
+    return any(phrase in lowered for phrase in SUMMARY_BETA_POLLUTION_PHRASES)
+
+
+def _clean_summary_beta_text(value: str) -> str:
+    if not value:
+        return value
+    cleaned = INLINE_SUMMARY_BETA_RE.sub("", value)
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def _parse_card_text(card_text: str) -> dict[str, str] | None:
     lines = [line.strip() for line in card_text.splitlines() if line.strip()]
     if len(lines) < 4:
@@ -296,20 +523,20 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
     if not lines:
         return {}
 
+    posted_idx = _find_posted_line_index(lines)
     title = ""
     company = ""
     location = ""
     posted_at = ""
-    description = _trim_detail_text(lines) or detail_text
+    description = _trim_detail_text(lines, posted_idx=posted_idx) or detail_text
 
-    for idx, line in enumerate(lines):
-        if line.startswith("Posted "):
-            posted_at = _relative_age_to_iso(line) or ""
-            if idx >= 1 and not title:
-                title = lines[idx - 1]
-            if lines and not company:
-                company = lines[0]
-            break
+    if posted_idx is not None:
+        posted_at = _relative_age_to_iso(lines[posted_idx]) or ""
+        if posted_idx >= 1 and not title:
+            title = lines[posted_idx - 1]
+        company = _extract_company_near_posted(lines, posted_idx) or company
+    elif lines:
+        company = lines[0]
 
     for idx, line in enumerate(lines):
         if line == "At a glance":
@@ -318,6 +545,10 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
                     location = lookahead
                     break
             break
+
+    refined_title = _extract_job_description_title(lines)
+    if _should_prefer_refined_title(refined_title, title):
+        title = refined_title
 
     return {
         "title": title,
@@ -328,16 +559,19 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
     }
 
 
-def _trim_detail_text(lines: list[str]) -> str:
+def _trim_detail_text(lines: list[str], *, posted_idx: int | None = None) -> str:
     kept: list[str] = []
     stop_markers = (
         "about the employer",
         "similar jobs",
         "alumni in similar roles",
         "alumni at this employer",
+        "what they're looking for",
+        "what this job offers",
     )
     skipping_summary_beta = False
-    for line in lines:
+    start_idx = _detail_content_start_index(lines, posted_idx)
+    for line in lines[start_idx:]:
         lowered = line.lower()
         if any(marker in lowered for marker in stop_markers):
             break
@@ -353,6 +587,62 @@ def _trim_detail_text(lines: list[str]) -> str:
             continue
         kept.append(line)
     return "\n".join(kept).strip()
+
+
+def _find_posted_line_index(lines: list[str]) -> int | None:
+    for idx, line in enumerate(lines):
+        if line.startswith("Posted "):
+            return idx
+    return None
+
+
+def _extract_company_near_posted(lines: list[str], posted_idx: int) -> str:
+    if posted_idx >= 3:
+        return lines[posted_idx - 3]
+    if lines:
+        return lines[0]
+    return ""
+
+
+def _detail_content_start_index(lines: list[str], posted_idx: int | None) -> int:
+    if posted_idx is None:
+        return 0
+    if posted_idx >= 3:
+        return posted_idx - 3
+    return 0
+
+
+def _extract_job_description_title(lines: list[str]) -> str:
+    for idx, line in enumerate(lines):
+        if line.lower() != "job description":
+            continue
+        for candidate in lines[idx + 1 : idx + 6]:
+            lowered = candidate.lower()
+            if lowered in {"at a glance", "about the employer", "similar jobs"}:
+                break
+            if "intern" in lowered:
+                return candidate
+    return ""
+
+
+def _should_prefer_refined_title(candidate: str, current: str) -> bool:
+    candidate = candidate.strip()
+    current = current.strip()
+    if not candidate:
+        return False
+    if not current:
+        return True
+    if candidate == current:
+        return False
+    generic_current = re.fullmatch(
+        r"(ai|ml|software|data|backend|platform)?\s*engineering?\s+intern(ship)?|(software|engineering|data)\s+intern(ship)?|intern(ship)?",
+        current.lower(),
+    )
+    if generic_current and len(candidate) > len(current):
+        return True
+    if current.lower() in candidate.lower() and len(candidate) > len(current):
+        return True
+    return False
 
 
 def _relative_age_to_iso(text: str) -> str | None:

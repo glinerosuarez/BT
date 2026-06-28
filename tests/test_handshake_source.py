@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from job_hunter.sources.handshake import (
     _build_row,
+    _build_row_from_job_page,
     _dedupe_rows,
     _extract_cards_from_page_text,
+    _is_card_older_than_lookback,
     _job_search_url_to_jobs_url,
     _normalize_search_url,
+    _partition_handshake_urls,
     _parse_card_text,
     _parse_detail_text,
     _relative_age_to_iso,
@@ -119,6 +123,42 @@ About the employer
 CREW
 """
 
+INLINE_SUMMARY_BETA_DETAIL_TEXT = """CRH Construction Commercialization Intern Posted 2 days ago∙Apply by August 8, 2026 at 10:59 PM Save Share Apply externally Summary Beta This job posting describes a data engineering intern position, which aligns well with the user's interest in learning about data-related roles. It highlights key responsibilities such as supporting commercialization efforts, developing reports, and maintaining documentation. At a glance $22–31/hr Remote Work from home Internship Part-time∙35 hours a week∙From September 1, 2026 to December 18, 2026 US work authorization required Eligible for visa sponsorship and open to candidates with OPT/CPT Job description CRH is a leading global diversified building materials group. Position Overview: As a Commercialization Intern (Americas) you will support various commercialization efforts within the Americas Solutions Group."""
+
+PRESTO_BODY_TEXT = """Skip to content
+Explore
+Jobs
+Inbox
+Feed
+AI showcase
+Events
+People
+Employers
+Career center
+AI work
+Get the app
+28
+Presto
+Internet & Software
+Engineering Intern
+Posted 5 days ago∙Apply by July 23, 2026 at 10:59 PM
+Save
+Share
+Apply
+At a glance
+$16–23/hr
+Remote, based in United States
+Work from home
+Internship
+Full-time∙From August 3, 2026 to December 4, 2026
+US work authorization required
+Open to candidates with OPT/CPT
+Job description
+AI Engineering Intern, Voice & LLM Systems
+About Presto Phoenix, Inc.
+Presto is the leading Voice AI company for restaurant drive-thrus.
+"""
+
 
 class HandshakeSourceTests(unittest.TestCase):
     def test_resolve_job_url_prefers_direct_jobs_link(self) -> None:
@@ -202,6 +242,8 @@ class HandshakeSourceTests(unittest.TestCase):
             DETAIL_TEXT,
             "https://app.joinhandshake.com/job-search/example",
             "https://app.joinhandshake.com/job-search/11120024?query=data+engineer+intern",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
         )
         self.assertIsNotNone(row)
         self.assertEqual(row["source"], "handshake")
@@ -213,6 +255,8 @@ class HandshakeSourceTests(unittest.TestCase):
             "https://app.joinhandshake.com/job-search/11120024?query=data+engineer+intern",
         )
         self.assertEqual(row["compensation_type"], "paid")
+        self.assertEqual(row["source_metadata"]["detail_quality_status"], "detail_complete")
+        self.assertTrue(row["source_metadata"]["detail_contains_job_description"])
 
     def test_build_row_preserves_work_auth_language_for_pipeline(self) -> None:
         row = _build_row(
@@ -220,12 +264,112 @@ class HandshakeSourceTests(unittest.TestCase):
             SIEMENS_STYLE_DETAIL_TEXT,
             "https://app.joinhandshake.com/job-search/example",
             "https://app.joinhandshake.com/job-search/11120024?query=data+engineer+intern",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
         )
         self.assertIsNotNone(row)
         self.assertIn(
             "without the need for current or future sponsorship by the company",
             row["description"],
         )
+
+    def test_build_row_marks_card_only_when_detail_missing(self) -> None:
+        row = _build_row(
+            CARD_TEXT,
+            "",
+            "https://app.joinhandshake.com/job-search/example",
+            "https://app.joinhandshake.com/job-search/11120024?query=data+engineer+intern",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=False,
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_metadata"]["detail_quality_status"], "card_only")
+        self.assertEqual(row["source_metadata"]["detail_fallback_reason"], "missing_detail_text")
+
+    def test_build_row_cleans_line_delimited_summary_beta_pollution(self) -> None:
+        row = _build_row(
+            CARD_TEXT,
+            SUMMARY_BETA_DETAIL_TEXT,
+            "https://app.joinhandshake.com/job-search/example",
+            "https://app.joinhandshake.com/job-search/11120024?query=data+engineer+intern",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertNotIn("Summary Beta", row["description"])
+        self.assertNotIn("This role as a Data Engineer Intern aligns closely", row["description"])
+        self.assertIn("The communications intern will assist", row["description"])
+
+    def test_build_row_strips_inline_summary_beta_pollution(self) -> None:
+        row = _build_row(
+            CARD_TEXT,
+            INLINE_SUMMARY_BETA_DETAIL_TEXT,
+            "https://app.joinhandshake.com/job-search/example",
+            "https://app.joinhandshake.com/job-search/11161752?query=data+engineer+intern",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertNotIn("Summary Beta", row["description"])
+        self.assertNotIn("This job posting describes a data engineering intern position", row["description"])
+        self.assertIn("Position Overview: As a Commercialization Intern", row["description"])
+
+    def test_build_row_from_job_page_supports_direct_urls(self) -> None:
+        row = _build_row_from_job_page(
+            detail_text=DETAIL_TEXT,
+            job_url="https://app.joinhandshake.com/jobs/11120024",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["url"], "https://app.joinhandshake.com/jobs/11120024")
+        self.assertEqual(row["source_detail"], "https://app.joinhandshake.com/jobs/11120024")
+        self.assertEqual(row["source_metadata"]["detail_quality_status"], "detail_complete")
+        self.assertIn("Location: Lake Forest, CA", row["description"])
+
+    def test_build_row_from_job_page_supports_full_body_text(self) -> None:
+        body_text = "\n".join(
+            [
+                "Skip to content",
+                "Jobs",
+                DETAIL_TEXT,
+                "About the employer",
+                "Advantest employer profile",
+            ]
+        )
+        row = _build_row_from_job_page(
+            detail_text=body_text,
+            job_url="https://app.joinhandshake.com/jobs/11120024",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_metadata"]["detail_quality_status"], "detail_complete")
+        self.assertEqual(row["company"], "Advantest America, Inc.")
+        self.assertNotIn("Skip to content", row["description"])
+        self.assertNotIn("About the employer", row["description"])
+
+    def test_build_row_from_job_page_prefers_specific_job_description_title(self) -> None:
+        row = _build_row_from_job_page(
+            detail_text=PRESTO_BODY_TEXT,
+            job_url="https://app.joinhandshake.com/jobs/11149721",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["company"], "Presto")
+        self.assertEqual(row["title"], "AI Engineering Intern, Voice & LLM Systems")
+        self.assertNotIn("Skip to content", row["description"])
+
+    def test_partition_handshake_urls_separates_search_and_job_urls(self) -> None:
+        search_urls, job_urls = _partition_handshake_urls(
+            [
+                "https://app.joinhandshake.com/job-search/11120409?query=data",
+                "https://app.joinhandshake.com/jobs/11120024",
+            ]
+        )
+        self.assertEqual(search_urls, ["https://app.joinhandshake.com/job-search/11120409?query=data"])
+        self.assertEqual(job_urls, ["https://app.joinhandshake.com/jobs/11120024"])
 
     def test_relative_age_to_iso(self) -> None:
         self.assertIsNotNone(_relative_age_to_iso("Posted 4 days ago"))
@@ -239,6 +383,26 @@ class HandshakeSourceTests(unittest.TestCase):
         self.assertEqual(len(cards), 2)
         self.assertEqual(cards[0]["company"], "National Journal")
         self.assertEqual(cards[1]["title"], "Urology Sales Intern")
+
+    def test_card_older_than_lookback(self) -> None:
+        card = {
+            "company": "Example",
+            "title": "Old Intern",
+            "meta": "$20/hr · Internship",
+            "location": "Remote",
+            "freshness": "2wk ago",
+        }
+        self.assertTrue(_is_card_older_than_lookback(card, 7))
+
+    def test_card_within_lookback(self) -> None:
+        card = {
+            "company": "Example",
+            "title": "Fresh Intern",
+            "meta": "$20/hr · Internship",
+            "location": "Remote",
+            "freshness": "4d ago",
+        }
+        self.assertFalse(_is_card_older_than_lookback(card, 7))
 
     def test_parse_month_based_card_text(self) -> None:
         parsed = _parse_card_text(MONTH_CARD_TEXT)

@@ -212,6 +212,11 @@ def _serialize_show_row(row) -> dict[str, object]:
         "relevance_score": float(row["relevance_score"] or 0.0),
         "eligibility_status": str(row["eligibility_status"] or ""),
         "eligibility_confidence": float(row["eligibility_confidence"] or 0.0),
+        "source_quality_status": str(row["source_quality_status"] or ""),
+        "source_quality_reason_codes": _decode_json_array(row["source_quality_reason_codes"]),
+        "source_quality_prev_status": str(row["source_quality_prev_status"] or ""),
+        "source_quality_recovered_at": str(row["source_quality_recovered_at"] or ""),
+        "source_metadata": _decode_json_object(row["source_metadata"]),
         "profile_match_score": float(row["profile_match_score"] or 0.0),
         "profile_match_label": str(row["profile_match_label"] or ""),
         "profile_match_reason_codes": _decode_json_array(row["profile_match_reason_codes"]),
@@ -257,6 +262,16 @@ def _serialize_comparison_row(row) -> dict[str, object]:
         "manual_fit_normalized_label": _normalize_manual_fit_label(row["manual_fit_label"]),
         "manual_fit_reason_codes": _decode_json_array(row["manual_fit_reason_codes"]),
     }
+
+
+def _decode_json_object(value) -> dict[str, object]:
+    if not value:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 
 def _decode_json_array(value: object) -> list[str]:
@@ -474,6 +489,7 @@ def _render_show_text(row: dict[str, object]) -> str:
     semantic_reasons = ",".join(row["semantic_match_reason_codes"]) or "-"
     semantic_adjustments = ",".join(row["semantic_adjustment_reason_codes"]) or "-"
     manual_reasons = ",".join(row["manual_fit_reason_codes"]) or "-"
+    source_quality_reasons = ",".join(row["source_quality_reason_codes"]) or "-"
     return "\n".join(
         [
             f"id={row['id']}",
@@ -486,6 +502,8 @@ def _render_show_text(row: dict[str, object]) -> str:
             f"url={row['url']}",
             f"relevance_score={row['relevance_score']}",
             f"eligibility={row['eligibility_status']} ({row['eligibility_confidence']:.2f})",
+            f"source_quality_status={row['source_quality_status'] or '-'}",
+            f"source_quality_reasons={source_quality_reasons}",
             f"stage2_label={row['profile_match_label']}",
             f"stage2_score={row['profile_match_score']:.2f}",
             f"stage2_reasons={reasons}",
@@ -504,6 +522,7 @@ def _render_show_text(row: dict[str, object]) -> str:
             f"job_text_version={row['job_text_version']}",
             f"manual_fit_label={row['manual_fit_label'] or '-'}",
             f"manual_fit_reason_codes={manual_reasons}",
+            f"source_metadata={json.dumps(row['source_metadata'], sort_keys=True)}",
             "",
             "job_text_snapshot:",
             str(row["job_text_snapshot"] or "-"),

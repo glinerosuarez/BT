@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -152,6 +153,127 @@ class SourceMaintenanceTests(unittest.TestCase):
         greenhouse_sources = [source for source in sources if isinstance(source, GreenhouseSource)]
         self.assertEqual(len(greenhouse_sources), 1)
         self.assertEqual(greenhouse_sources[0].board_tokens, ["live-board"])
+
+    def test_list_recent_handshake_quarantined_urls(self) -> None:
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]')
+            """,
+            (
+                "dq1",
+                "job-1",
+                "https://app.joinhandshake.com/jobs/111",
+                "Data Engineering Intern",
+                "Example",
+                "Remote",
+                recent_posted_at := "2026-06-28",
+                "Example description",
+                datetime.now(timezone.utc).isoformat(),
+                "detail_polluted",
+            ),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]')
+            """,
+            (
+                "dq2",
+                "job-2",
+                "https://app.joinhandshake.com/jobs/222",
+                "Data Engineering Intern",
+                "Example",
+                "Remote",
+                recent_posted_at,
+                "Example description",
+                datetime.now(timezone.utc).isoformat(),
+                "detail_complete",
+            ),
+        )
+        self.store._conn.commit()
+
+        urls = self.store.list_recent_handshake_quarantined_urls(days=7, limit=10)
+        self.assertEqual(urls, ["https://app.joinhandshake.com/jobs/111"])
+
+    def test_cleanup_handshake_duplicate_rows_keeps_cleaner_canonical_row(self) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes, notified
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', 1)
+            """,
+            (
+                "clean-key",
+                "job-clean",
+                "https://app.joinhandshake.com/jobs/11149721",
+                "AI Engineering Intern, Voice & LLM Systems",
+                "Presto",
+                "Remote, based in United States",
+                "2026-06-23",
+                "Presto\nInternet & Software\nAI Engineering Intern, Voice & LLM Systems\nPosted 5 days ago",
+                now_iso,
+                "detail_complete",
+            ),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO seen_events (dedupe_key, first_seen_at, last_seen_at, seen_count, notified)
+            VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 1)
+            """,
+            ("clean-key",),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes, notified
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', 1)
+            """,
+            (
+                "noisy-key",
+                "job-noisy",
+                "https://app.joinhandshake.com/jobs/11149721",
+                "AI Engineering Intern, Voice & LLM Systems",
+                "Presto",
+                "Remote, based in United States",
+                "2026-06-23",
+                "Skip to content Explore Jobs Inbox Feed AI showcase Events People Employers Career center AI work Get the app 28 Presto noisy body",
+                now_iso,
+                "detail_complete",
+            ),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO seen_events (dedupe_key, first_seen_at, last_seen_at, seen_count, notified)
+            VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 1)
+            """,
+            ("noisy-key",),
+        )
+        self.store._conn.commit()
+
+        summary = self.store.cleanup_handshake_duplicate_rows()
+        self.assertEqual(summary["deleted_count"], 1)
+        rows = self.store._conn.execute(
+            "SELECT id, dedupe_key, description FROM jobs WHERE url = 'https://app.joinhandshake.com/jobs/11149721'"
+        ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["dedupe_key"], "clean-key")
+        self.assertNotIn("Skip to content", rows[0]["description"])
 
     def test_rss_probe_rejects_malformed_xml(self) -> None:
         class FakeResponse:

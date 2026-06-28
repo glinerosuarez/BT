@@ -19,6 +19,8 @@ class SourceRunStats:
     after_stage_1c_count: int = 0
     rejected_eligibility_count: int = 0
     rejected_relevance_count: int = 0
+    rejected_source_quality_count: int = 0
+    recovered_source_quality_count: int = 0
     persisted_count: int = 0
     notified_count: int = 0
     duplicate_count: int = 0
@@ -72,6 +74,11 @@ class JobRecord:
     age_days: float | None = None
     age_unknown: bool = True
     source_detail: str = ""
+    source_metadata: dict[str, object] = field(default_factory=dict)
+    source_quality_status: str = ""
+    source_quality_reason_codes: list[str] = field(default_factory=list)
+    source_quality_prev_status: str = ""
+    source_quality_recovered_at: str = ""
 
 
 @dataclass(slots=True)

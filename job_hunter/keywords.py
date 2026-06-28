@@ -50,6 +50,7 @@ HIGH_SIGNAL_ML_DATA_KEYWORDS = {
 
 DATA_ROLE_TITLE_PATTERNS = {
     "machine_learning_title": r"\b(machine learning|ml)\b",
+    "ai_engineering_title": r"\bai\s+engineer(ing)?\b",
     "data_science_title": r"\bdata (science|scientist)\b",
     "data_engineer_title": r"\bdata engineer(ing)?\b",
     "analytics_engineer_title": r"\banalytics engineer\b",

@@ -161,6 +161,7 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 headless=settings.handshake_headless,
                 max_results=settings.handshake_max_results,
                 page_timeout_seconds=settings.handshake_page_timeout_seconds,
+                max_posting_age_days=settings.max_posting_age_days,
                 fetch_details=settings.handshake_fetch_details,
             )
         )
@@ -199,13 +200,20 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
     now_iso = now.isoformat()
     shadow_scorer = ShadowProfileScorer()
     semantic_scorer = _build_semantic_shadow_scorer()
-    title_blacklist_regexes = _compile_title_blacklist(settings.title_blacklist_patterns)
-    data_role_title_regexes = _compile_title_blacklist(settings.data_role_title_patterns)
-    non_data_role_title_regexes = _compile_title_blacklist(settings.non_data_title_patterns)
-    policy_reject_regexes = _compile_title_blacklist(settings.policy_reject_patterns)
+    title_blacklist_regexes = _merge_compiled_patterns(_compile_title_blacklist(settings.title_blacklist_patterns))
+    data_role_title_regexes = _merge_compiled_patterns(
+        list(DEFAULT_DATA_ROLE_TITLE_REGEXES.values()),
+        _compile_title_blacklist(settings.data_role_title_patterns),
+    )
+    non_data_role_title_regexes = _merge_compiled_patterns(
+        list(DEFAULT_NON_DATA_ROLE_TITLE_REGEXES.values()),
+        _compile_title_blacklist(settings.non_data_title_patterns),
+    )
+    policy_reject_regexes = _merge_compiled_patterns(_compile_title_blacklist(settings.policy_reject_patterns))
 
     for source in build_sources(settings, store=store):
         source_stats = outcome.source_stats.setdefault(source.name, SourceRunStats())
+        pre_refreshed_dedupe_keys: set[str] = set()
         try:
             raw_jobs = source.fetch(settings.request_timeout_seconds)
         except Exception:
@@ -240,6 +248,25 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 continue
             outcome.after_stage_1a_count += 1
             source_stats.after_stage_1a_count += 1
+
+            early_source_quality_status = ""
+            early_source_quality_reason_codes: list[str] = []
+            if job.source == "handshake":
+                early_source_quality_status, early_source_quality_reason_codes, _ = _evaluate_source_quality(job)
+                job.source_quality_status = early_source_quality_status
+                job.source_quality_reason_codes = early_source_quality_reason_codes
+
+            dedupe_key = _dedupe_key(job)
+            existing_dedupe_key = store.resolve_existing_dedupe_key(
+                source=job.source,
+                dedupe_key=dedupe_key,
+                url=job.url,
+            )
+            if job.source == "handshake" and existing_dedupe_key:
+                refresh_meta = store.update_existing_job(job, existing_dedupe_key)
+                pre_refreshed_dedupe_keys.add(existing_dedupe_key)
+                if bool(refresh_meta.get("source_quality_recovered")):
+                    source_stats.recovered_source_quality_count += 1
 
             if not _is_internship(job):
                 source_stats.rejected_internship_count += 1
@@ -311,20 +338,34 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 source_stats.rejected_relevance_count += 1
                 continue
 
+            if early_source_quality_status:
+                source_quality_status = early_source_quality_status
+                source_quality_reason_codes = early_source_quality_reason_codes
+                source_quality_notify_allowed = source_quality_status not in {"card_only", "detail_polluted", "detail_mismatch"}
+            else:
+                source_quality_status, source_quality_reason_codes, source_quality_notify_allowed = _evaluate_source_quality(job)
+            job.source_quality_status = source_quality_status
+            job.source_quality_reason_codes = source_quality_reason_codes
+
             if job.eligibility_status == "ambiguous" and not settings.notify_on_ambiguous_eligibility:
                 pass_notify = False
             else:
                 pass_notify = True
+            if not source_quality_notify_allowed:
+                source_stats.rejected_source_quality_count += 1
+                pass_notify = False
 
             outcome.passed_filter_count += 1
-            dedupe_key = _dedupe_key(job)
-            if store.is_seen(dedupe_key):
-                store.update_existing_job(job, dedupe_key)
+            if existing_dedupe_key:
+                if existing_dedupe_key not in pre_refreshed_dedupe_keys:
+                    refresh_meta = store.update_existing_job(job, existing_dedupe_key)
+                    if bool(refresh_meta.get("source_quality_recovered")):
+                        source_stats.recovered_source_quality_count += 1
                 outcome.duplicate_count += 1
                 source_stats.duplicate_count += 1
-                if notifier is not None and pass_notify and not store.was_notified(dedupe_key):
+                if notifier is not None and pass_notify and not store.was_notified(existing_dedupe_key):
                     sent = notifier.send(job)
-                    store.mark_notified(dedupe_key, sent)
+                    store.mark_notified(existing_dedupe_key, sent)
                     if sent:
                         outcome.notified_count += 1
                         source_stats.notified_count += 1
@@ -397,6 +438,11 @@ def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
         skills = [str(raw_skills)]
     else:
         skills = []
+    raw_source_metadata = raw.get("source_metadata", {})
+    if isinstance(raw_source_metadata, dict):
+        source_metadata = {str(key): value for key, value in raw_source_metadata.items()}
+    else:
+        source_metadata = {}
 
     return JobRecord(
         source=str(raw.get("source", "")),
@@ -412,6 +458,7 @@ def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
         skills=skills,
         ingested_at=ingested_at,
         source_detail=str(raw.get("source_detail", "")),
+        source_metadata=source_metadata,
     )
 
 
@@ -431,6 +478,25 @@ def _nullable_str(value: object) -> str | None:
 
 def _job_blob(job: JobRecord) -> str:
     return " ".join([job.title, job.description, " ".join(job.skills)]).lower()
+
+
+def _evaluate_source_quality(job: JobRecord) -> tuple[str, list[str], bool]:
+    if job.source != "handshake":
+        return "ok", [], True
+
+    status = str(job.source_metadata.get("detail_quality_status", "") or "").strip().lower()
+    fallback_reason = str(job.source_metadata.get("detail_fallback_reason", "") or "").strip().lower()
+    reasons: list[str] = []
+
+    if status:
+        reasons.append(f"handshake_{status}")
+    if fallback_reason:
+        reasons.append(f"handshake_{fallback_reason}")
+
+    notify_allowed = status not in {"card_only", "detail_polluted", "detail_mismatch"}
+    if not status:
+        return "unknown", reasons, True
+    return status, reasons, notify_allowed
 
 
 def _classify_compensation(title: str, description: str) -> str:
@@ -460,6 +526,19 @@ def _compile_title_blacklist(patterns: list[str]) -> list[re.Pattern[str]]:
             # fallback to literal matching when an env-supplied pattern is invalid
             compiled.append(re.compile(re.escape(text), flags=re.IGNORECASE))
     return compiled
+
+
+def _merge_compiled_patterns(*pattern_groups: list[re.Pattern[str]]) -> list[re.Pattern[str]]:
+    merged: list[re.Pattern[str]] = []
+    seen: set[tuple[str, int]] = set()
+    for group in pattern_groups:
+        for pattern in group:
+            key = (pattern.pattern, pattern.flags)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(pattern)
+    return merged
 
 
 def _is_blacklisted_title(job: JobRecord, patterns: list[re.Pattern[str]]) -> bool:

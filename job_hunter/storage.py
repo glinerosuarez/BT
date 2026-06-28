@@ -3,11 +3,26 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from job_hunter.models import JobRecord, PipelineOutcome
 
 SUMMARY_BETA_MARKER = "summary beta"
+SOURCE_QUALITY_QUARANTINE_STATUSES = {"card_only", "detail_polluted", "detail_mismatch"}
+HANDSHAKE_PAGE_CHROME_MARKERS = (
+    "skip to content",
+    "career center",
+    "get the app",
+    "ai showcase",
+)
+HANDSHAKE_QUALITY_STATUS_SCORES = {
+    "detail_complete": 5,
+    "detail_partial": 4,
+    "card_only": 3,
+    "detail_mismatch": 2,
+    "detail_polluted": 1,
+}
 
 
 class JobStore:
@@ -68,6 +83,11 @@ class JobStore:
                 age_days REAL,
                 age_unknown INTEGER NOT NULL DEFAULT 1,
                 source_detail TEXT,
+                source_metadata TEXT,
+                source_quality_status TEXT,
+                source_quality_reason_codes TEXT,
+                source_quality_prev_status TEXT,
+                source_quality_recovered_at TEXT,
                 manual_fit_label TEXT,
                 manual_fit_reason_codes TEXT,
                 manual_labeled_at TEXT,
@@ -118,6 +138,8 @@ class JobStore:
                 after_stage_1c_count INTEGER NOT NULL DEFAULT 0,
                 rejected_eligibility_count INTEGER NOT NULL,
                 rejected_relevance_count INTEGER NOT NULL,
+                rejected_source_quality_count INTEGER NOT NULL DEFAULT 0,
+                recovered_source_quality_count INTEGER NOT NULL DEFAULT 0,
                 persisted_count INTEGER NOT NULL,
                 notified_count INTEGER NOT NULL,
                 duplicate_count INTEGER NOT NULL,
@@ -144,6 +166,11 @@ class JobStore:
         self._ensure_column("jobs", "age_days", "REAL")
         self._ensure_column("jobs", "age_unknown", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("jobs", "source_detail", "TEXT")
+        self._ensure_column("jobs", "source_metadata", "TEXT")
+        self._ensure_column("jobs", "source_quality_status", "TEXT")
+        self._ensure_column("jobs", "source_quality_reason_codes", "TEXT")
+        self._ensure_column("jobs", "source_quality_prev_status", "TEXT")
+        self._ensure_column("jobs", "source_quality_recovered_at", "TEXT")
         self._ensure_column("jobs", "manual_fit_label", "TEXT")
         self._ensure_column("jobs", "manual_fit_reason_codes", "TEXT")
         self._ensure_column("jobs", "manual_labeled_at", "TEXT")
@@ -184,6 +211,8 @@ class JobStore:
         self._ensure_column("source_run_logs", "after_stage_1c_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "dead_token_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "feed_error_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "rejected_source_quality_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "recovered_source_quality_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_item_health", "consecutive_successes", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_item_health", "total_failures", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_item_health", "total_successes", "INTEGER NOT NULL DEFAULT 0")
@@ -218,6 +247,28 @@ class JobStore:
             return False
         return bool(row["notified"])
 
+    def resolve_existing_dedupe_key(self, *, source: str, dedupe_key: str, url: str) -> str:
+        row = self._conn.execute(
+            "SELECT dedupe_key FROM seen_events WHERE dedupe_key = ? LIMIT 1",
+            (dedupe_key,),
+        ).fetchone()
+        if row is not None:
+            return str(row["dedupe_key"])
+        if source == "handshake" and url.strip():
+            row = self._conn.execute(
+                """
+                SELECT dedupe_key
+                FROM jobs
+                WHERE source = 'handshake' AND url = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (url,),
+            ).fetchone()
+            if row is not None:
+                return str(row["dedupe_key"])
+        return ""
+
     def insert_job(self, job: JobRecord, dedupe_key: str) -> bool:
         now_iso = job.ingested_at
         payload = asdict(job)
@@ -237,8 +288,10 @@ class JobStore:
                     semantic_match_score, semantic_match_label, semantic_match_reason_codes,
                     semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
                     semantic_profile_id, semantic_model_name, semantic_scorer_version,
-                    semantic_text_hash, age_days, age_unknown, source_detail
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    semantic_text_hash, age_days, age_unknown, source_detail,
+                    source_metadata, source_quality_status, source_quality_reason_codes,
+                    source_quality_prev_status, source_quality_recovered_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     dedupe_key,
@@ -284,6 +337,11 @@ class JobStore:
                     payload["age_days"],
                     int(payload["age_unknown"]),
                     payload["source_detail"],
+                    json.dumps(payload["source_metadata"]),
+                    payload["source_quality_status"],
+                    json.dumps(payload["source_quality_reason_codes"]),
+                    payload["source_quality_prev_status"],
+                    payload["source_quality_recovered_at"],
                 ),
             )
             self._conn.execute(
@@ -308,11 +366,11 @@ class JobStore:
             self._conn.commit()
             return False
 
-    def update_existing_job(self, job: JobRecord, dedupe_key: str) -> None:
+    def update_existing_job(self, job: JobRecord, dedupe_key: str) -> dict[str, object]:
         row = self._conn.execute(
             """
-            SELECT description, url, source_detail
-            , job_text_snapshot
+            SELECT description, url, source_detail, source_metadata, source_quality_status, source_quality_reason_codes,
+                   source_quality_prev_status, source_quality_recovered_at, job_text_snapshot
             FROM jobs
             WHERE dedupe_key = ?
             LIMIT 1
@@ -320,14 +378,18 @@ class JobStore:
             (dedupe_key,),
         ).fetchone()
         if row is None:
-            return
+            return {"source_quality_recovered": False}
 
         existing_description = str(row["description"] or "")
         new_description = job.description or ""
         description = existing_description
         existing_has_summary_beta = SUMMARY_BETA_MARKER in existing_description.lower()
         new_has_summary_beta = SUMMARY_BETA_MARKER in new_description.lower()
+        existing_has_page_chrome = _has_handshake_page_chrome(existing_description)
+        new_has_page_chrome = _has_handshake_page_chrome(new_description)
         if existing_has_summary_beta and not new_has_summary_beta and new_description.strip():
+            description = new_description
+        elif job.source == "handshake" and existing_has_page_chrome and not new_has_page_chrome and new_description.strip():
             description = new_description
         elif len(new_description.strip()) > len(existing_description.strip()):
             description = new_description
@@ -342,6 +404,25 @@ class JobStore:
         source_detail = str(row["source_detail"] or "")
         if job.source_detail:
             source_detail = job.source_detail
+        source_metadata = str(row["source_metadata"] or "")
+        if job.source_metadata:
+            source_metadata = json.dumps(job.source_metadata)
+        existing_source_quality_status = str(row["source_quality_status"] or "")
+        source_quality_status = existing_source_quality_status
+        if job.source_quality_status:
+            source_quality_status = job.source_quality_status
+        source_quality_reason_codes = str(row["source_quality_reason_codes"] or "")
+        if job.source_quality_reason_codes:
+            source_quality_reason_codes = json.dumps(job.source_quality_reason_codes)
+        source_quality_prev_status = str(row["source_quality_prev_status"] or "")
+        source_quality_recovered_at = str(row["source_quality_recovered_at"] or "")
+        source_quality_recovered = _source_quality_recovered(
+            previous_status=existing_source_quality_status,
+            current_status=source_quality_status,
+        )
+        if source_quality_recovered:
+            source_quality_prev_status = existing_source_quality_status
+            source_quality_recovered_at = job.ingested_at
         existing_job_text_snapshot = str(row["job_text_snapshot"] or "")
         job_text_snapshot = existing_job_text_snapshot
         description_replaced = description != existing_description
@@ -372,7 +453,10 @@ class JobStore:
         self._conn.execute(
             """
             UPDATE jobs
-            SET url = ?,
+            SET external_id = ?,
+                url = ?,
+                title = ?,
+                company = ?,
                 description = ?,
                 compensation_type = ?,
                 location = ?,
@@ -406,11 +490,19 @@ class JobStore:
                 semantic_text_hash = ?,
                 age_days = ?,
                 age_unknown = ?,
-                source_detail = ?
+                source_detail = ?,
+                source_metadata = ?,
+                source_quality_status = ?,
+                source_quality_reason_codes = ?,
+                source_quality_prev_status = ?,
+                source_quality_recovered_at = ?
             WHERE dedupe_key = ?
             """,
             (
+                job.external_id,
                 url,
+                job.title,
+                job.company,
                 description,
                 job.compensation_type,
                 job.location,
@@ -445,9 +537,20 @@ class JobStore:
                 job.age_days,
                 int(job.age_unknown),
                 source_detail,
+                source_metadata,
+                source_quality_status,
+                source_quality_reason_codes,
+                source_quality_prev_status,
+                source_quality_recovered_at,
                 dedupe_key,
             ),
         )
+        self._conn.commit()
+        return {
+            "source_quality_recovered": source_quality_recovered,
+            "previous_source_quality_status": existing_source_quality_status,
+            "current_source_quality_status": source_quality_status,
+        }
 
     def mark_notified(self, dedupe_key: str, notified: bool) -> None:
         if not notified:
@@ -505,10 +608,11 @@ class JobStore:
                     rejected_internship_count, rejected_us_scope_count, rejected_title_blacklist_count,
                     rejected_data_role_count, after_stage_1b_count, rejected_policy_gate_count,
                     after_stage_1c_count,
-                    rejected_eligibility_count, rejected_relevance_count,
+                    rejected_eligibility_count, rejected_relevance_count, rejected_source_quality_count,
+                    recovered_source_quality_count,
                     persisted_count, notified_count, duplicate_count, error_count,
                     dead_token_count, feed_error_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_log_id,
@@ -527,6 +631,8 @@ class JobStore:
                     stats.after_stage_1c_count,
                     stats.rejected_eligibility_count,
                     stats.rejected_relevance_count,
+                    stats.rejected_source_quality_count,
+                    stats.recovered_source_quality_count,
                     stats.persisted_count,
                     stats.notified_count,
                     stats.duplicate_count,
@@ -645,6 +751,133 @@ class JobStore:
             (source_name,),
         ).fetchall()
 
+    def cleanup_handshake_duplicate_rows(self) -> dict[str, int]:
+        rows = self._conn.execute(
+            """
+            SELECT id, dedupe_key, url, title, company, description, source_quality_status,
+                   source_quality_prev_status, source_quality_recovered_at, manual_fit_label,
+                   manual_fit_reason_codes, manual_labeled_at, notified, notified_at,
+                   job_text_snapshot
+            FROM jobs
+            WHERE source = 'handshake' AND url IS NOT NULL AND TRIM(url) <> ''
+            ORDER BY url, id
+            """
+        ).fetchall()
+        by_url: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            by_url.setdefault(str(row["url"]), []).append(row)
+
+        deleted_count = 0
+        for url_rows in by_url.values():
+            if len(url_rows) <= 1:
+                continue
+            canonical = max(url_rows, key=_handshake_row_rank)
+            duplicates = [row for row in url_rows if int(row["id"]) != int(canonical["id"])]
+            if not duplicates:
+                continue
+            self._merge_handshake_duplicate_metadata(canonical, duplicates)
+            self._merge_handshake_duplicate_seen_events(canonical, duplicates)
+            self._conn.executemany("DELETE FROM jobs WHERE id = ?", [(int(row["id"]),) for row in duplicates])
+            self._conn.executemany(
+                "DELETE FROM seen_events WHERE dedupe_key = ?",
+                [(str(row["dedupe_key"]),) for row in duplicates],
+            )
+            deleted_count += len(duplicates)
+        self._conn.commit()
+        return {"deleted_count": deleted_count}
+
+    def _merge_handshake_duplicate_metadata(self, canonical: sqlite3.Row, duplicates: list[sqlite3.Row]) -> None:
+        canonical_manual_fit_label = str(canonical["manual_fit_label"] or "")
+        canonical_manual_fit_reason_codes = str(canonical["manual_fit_reason_codes"] or "")
+        canonical_manual_labeled_at = str(canonical["manual_labeled_at"] or "")
+        canonical_notified = int(canonical["notified"] or 0)
+        canonical_notified_at = str(canonical["notified_at"] or "")
+        canonical_prev_status = str(canonical["source_quality_prev_status"] or "")
+        canonical_recovered_at = str(canonical["source_quality_recovered_at"] or "")
+        canonical_snapshot = str(canonical["job_text_snapshot"] or "")
+
+        for row in duplicates:
+            if not canonical_manual_fit_label and str(row["manual_fit_label"] or "").strip():
+                canonical_manual_fit_label = str(row["manual_fit_label"] or "")
+                canonical_manual_fit_reason_codes = str(row["manual_fit_reason_codes"] or "")
+                canonical_manual_labeled_at = str(row["manual_labeled_at"] or "")
+            if not canonical_notified and int(row["notified"] or 0):
+                canonical_notified = 1
+                canonical_notified_at = str(row["notified_at"] or "")
+            if not canonical_prev_status and str(row["source_quality_prev_status"] or "").strip():
+                canonical_prev_status = str(row["source_quality_prev_status"] or "")
+            if not canonical_recovered_at and str(row["source_quality_recovered_at"] or "").strip():
+                canonical_recovered_at = str(row["source_quality_recovered_at"] or "")
+            if not canonical_snapshot and str(row["job_text_snapshot"] or "").strip():
+                canonical_snapshot = str(row["job_text_snapshot"] or "")
+
+        self._conn.execute(
+            """
+            UPDATE jobs
+            SET manual_fit_label = ?,
+                manual_fit_reason_codes = ?,
+                manual_labeled_at = ?,
+                notified = ?,
+                notified_at = ?,
+                source_quality_prev_status = ?,
+                source_quality_recovered_at = ?,
+                job_text_snapshot = ?
+            WHERE id = ?
+            """,
+            (
+                canonical_manual_fit_label or None,
+                canonical_manual_fit_reason_codes or None,
+                canonical_manual_labeled_at or None,
+                canonical_notified,
+                canonical_notified_at or None,
+                canonical_prev_status or None,
+                canonical_recovered_at or None,
+                canonical_snapshot or None,
+                int(canonical["id"]),
+            ),
+        )
+
+    def _merge_handshake_duplicate_seen_events(self, canonical: sqlite3.Row, duplicates: list[sqlite3.Row]) -> None:
+        dedupe_keys = [str(canonical["dedupe_key"])] + [str(row["dedupe_key"]) for row in duplicates]
+        placeholders = ", ".join("?" for _ in dedupe_keys)
+        event_rows = self._conn.execute(
+            f"""
+            SELECT dedupe_key, first_seen_at, last_seen_at, seen_count, notified, notified_at
+            FROM seen_events
+            WHERE dedupe_key IN ({placeholders})
+            """,
+            tuple(dedupe_keys),
+        ).fetchall()
+        if not event_rows:
+            return
+
+        first_seen_values = [str(row["first_seen_at"]) for row in event_rows if str(row["first_seen_at"] or "").strip()]
+        last_seen_values = [str(row["last_seen_at"]) for row in event_rows if str(row["last_seen_at"] or "").strip()]
+        notified_values = [str(row["notified_at"]) for row in event_rows if str(row["notified_at"] or "").strip()]
+        seen_count = sum(int(row["seen_count"] or 0) for row in event_rows)
+        notified = 1 if any(int(row["notified"] or 0) for row in event_rows) else 0
+
+        self._conn.execute(
+            """
+            INSERT INTO seen_events (dedupe_key, first_seen_at, last_seen_at, seen_count, notified, notified_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(dedupe_key) DO UPDATE SET
+                first_seen_at = excluded.first_seen_at,
+                last_seen_at = excluded.last_seen_at,
+                seen_count = excluded.seen_count,
+                notified = excluded.notified,
+                notified_at = excluded.notified_at
+            """,
+            (
+                str(canonical["dedupe_key"]),
+                min(first_seen_values) if first_seen_values else datetime.now(timezone.utc).isoformat(),
+                max(last_seen_values) if last_seen_values else datetime.now(timezone.utc).isoformat(),
+                seen_count,
+                notified,
+                min(notified_values) if notified_values else None,
+            ),
+        )
+
     def list_jobs_for_labeling(self, limit: int = 20, unlabeled_only: bool = True) -> list[sqlite3.Row]:
         safe_limit = max(limit, 1)
         if unlabeled_only:
@@ -656,7 +889,8 @@ class JobStore:
                 ORDER BY ingested_at DESC, id DESC
                 LIMIT ?
             """
-            return self._conn.execute(query, (safe_limit,)).fetchall()
+            rows = self._conn.execute(query, (safe_limit * 3,)).fetchall()
+            return _filter_canonical_handshake_rows(rows, safe_limit)
 
         query = """
             SELECT id, source, company, title, location, posted_at, url,
@@ -665,7 +899,8 @@ class JobStore:
             ORDER BY ingested_at DESC, id DESC
             LIMIT ?
         """
-        return self._conn.execute(query, (safe_limit,)).fetchall()
+        rows = self._conn.execute(query, (safe_limit * 3,)).fetchall()
+        return _filter_canonical_handshake_rows(rows, safe_limit)
 
     def list_jobs_for_export(
         self,
@@ -689,38 +924,75 @@ class JobStore:
         query = f"""
             SELECT id, source, company, title, location, posted_at, url, description,
                    relevance_score, eligibility_status, eligibility_confidence, compensation_type,
+                   source_quality_status, source_quality_reason_codes, source_quality_prev_status,
+                   source_quality_recovered_at, source_metadata,
                    manual_fit_label, manual_fit_reason_codes, manual_labeled_at
             FROM jobs
             {where_sql}
             ORDER BY ingested_at DESC, id DESC
             LIMIT ?
         """
-        params.append(safe_limit)
-        return self._conn.execute(query, tuple(params)).fetchall()
+        params.append(safe_limit * 3)
+        rows = self._conn.execute(query, tuple(params)).fetchall()
+        return _filter_canonical_handshake_rows(rows, safe_limit)
 
     def get_job_for_labeling(self, job_id: int) -> sqlite3.Row | None:
-        return self._conn.execute(
+        row = self._conn.execute(
             """
             SELECT id, source, company, title, location, posted_at, url, description,
-                   relevance_score, compensation_type, manual_fit_label, manual_fit_reason_codes, manual_labeled_at
+                   relevance_score, compensation_type, source_quality_status, source_quality_reason_codes,
+                   source_quality_prev_status, source_quality_recovered_at, source_metadata,
+                   manual_fit_label, manual_fit_reason_codes, manual_labeled_at
             FROM jobs
             WHERE id = ?
             LIMIT 1
             """,
             (job_id,),
         ).fetchone()
+        if row is None:
+            return None
+        resolved = self._resolve_canonical_handshake_row(row)
+        return resolved or row
 
     def set_manual_fit_label(self, job_id: int, label: str, reason_codes: list[str]) -> bool:
+        row = self._conn.execute(
+            "SELECT id, source, url FROM jobs WHERE id = ? LIMIT 1",
+            (job_id,),
+        ).fetchone()
+        target_id = job_id
+        if row is not None:
+            resolved = self._resolve_canonical_handshake_row(row)
+            if resolved is not None:
+                target_id = int(resolved["id"])
         cursor = self._conn.execute(
             """
             UPDATE jobs
             SET manual_fit_label = ?, manual_fit_reason_codes = ?, manual_labeled_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (label, json.dumps(reason_codes), job_id),
+            (label, json.dumps(reason_codes), target_id),
         )
         self._conn.commit()
         return cursor.rowcount > 0
+
+    def _resolve_canonical_handshake_row(self, row: sqlite3.Row) -> sqlite3.Row | None:
+        if str(row["source"] or "") != "handshake":
+            return row
+        url = str(row["url"] or "").strip()
+        if not url:
+            return row
+        candidates = self._conn.execute(
+            """
+            SELECT *
+            FROM jobs
+            WHERE source = 'handshake' AND url = ?
+            ORDER BY id
+            """,
+            (url,),
+        ).fetchall()
+        if not candidates:
+            return row
+        return max(candidates, key=_handshake_row_rank)
 
     def get_labeling_stats(self) -> dict[str, object]:
         totals = self._conn.execute(
@@ -787,7 +1059,8 @@ class JobStore:
                    rejected_age_count, after_stage_1a_count, rejected_internship_count,
                    rejected_us_scope_count, rejected_title_blacklist_count, rejected_data_role_count,
                    after_stage_1b_count, rejected_policy_gate_count, after_stage_1c_count,
-                   rejected_eligibility_count, rejected_relevance_count, persisted_count,
+                   rejected_eligibility_count, rejected_relevance_count, rejected_source_quality_count,
+                   recovered_source_quality_count, persisted_count,
                    notified_count, duplicate_count, error_count, dead_token_count, feed_error_count
             FROM source_run_logs
             WHERE run_log_id = ?
@@ -827,6 +1100,8 @@ class JobStore:
                     "after_stage_1c_count": int(row["after_stage_1c_count"] or 0),
                     "rejected_eligibility_count": int(row["rejected_eligibility_count"] or 0),
                     "rejected_relevance_count": int(row["rejected_relevance_count"] or 0),
+                    "rejected_source_quality_count": int(row["rejected_source_quality_count"] or 0),
+                    "recovered_source_quality_count": int(row["recovered_source_quality_count"] or 0),
                     "persisted_count": int(row["persisted_count"] or 0),
                     "notified_count": int(row["notified_count"] or 0),
                     "duplicate_count": int(row["duplicate_count"] or 0),
@@ -851,6 +1126,7 @@ class JobStore:
         where_sql = " AND ".join(clauses)
         query = f"""
             SELECT id, source, company, title, location, posted_at, compensation_type,
+                   source_quality_status, source_quality_reason_codes,
                    profile_match_score, profile_match_label, profile_match_reason_codes,
                    profile_version, scorer_version, job_text_version,
                    semantic_match_score, semantic_match_label, semantic_match_reason_codes,
@@ -861,14 +1137,17 @@ class JobStore:
             ORDER BY ingested_at DESC, id DESC
             LIMIT ?
         """
-        params.append(safe_limit)
-        return self._conn.execute(query, tuple(params)).fetchall()
+        params.append(safe_limit * 3)
+        rows = self._conn.execute(query, tuple(params)).fetchall()
+        return _filter_canonical_handshake_rows(rows, safe_limit)
 
     def get_stage2_job(self, job_id: int) -> sqlite3.Row | None:
-        return self._conn.execute(
+        row = self._conn.execute(
             """
             SELECT id, source, company, title, location, posted_at, url, compensation_type,
                    relevance_score, eligibility_status, eligibility_confidence,
+                   source_quality_status, source_quality_reason_codes, source_quality_prev_status,
+                   source_quality_recovered_at, source_metadata,
                    profile_match_score, profile_match_label, profile_match_reason_codes,
                    profile_version, scorer_version, job_text_version, job_text_snapshot,
                    semantic_match_score, semantic_match_label, semantic_match_reason_codes,
@@ -882,13 +1161,19 @@ class JobStore:
             """,
             (job_id,),
         ).fetchone()
+        if row is None:
+            return None
+        resolved = self._resolve_canonical_handshake_row(row)
+        return resolved or row
 
     def list_stage2_labeled_jobs(self, limit: int = 200) -> list[sqlite3.Row]:
         safe_limit = max(limit, 1)
-        return self._conn.execute(
+        rows = self._conn.execute(
             """
             SELECT id, source, company, title, location, posted_at, url, compensation_type,
                    eligibility_status, eligibility_confidence, relevance_score,
+                   source_quality_status, source_quality_reason_codes, source_quality_prev_status,
+                   source_quality_recovered_at, source_metadata,
                    profile_match_score, profile_match_label, profile_match_reason_codes,
                    profile_version, scorer_version, job_text_version, job_text_snapshot,
                    semantic_match_score, semantic_match_label, semantic_match_reason_codes,
@@ -904,8 +1189,9 @@ class JobStore:
             ORDER BY manual_labeled_at DESC, id DESC
             LIMIT ?
             """,
-            (safe_limit,),
+            (safe_limit * 3,),
         ).fetchall()
+        return _filter_canonical_handshake_rows(rows, safe_limit)
 
     def list_stage2_job_text_rows(
         self,
@@ -940,8 +1226,9 @@ class JobStore:
             ORDER BY ingested_at DESC, id DESC
             LIMIT ?
         """
-        params.append(safe_limit)
-        return self._conn.execute(query, tuple(params)).fetchall()
+        params.append(safe_limit * 3)
+        rows = self._conn.execute(query, tuple(params)).fetchall()
+        return _filter_canonical_handshake_rows(rows, safe_limit)
 
     def update_semantic_shadow(
         self,
@@ -1020,8 +1307,93 @@ class JobStore:
             ORDER BY ingested_at DESC, id DESC
             LIMIT ?
         """
-        params.append(safe_limit)
-        return self._conn.execute(query, tuple(params)).fetchall()
+        params.append(safe_limit * 3)
+        rows = self._conn.execute(query, tuple(params)).fetchall()
+        return _filter_canonical_handshake_rows(rows, safe_limit)
+
+    def list_recent_handshake_quarantined_urls(self, days: int = 7, limit: int = 50) -> list[str]:
+        safe_days = max(days, 1)
+        safe_limit = max(limit, 1)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=safe_days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT DISTINCT url
+            FROM jobs
+            WHERE source = 'handshake'
+              AND source_quality_status IN ('card_only', 'detail_polluted', 'detail_mismatch')
+              AND ingested_at >= ?
+              AND url IS NOT NULL
+              AND TRIM(url) <> ''
+            ORDER BY ingested_at DESC, id DESC
+            LIMIT ?
+            """,
+            (cutoff, safe_limit),
+        ).fetchall()
+        return [str(row["url"]) for row in rows if str(row["url"] or "").strip()]
+
+
+def _source_quality_recovered(previous_status: str, current_status: str) -> bool:
+    previous = previous_status.strip().lower()
+    current = current_status.strip().lower()
+    if previous not in SOURCE_QUALITY_QUARANTINE_STATUSES:
+        return False
+    return current == "detail_complete"
+
+
+def _has_handshake_page_chrome(value: str) -> bool:
+    lowered = value.lower()
+    return any(marker in lowered for marker in HANDSHAKE_PAGE_CHROME_MARKERS)
+
+
+def _handshake_row_rank(row: sqlite3.Row) -> tuple[int, int, int, int, int]:
+    status = str(_row_value(row, "source_quality_status") or "").strip().lower()
+    description = str(_row_value(row, "description") or "")
+    has_page_chrome = _has_handshake_page_chrome(description)
+    has_summary_beta = SUMMARY_BETA_MARKER in description.lower()
+    return (
+        HANDSHAKE_QUALITY_STATUS_SCORES.get(status, 0),
+        0 if has_page_chrome else 1,
+        0 if has_summary_beta else 1,
+        len(description.strip()),
+        -int(row["id"]),
+    )
+
+
+def _filter_canonical_handshake_rows(rows: list[sqlite3.Row], limit: int) -> list[sqlite3.Row]:
+    handshake_best_by_url: dict[str, sqlite3.Row] = {}
+
+    for row in rows:
+        source = str(_row_value(row, "source") or "")
+        url = str(_row_value(row, "url") or "").strip()
+        if source != "handshake" or not url:
+            continue
+        if url not in handshake_best_by_url:
+            handshake_best_by_url[url] = row
+            continue
+        if _handshake_row_rank(row) > _handshake_row_rank(handshake_best_by_url[url]):
+            handshake_best_by_url[url] = row
+
+    emitted_handshake_urls: set[str] = set()
+    filtered: list[sqlite3.Row] = []
+    for row in rows:
+        source = str(_row_value(row, "source") or "")
+        url = str(_row_value(row, "url") or "").strip()
+        if source == "handshake" and url:
+            if url in emitted_handshake_urls:
+                continue
+            filtered.append(handshake_best_by_url[url])
+            emitted_handshake_urls.add(url)
+        else:
+            filtered.append(row)
+        if len(filtered) >= limit:
+            break
+    return filtered
+
+
+def _row_value(row: sqlite3.Row, key: str) -> object | None:
+    if key not in row.keys():
+        return None
+    return row[key]
 
 
 def ensure_parent_dir(db_path: str) -> None:

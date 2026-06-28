@@ -37,6 +37,7 @@ def main() -> int:
             if not args.skip_source_maintenance:
                 run_source_maintenance(settings, store)
             run_pipeline(settings, store, notifier)
+            store.cleanup_handshake_duplicate_rows()
             time.sleep(max(interval_minutes, 1) * 60)
     finally:
         store.close()
