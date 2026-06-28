@@ -19,7 +19,7 @@ def main() -> int:
     args = parser.parse_args()
 
     configure_logging(verbose=args.verbose)
-    settings = load_settings()
+    settings = load_settings(load_dotenv=True)
     interval_minutes = args.interval_minutes or settings.poll_interval_minutes
 
     ensure_parent_dir(settings.db_path)

@@ -17,7 +17,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    settings = load_settings()
+    settings = load_settings(load_dotenv=True)
     profile_path = Path(settings.handshake_profile_dir).expanduser()
     profile_path.mkdir(parents=True, exist_ok=True)
 

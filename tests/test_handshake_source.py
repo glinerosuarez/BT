@@ -6,10 +6,12 @@ from job_hunter.sources.handshake import (
     _build_row,
     _dedupe_rows,
     _extract_cards_from_page_text,
+    _job_search_url_to_jobs_url,
     _normalize_search_url,
     _parse_card_text,
     _parse_detail_text,
     _relative_age_to_iso,
+    _resolve_job_url,
 )
 
 
@@ -119,6 +121,56 @@ CREW
 
 
 class HandshakeSourceTests(unittest.TestCase):
+    def test_resolve_job_url_prefers_direct_jobs_link(self) -> None:
+        class FakeLocator:
+            def evaluate_all(self, script, arg):
+                _ = script
+                self._arg = arg
+                return [
+                    {
+                        "text": "Summer Business Analyst Intern, Advanced Degree",
+                        "href": "https://app.joinhandshake.com/jobs/11159981?searchId=abc",
+                    }
+                ]
+
+        class FakePage:
+            def locator(self, selector):
+                self._selector = selector
+                return FakeLocator()
+
+        page = FakePage()
+        resolved = _resolve_job_url(
+            page,
+            "Summer Business Analyst Intern, Advanced Degree",
+            "https://app.joinhandshake.com/job-search/11159981?query=data+engineer+intern",
+        )
+        self.assertEqual(resolved, "https://app.joinhandshake.com/jobs/11159981?searchId=abc")
+
+    def test_resolve_job_url_falls_back_when_direct_link_missing(self) -> None:
+        class FakeLocator:
+            def evaluate_all(self, script, arg):
+                _ = script
+                _ = arg
+                return []
+
+        class FakePage:
+            def locator(self, selector):
+                self._selector = selector
+                return FakeLocator()
+
+        fallback = "https://app.joinhandshake.com/job-search/11159981?query=data+engineer+intern"
+        resolved = _resolve_job_url(FakePage(), "Software Intern", fallback)
+        self.assertEqual(resolved, "https://app.joinhandshake.com/jobs/11159981")
+
+    def test_job_search_url_to_jobs_url(self) -> None:
+        self.assertEqual(
+            _job_search_url_to_jobs_url(
+                "https://app.joinhandshake.com/job-search/11159981?query=data+engineer+intern&page=1"
+            ),
+            "https://app.joinhandshake.com/jobs/11159981",
+        )
+        self.assertEqual(_job_search_url_to_jobs_url("https://app.joinhandshake.com/job-search"), "")
+
     def test_parse_card_text(self) -> None:
         parsed = _parse_card_text(CARD_TEXT)
         self.assertIsNotNone(parsed)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -197,7 +198,32 @@ class Settings:
 DEFAULT_DB_PATH = "job_hunter.db"
 
 
-def load_settings() -> Settings:
+def _load_dotenv_file(path_value: str = ".env") -> None:
+    path = Path(path_value).expanduser()
+    if not path.exists() or not path.is_file():
+        return
+
+    with path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not key or key in os.environ:
+                continue
+            parsed = value.strip()
+            if parsed:
+                try:
+                    parsed = shlex.split(parsed, comments=False)[0]
+                except ValueError:
+                    parsed = parsed.strip("\"'")
+            os.environ[key] = parsed
+
+
+def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Settings:
+    if load_dotenv:
+        _load_dotenv_file(dotenv_path)
     greenhouse_token_file = os.getenv("JOB_HUNTER_GREENHOUSE_TOKEN_FILE", DEFAULT_GREENHOUSE_TOKEN_FILE)
     lever_token_file = os.getenv("JOB_HUNTER_LEVER_TOKEN_FILE", DEFAULT_LEVER_TOKEN_FILE)
     rss_feed_file = os.getenv("JOB_HUNTER_RSS_FEED_FILE", DEFAULT_RSS_FEED_FILE)

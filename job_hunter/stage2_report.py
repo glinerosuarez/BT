@@ -64,7 +64,7 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    settings = load_settings()
+    settings = load_settings(load_dotenv=True)
     ensure_parent_dir(settings.db_path)
     store = JobStore(settings.db_path)
     try:

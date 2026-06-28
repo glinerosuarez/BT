@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from job_hunter.config import load_settings
@@ -45,6 +47,25 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.handshake_max_results, 25)
         self.assertEqual(settings.handshake_page_timeout_seconds, 30)
         self.assertTrue(settings.handshake_fetch_details)
+
+    def test_requested_dotenv_loads_handshake_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "JOB_HUNTER_SOURCE_HANDSHAKE=true",
+                        "JOB_HUNTER_HANDSHAKE_SEARCH_URLS=\"https://app.joinhandshake.com/job-search/1?query=data\"",
+                        "JOB_HUNTER_HANDSHAKE_HEADLESS=false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                settings = load_settings(load_dotenv=True, dotenv_path=str(env_path))
+        self.assertTrue(settings.use_handshake)
+        self.assertEqual(settings.handshake_search_urls, ["https://app.joinhandshake.com/job-search/1?query=data"])
+        self.assertFalse(settings.handshake_headless)
 
 
 if __name__ == "__main__":

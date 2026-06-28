@@ -135,6 +135,7 @@ class HandshakeSource(SourceConnector):
                     expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
                     if expanded:
                         page.wait_for_timeout(750)
+                    card_url = _resolve_job_url(page, title, card_url)
                     detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
                 except PlaywrightTimeoutError:
                     detail_text = ""
@@ -249,6 +250,29 @@ def _infer_card_url(page_url: str, search_url: str, title: str) -> str:
     if "/job-search/" in page_url:
         return page_url
     return search_url
+
+
+def _resolve_job_url(page, title: str, fallback_url: str) -> str:
+    direct_links = page.locator("a").evaluate_all(
+        """
+        (els, targetTitle) => els
+          .map((el) => ({ text: (el.innerText || '').trim(), href: el.href || '' }))
+          .filter((item) => item.href.includes('/jobs/') && item.text === targetTitle)
+        """,
+        title,
+    )
+    if direct_links:
+        return str(direct_links[0].get("href") or fallback_url)
+    transformed = _job_search_url_to_jobs_url(fallback_url)
+    return transformed or fallback_url
+
+
+def _job_search_url_to_jobs_url(url: str) -> str:
+    parsed = urlparse(url)
+    match = re.match(r"^/job-search/(\d+)$", parsed.path)
+    if not match:
+        return ""
+    return urlunparse(parsed._replace(path=f"/jobs/{match.group(1)}", query=""))
 
 
 def _parse_card_text(card_text: str) -> dict[str, str] | None:
