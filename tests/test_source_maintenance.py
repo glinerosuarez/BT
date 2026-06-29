@@ -204,6 +204,63 @@ class SourceMaintenanceTests(unittest.TestCase):
         urls = self.store.list_recent_handshake_quarantined_urls(days=7, limit=10)
         self.assertEqual(urls, ["https://app.joinhandshake.com/jobs/111"])
 
+    def test_list_recent_handshake_suspect_urls_includes_summary_beta_rows(self) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]')
+            """,
+            (
+                "suspect1",
+                "job-suspect",
+                "https://app.joinhandshake.com/jobs/333",
+                "Business Analyst Intern",
+                "Example",
+                "Remote",
+                "2026-06-28",
+                "Save Share Apply externally Summary Beta This job is about data engineering. Job description Real business analyst role.",
+                now_iso,
+                "detail_complete",
+            ),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]')
+            """,
+            (
+                "suspect2",
+                "job-polluted",
+                "https://app.joinhandshake.com/jobs/444",
+                "Communications Intern",
+                "Example",
+                "Remote",
+                "2026-06-28",
+                "Example description",
+                now_iso,
+                "detail_polluted",
+            ),
+        )
+        self.store._conn.commit()
+
+        urls = self.store.list_recent_handshake_suspect_urls(days=30, limit=10)
+        self.assertEqual(
+            urls,
+            [
+                "https://app.joinhandshake.com/jobs/444",
+                "https://app.joinhandshake.com/jobs/333",
+            ],
+        )
+
     def test_cleanup_handshake_duplicate_rows_keeps_cleaner_canonical_row(self) -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
         self.store._conn.execute(

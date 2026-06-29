@@ -13,6 +13,11 @@ from playwright.sync_api import sync_playwright
 from job_hunter.sources.base import SourceConnector
 
 LOG = logging.getLogger(__name__)
+SECURITY_VERIFICATION_MARKERS = (
+    "performing security verification",
+    "this website uses a security service to protect against malicious bots",
+    "performance and security by cloudflare",
+)
 DETAIL_TEXT_SCRIPT = """
 () => {
   let best = null;
@@ -59,13 +64,18 @@ RELATIVE_AGE_RE = re.compile(
 )
 SUMMARY_BETA_POLLUTION_PHRASES = (
     "aligns closely with the user's query",
+    "aligns closely with the user's interest",
     "this job description highlights",
     "this role as a",
     "highly relevant to the user's interest",
 )
-INLINE_SUMMARY_BETA_RE = re.compile(
-    r"summary beta\b.*?(?=(at a glance\b|job description\b))",
+SUMMARY_BETA_SECTION_RE = re.compile(
+    r"summary beta\b.*?(?=(at a glance\b|job description\b|what they're looking for\b|about the employer\b|similar jobs\b))",
     flags=re.IGNORECASE | re.DOTALL,
+)
+SUMMARY_BETA_INLINE_PREFIX_RE = re.compile(
+    r"^(.*?)(summary beta\b.*)$",
+    flags=re.IGNORECASE,
 )
 
 
@@ -117,8 +127,7 @@ class HandshakeSource(SourceConnector):
                 context.close()
 
     def _fetch_search_page(self, page, search_url: str) -> list[dict]:
-        page.goto(search_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(3000)
+        self._goto_handshake_page(page, search_url)
         if "joinhandshake.com/login" in page.url or "users/sign_in" in page.url:
             raise RuntimeError(
                 "Handshake session not authenticated. Run `python -m job_hunter.handshake_login` first."
@@ -147,20 +156,33 @@ class HandshakeSource(SourceConnector):
             detail_text = ""
             detail_fetch_attempted = self.fetch_details
             detail_click_succeeded = False
+            detail_fetch_mode = "none"
             if self.fetch_details:
-                locator = page.get_by_role("button", name=title, exact=False).first
+                discovered_url = _discover_card_url(page, title)
+                if discovered_url:
+                    card_url = _job_search_url_to_jobs_url(discovered_url) or discovered_url
+                locator = _find_detail_trigger(page, title)
                 try:
-                    card_url = urljoin(page.url, locator.get_attribute("href") or "")
-                    locator.click(timeout=5000)
-                    detail_click_succeeded = True
-                    page.wait_for_timeout(1500)
-                    expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
-                    if expanded:
-                        page.wait_for_timeout(750)
-                    card_url = _resolve_job_url(page, title, card_url)
-                    detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
+                    if locator is not None:
+                        card_url = _job_search_url_to_jobs_url(
+                            urljoin(page.url, locator.get_attribute("href") or card_url)
+                        ) or card_url
+                        locator.click(timeout=5000)
+                        detail_click_succeeded = True
+                        detail_fetch_mode = "panel_click"
+                        page.wait_for_timeout(1500)
+                        expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
+                        if expanded:
+                            page.wait_for_timeout(750)
+                        card_url = _resolve_job_url(page, title, card_url)
+                        detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
                 except PlaywrightTimeoutError:
                     detail_text = ""
+                if not detail_text.strip() and card_url:
+                    fallback_detail_text = self._fetch_detail_text_from_job_url(page.context, card_url)
+                    if fallback_detail_text.strip():
+                        detail_text = fallback_detail_text
+                        detail_fetch_mode = "direct_page_fallback"
             if not card_url:
                 card_url = _infer_card_url(page.url, search_url, title)
             parsed = _build_row(
@@ -170,14 +192,14 @@ class HandshakeSource(SourceConnector):
                 card_url=card_url,
                 detail_fetch_attempted=detail_fetch_attempted,
                 detail_click_succeeded=detail_click_succeeded,
+                detail_fetch_mode=detail_fetch_mode,
             )
             if parsed is not None:
                 rows.append(parsed)
         return rows
 
     def _fetch_job_page(self, page, job_url: str) -> dict | None:
-        page.goto(job_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(1500)
+        self._goto_handshake_page(page, job_url, post_wait_ms=1500)
         if "joinhandshake.com/login" in page.url or "users/sign_in" in page.url:
             raise RuntimeError(
                 "Handshake session not authenticated. Run `python -m job_hunter.handshake_login` first."
@@ -194,6 +216,38 @@ class HandshakeSource(SourceConnector):
             detail_fetch_attempted=True,
             detail_click_succeeded=True,
         )
+
+    def _fetch_detail_text_from_job_url(self, context, job_url: str) -> str:
+        detail_page = context.new_page()
+        detail_page.set_default_timeout(self.page_timeout_seconds * 1000)
+        try:
+            self._goto_handshake_page(detail_page, job_url, post_wait_ms=1500)
+            if "joinhandshake.com/login" in detail_page.url or "users/sign_in" in detail_page.url:
+                return ""
+            expanded = int(detail_page.evaluate(EXPAND_MORE_SCRIPT) or 0)
+            if expanded:
+                detail_page.wait_for_timeout(750)
+            detail_text = str(detail_page.evaluate(DETAIL_TEXT_SCRIPT) or "")
+            if not detail_text.strip():
+                detail_text = str(detail_page.locator("body").inner_text() or "")
+            return detail_text
+        except PlaywrightTimeoutError:
+            return ""
+        finally:
+            detail_page.close()
+
+    def _goto_handshake_page(self, page, url: str, *, post_wait_ms: int = 3000) -> None:
+        page.goto(url, wait_until="domcontentloaded")
+        page.wait_for_timeout(post_wait_ms)
+        if not _page_body_has_security_verification(page):
+            return
+        LOG.warning("handshake_security_verification_waiting url=%s", url)
+        for wait_ms in (5000, 10000):
+            page.wait_for_timeout(wait_ms)
+            if not _page_body_has_security_verification(page):
+                LOG.info("handshake_security_verification_cleared url=%s wait_ms=%s", url, wait_ms)
+                return
+        raise RuntimeError(f"Handshake security verification blocked fetch for url={url}")
 
 
 def _dedupe_rows(rows: list[dict]) -> list[dict]:
@@ -278,13 +332,16 @@ def _build_row(
     *,
     detail_fetch_attempted: bool = True,
     detail_click_succeeded: bool = False,
+    detail_fetch_mode: str = "none",
 ) -> dict | None:
+    raw_detail_text = detail_text
     cleaned_detail_text = _clean_summary_beta_text(detail_text)
     card = _parse_card_text(card_text)
     if card is None:
         return None
     detail = _parse_detail_text(cleaned_detail_text)
-    title = detail.get("title") or card["title"]
+    detail_title = str(detail.get("title") or "").strip()
+    title = card["title"] if _looks_like_polluted_title(detail_title) else (detail_title or card["title"])
     company = detail.get("company") or card["company"]
     location = detail.get("location") or card["location"]
     posted_at = detail.get("posted_at") or card["posted_at"]
@@ -294,10 +351,12 @@ def _build_row(
         card=card,
         detail=detail,
         card_text=card_text,
-        detail_text=cleaned_detail_text,
+        raw_detail_text=raw_detail_text,
+        cleaned_detail_text=cleaned_detail_text,
         url=url,
         detail_fetch_attempted=detail_fetch_attempted,
         detail_click_succeeded=detail_click_succeeded,
+        detail_fetch_mode=detail_fetch_mode,
     )
     description = _choose_description(
         card_text=card_text,
@@ -329,6 +388,7 @@ def _build_row_from_job_page(
     detail_fetch_attempted: bool,
     detail_click_succeeded: bool,
 ) -> dict | None:
+    raw_detail_text = detail_text
     cleaned_detail_text = _clean_summary_beta_text(detail_text)
     detail = _parse_detail_text(cleaned_detail_text)
     title = str(detail.get("title") or "").strip()
@@ -342,10 +402,12 @@ def _build_row_from_job_page(
         card={"title": title, "company": company},
         detail=detail,
         card_text=card_text,
-        detail_text=cleaned_detail_text,
+        raw_detail_text=raw_detail_text,
+        cleaned_detail_text=cleaned_detail_text,
         url=job_url,
         detail_fetch_attempted=detail_fetch_attempted,
         detail_click_succeeded=detail_click_succeeded,
+        detail_fetch_mode="direct_job_page",
     )
     description = _choose_description(
         card_text=card_text,
@@ -422,6 +484,59 @@ def _resolve_job_url(page, title: str, fallback_url: str) -> str:
     return transformed or fallback_url
 
 
+def _page_body_has_security_verification(page) -> bool:
+    try:
+        body_text = str(page.locator("body").inner_text() or "")
+    except Exception:
+        return False
+    lowered = body_text.lower()
+    return all(marker in lowered for marker in SECURITY_VERIFICATION_MARKERS)
+
+
+def _discover_card_url(page, title: str) -> str:
+    candidates = page.locator("a").evaluate_all(
+        """
+        (els, targetTitle) => els
+          .map((el) => ({ text: (el.innerText || '').trim(), href: el.href || '' }))
+          .filter((item) => item.href.includes('/jobs/') || item.href.includes('/job-search/'))
+        """,
+        title,
+    )
+    return _select_best_card_url(candidates, title)
+
+
+def _select_best_card_url(candidates: list[dict[str, str]], title: str) -> str:
+    target = _normalize_title_token(title)
+    for candidate in candidates:
+        text = str(candidate.get("text") or "")
+        href = str(candidate.get("href") or "")
+        if not href:
+            continue
+        normalized_text = _normalize_title_token(text)
+        if normalized_text == target:
+            return href
+    for candidate in candidates:
+        text = str(candidate.get("text") or "")
+        href = str(candidate.get("href") or "")
+        if not href:
+            continue
+        normalized_text = _normalize_title_token(text)
+        if target and target in normalized_text:
+            return href
+    return ""
+
+
+def _find_detail_trigger(page, title: str):
+    for role in ("button", "link"):
+        locator = page.get_by_role(role, name=title, exact=False).first
+        try:
+            locator.wait_for(timeout=1000)
+            return locator
+        except PlaywrightTimeoutError:
+            continue
+    return None
+
+
 def _job_search_url_to_jobs_url(url: str) -> str:
     parsed = urlparse(url)
     match = re.match(r"^/job-search/(\d+)$", parsed.path)
@@ -435,27 +550,38 @@ def _build_source_metadata(
     card: dict[str, str],
     detail: dict[str, str],
     card_text: str,
-    detail_text: str,
+    raw_detail_text: str,
+    cleaned_detail_text: str,
     url: str,
     detail_fetch_attempted: bool,
     detail_click_succeeded: bool,
+    detail_fetch_mode: str,
 ) -> dict[str, object]:
-    raw_detail = detail_text.strip()
+    raw_detail = raw_detail_text.strip()
+    cleaned_detail = cleaned_detail_text.strip()
     normalized_description = str(detail.get("description") or "").strip()
     detail_title = str(detail.get("title") or "").strip()
+    detail_title_polluted = _looks_like_polluted_title(detail_title)
     title_matches = not detail_title or _normalize_title_token(detail_title) == _normalize_title_token(card["title"])
-    contains_job_description = "job description" in raw_detail.lower()
-    contains_at_a_glance = "at a glance" in raw_detail.lower()
-    detail_polluted = _looks_like_summary_beta_pollution(normalized_description) or _looks_like_summary_beta_pollution(raw_detail)
-    detail_complete = bool(raw_detail) and title_matches and contains_job_description and len(normalized_description) > len(card_text)
+    contains_job_description = "job description" in cleaned_detail.lower()
+    contains_at_a_glance = "at a glance" in cleaned_detail.lower()
+    had_summary_beta = _looks_like_summary_beta_pollution(raw_detail)
+    detail_polluted = detail_title_polluted or _looks_like_summary_beta_pollution(normalized_description) or _looks_like_summary_beta_pollution(cleaned_detail)
+    detail_complete = (
+        bool(cleaned_detail)
+        and title_matches
+        and not detail_title_polluted
+        and contains_job_description
+        and len(normalized_description) > len(card_text)
+    )
     fallback_reason = ""
 
-    if not raw_detail:
+    if not cleaned_detail:
         detail_quality_status = "card_only"
         fallback_reason = "missing_detail_text"
     elif detail_polluted:
         detail_quality_status = "detail_polluted"
-        fallback_reason = "summary_beta_pollution"
+        fallback_reason = "polluted_title" if detail_title_polluted else "summary_beta_pollution"
     elif not title_matches:
         detail_quality_status = "detail_mismatch"
         fallback_reason = "title_mismatch"
@@ -471,11 +597,14 @@ def _build_source_metadata(
     return {
         "detail_fetch_attempted": detail_fetch_attempted,
         "detail_click_succeeded": detail_click_succeeded,
-        "detail_panel_found": bool(raw_detail),
+        "detail_fetch_mode": detail_fetch_mode,
+        "detail_panel_found": bool(cleaned_detail),
         "detail_contains_job_description": contains_job_description,
         "detail_contains_at_a_glance": contains_at_a_glance,
-        "detail_text_length": len(raw_detail),
+        "detail_text_length": len(cleaned_detail),
         "detail_title_matches_card": title_matches,
+        "detail_title_polluted": detail_title_polluted,
+        "detail_had_summary_beta": had_summary_beta,
         "detail_quality_status": detail_quality_status,
         "detail_fallback_reason": fallback_reason,
         "resolved_job_url": url,
@@ -493,10 +622,30 @@ def _looks_like_summary_beta_pollution(value: str) -> bool:
     return any(phrase in lowered for phrase in SUMMARY_BETA_POLLUTION_PHRASES)
 
 
+def _looks_like_polluted_title(value: str) -> bool:
+    title = value.strip()
+    if not title:
+        return False
+    lowered = title.lower()
+    if _looks_like_summary_beta_pollution(title):
+        return True
+    if " is seeking " in lowered or " is looking for " in lowered:
+        return True
+    if len(title) >= 140:
+        return True
+    if title.count(".") >= 2:
+        return True
+    return False
+
+
 def _clean_summary_beta_text(value: str) -> str:
     if not value:
         return value
-    cleaned = INLINE_SUMMARY_BETA_RE.sub("", value)
+    cleaned = value
+    previous = None
+    while previous != cleaned:
+        previous = cleaned
+        cleaned = SUMMARY_BETA_SECTION_RE.sub("", cleaned)
     cleaned = re.sub(r"[ \t]+", " ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
@@ -575,7 +724,12 @@ def _trim_detail_text(lines: list[str], *, posted_idx: int | None = None) -> str
         lowered = line.lower()
         if any(marker in lowered for marker in stop_markers):
             break
-        if lowered == "summary beta":
+        if "summary beta" in lowered:
+            matched = SUMMARY_BETA_INLINE_PREFIX_RE.match(line)
+            if matched:
+                prefix = matched.group(1).strip()
+                if prefix:
+                    kept.append(prefix)
             skipping_summary_beta = True
             continue
         if skipping_summary_beta:

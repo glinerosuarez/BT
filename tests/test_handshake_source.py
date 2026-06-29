@@ -6,16 +6,20 @@ from datetime import datetime, timedelta, timezone
 from job_hunter.sources.handshake import (
     _build_row,
     _build_row_from_job_page,
+    _discover_card_url,
     _dedupe_rows,
     _extract_cards_from_page_text,
     _is_card_older_than_lookback,
     _job_search_url_to_jobs_url,
+    _normalize_title_token,
     _normalize_search_url,
     _partition_handshake_urls,
+    _page_body_has_security_verification,
     _parse_card_text,
     _parse_detail_text,
     _relative_age_to_iso,
     _resolve_job_url,
+    _select_best_card_url,
 )
 
 
@@ -159,6 +163,20 @@ About Presto Phoenix, Inc.
 Presto is the leading Voice AI company for restaurant drive-thrus.
 """
 
+POLLUTED_TITLE_DETAIL_TEXT = """Citizens for Responsibility and Ethics in Washington
+Non-Profit - Other
+Citizens for Responsibility and Ethics in Washington (CREW) is seeking a paid full-time or part-time communications intern. As a nonpartisan nonprofit government watchdog, CREW is dedicated to rooting out government corruption and fighting the influence of money in politics through legal action and bold communications grounded by in-depth research.
+Posted 2 days ago∙Apply by July 27, 2026 at 1:59 AM
+Save Share Apply externally Summary Beta This role as a Data Engineer Intern aligns closely with the user's interest in data.
+At a glance
+$18/hr
+Hybrid or onsite, based in Washington, DC
+Internship
+Open to candidates with OPT/CPT
+Job description
+The communications intern will assist in gaining coverage of CREW's fight for an ethical and transparent government.
+"""
+
 
 class HandshakeSourceTests(unittest.TestCase):
     def test_resolve_job_url_prefers_direct_jobs_link(self) -> None:
@@ -201,6 +219,43 @@ class HandshakeSourceTests(unittest.TestCase):
         fallback = "https://app.joinhandshake.com/job-search/11159981?query=data+engineer+intern"
         resolved = _resolve_job_url(FakePage(), "Software Intern", fallback)
         self.assertEqual(resolved, "https://app.joinhandshake.com/jobs/11159981")
+
+    def test_select_best_card_url_prefers_exact_title_match(self) -> None:
+        candidates = [
+            {
+                "text": "Software Engineering Intern",
+                "href": "https://app.joinhandshake.com/jobs/111",
+            },
+            {
+                "text": "AI & Data Scientist Intern - Fall 2026",
+                "href": "https://app.joinhandshake.com/jobs/222",
+            },
+        ]
+        resolved = _select_best_card_url(candidates, "AI & Data Scientist Intern - Fall 2026")
+        self.assertEqual(resolved, "https://app.joinhandshake.com/jobs/222")
+
+    def test_discover_card_url_reads_job_link_candidates(self) -> None:
+        class FakeLocator:
+            def evaluate_all(self, script, arg):
+                _ = script, arg
+                return [
+                    {
+                        "text": "Other Role",
+                        "href": "https://app.joinhandshake.com/jobs/111",
+                    },
+                    {
+                        "text": "AI & Data Scientist Intern - Fall 2026",
+                        "href": "https://app.joinhandshake.com/job-search/11159961?page=1",
+                    },
+                ]
+
+        class FakePage:
+            def locator(self, selector):
+                self._selector = selector
+                return FakeLocator()
+
+        resolved = _discover_card_url(FakePage(), "AI & Data Scientist Intern - Fall 2026")
+        self.assertEqual(resolved, "https://app.joinhandshake.com/job-search/11159961?page=1")
 
     def test_job_search_url_to_jobs_url(self) -> None:
         self.assertEqual(
@@ -314,6 +369,23 @@ class HandshakeSourceTests(unittest.TestCase):
         self.assertNotIn("This job posting describes a data engineering intern position", row["description"])
         self.assertIn("Position Overview: As a Commercialization Intern", row["description"])
 
+    def test_build_row_flags_polluted_title_and_falls_back_to_card_title(self) -> None:
+        row = _build_row(
+            "Citizens for Responsibility and Ethics in Washington\nCommunications Intern\n$18/hr · Internship\nWashington, DC\n2d ago\n",
+            POLLUTED_TITLE_DETAIL_TEXT,
+            "https://app.joinhandshake.com/job-search/example",
+            "https://app.joinhandshake.com/jobs/11162812",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["title"], "Communications Intern")
+        self.assertEqual(row["source_metadata"]["detail_quality_status"], "detail_polluted")
+        self.assertEqual(row["source_metadata"]["detail_fallback_reason"], "polluted_title")
+        self.assertTrue(row["source_metadata"]["detail_title_polluted"])
+        self.assertNotIn("Summary Beta", row["description"])
+        self.assertIn("The communications intern will assist", row["description"])
+
     def test_build_row_from_job_page_supports_direct_urls(self) -> None:
         row = _build_row_from_job_page(
             detail_text=DETAIL_TEXT,
@@ -360,6 +432,33 @@ class HandshakeSourceTests(unittest.TestCase):
         self.assertEqual(row["company"], "Presto")
         self.assertEqual(row["title"], "AI Engineering Intern, Voice & LLM Systems")
         self.assertNotIn("Skip to content", row["description"])
+
+    def test_build_row_from_job_page_strips_inline_summary_beta_after_actions(self) -> None:
+        body_text = "\n".join(
+            [
+                "CRH",
+                "Construction",
+                "Commercialization Intern",
+                "Posted 2 days ago∙Apply by August 8, 2026 at 10:59 PM",
+                "Save Share Apply externally Summary Beta This job posting describes a data engineering intern position, which aligns well with the user's interest in learning about data-related roles.",
+                "At a glance",
+                "$22–31/hr",
+                "Remote",
+                "Internship",
+                "Job description",
+                "Position Overview: As a Commercialization Intern (Americas) you will support various commercialization efforts within the Americas Solutions Group.",
+            ]
+        )
+        row = _build_row_from_job_page(
+            detail_text=body_text,
+            job_url="https://app.joinhandshake.com/jobs/11161752",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertNotIn("Summary Beta", row["description"])
+        self.assertNotIn("This job posting describes a data engineering intern position", row["description"])
+        self.assertIn("Position Overview: As a Commercialization Intern", row["description"])
 
     def test_partition_handshake_urls_separates_search_and_job_urls(self) -> None:
         search_urls, job_urls = _partition_handshake_urls(
@@ -451,6 +550,34 @@ class HandshakeSourceTests(unittest.TestCase):
         normalized = _normalize_search_url(url)
         self.assertIn("sort=posted_date_desc", normalized)
         self.assertNotIn("sort=relevance", normalized)
+
+    def test_page_body_has_security_verification_true(self) -> None:
+        class FakeBodyLocator:
+            def inner_text(self):
+                return (
+                    "Performing security verification\n"
+                    "This website uses a security service to protect against malicious bots.\n"
+                    "Performance and Security by Cloudflare"
+                )
+
+        class FakePage:
+            def locator(self, selector):
+                self._selector = selector
+                return FakeBodyLocator()
+
+        self.assertTrue(_page_body_has_security_verification(FakePage()))
+
+    def test_page_body_has_security_verification_false(self) -> None:
+        class FakeBodyLocator:
+            def inner_text(self):
+                return "Jobs\n123 jobs found\nData Engineer Intern"
+
+        class FakePage:
+            def locator(self, selector):
+                self._selector = selector
+                return FakeBodyLocator()
+
+        self.assertFalse(_page_body_has_security_verification(FakePage()))
 
 
 if __name__ == "__main__":

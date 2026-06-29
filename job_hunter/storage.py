@@ -1331,6 +1331,29 @@ class JobStore:
         ).fetchall()
         return [str(row["url"]) for row in rows if str(row["url"] or "").strip()]
 
+    def list_recent_handshake_suspect_urls(self, days: int = 30, limit: int = 50) -> list[str]:
+        safe_days = max(days, 1)
+        safe_limit = max(limit, 1)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=safe_days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT DISTINCT url
+            FROM jobs
+            WHERE source = 'handshake'
+              AND ingested_at >= ?
+              AND url IS NOT NULL
+              AND TRIM(url) <> ''
+              AND (
+                    source_quality_status IN ('card_only', 'detail_polluted', 'detail_mismatch')
+                    OR LOWER(COALESCE(description, '')) LIKE '%summary beta%'
+                  )
+            ORDER BY ingested_at DESC, id DESC
+            LIMIT ?
+            """,
+            (cutoff, safe_limit),
+        ).fetchall()
+        return [str(row["url"]) for row in rows if str(row["url"] or "").strip()]
+
 
 def _source_quality_recovered(previous_status: str, current_status: str) -> bool:
     previous = previous_status.strip().lower()

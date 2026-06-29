@@ -28,6 +28,18 @@ def main() -> int:
         default=25,
         help="Max quarantined Handshake rows to refresh when --handshake-quarantine-refresh-days is enabled",
     )
+    parser.add_argument(
+        "--handshake-suspect-refresh-days",
+        type=int,
+        default=0,
+        help="Refresh recent suspect Handshake rows whose stored detail is quarantined or still contains summary-beta remnants",
+    )
+    parser.add_argument(
+        "--handshake-suspect-refresh-limit",
+        type=int,
+        default=25,
+        help="Max suspect Handshake rows to refresh when --handshake-suspect-refresh-days is enabled",
+    )
     args = parser.parse_args()
 
     configure_logging(verbose=args.verbose)
@@ -46,14 +58,21 @@ def main() -> int:
     try:
         if not args.skip_source_maintenance:
             run_source_maintenance(settings, store)
+        refresh_urls: list[str] = []
+        refresh_kind = ""
         if args.handshake_quarantine_refresh_days > 0:
             refresh_urls = store.list_recent_handshake_quarantined_urls(
                 days=args.handshake_quarantine_refresh_days,
                 limit=args.handshake_quarantine_refresh_limit,
             )
-            if not refresh_urls:
-                print({"refreshed_source": "handshake_quarantine", "url_count": 0, "skipped": True})
-                return 0
+            refresh_kind = "handshake_quarantine"
+        elif args.handshake_suspect_refresh_days > 0:
+            refresh_urls = store.list_recent_handshake_suspect_urls(
+                days=args.handshake_suspect_refresh_days,
+                limit=args.handshake_suspect_refresh_limit,
+            )
+            refresh_kind = "handshake_suspect"
+        if refresh_urls:
             settings = replace(
                 settings,
                 use_arbeitnow=False,
@@ -69,6 +88,9 @@ def main() -> int:
                 use_handshake=True,
                 handshake_search_urls=refresh_urls,
             )
+        elif refresh_kind:
+            print({"refreshed_source": refresh_kind, "url_count": 0, "skipped": True})
+            return 0
         outcome = run_pipeline(settings, store, notifier)
         store.cleanup_handshake_duplicate_rows()
         print(asdict(outcome))

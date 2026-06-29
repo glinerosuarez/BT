@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Protocol
 
 import numpy as np
@@ -15,12 +16,16 @@ from job_hunter.stage2_local_embeddings import (
 
 SEMANTIC_PROFILE_VERSION = "semantic_profile_v1"
 SEMANTIC_SCORER_VERSION = "semantic_shadow_v1"
+NEGATIVE_PROFILE_PENALTY_SCALE = 0.35
+BUILDER_SPARSE_PENALTY_ONE_BUCKET = 0.06
+BUILDER_SPARSE_PENALTY_ZERO_BUCKETS = 0.12
 
 
 @dataclass(frozen=True, slots=True)
 class SemanticProfile:
     profile_id: str
     text: str
+    polarity: str = "positive"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +66,7 @@ DEFAULT_SEMANTIC_PROFILES: tuple[SemanticProfile, ...] = (
             "Lower fit means research-heavy roles, publications, pure academia, recruiting, sales, "
             "content creation, or non-technical business tracks."
         ),
+        polarity="positive",
     ),
     SemanticProfile(
         profile_id="data_engineering",
@@ -69,6 +75,7 @@ DEFAULT_SEMANTIC_PROFILES: tuple[SemanticProfile, ...] = (
             "warehousing, orchestration, SQL, Python, Spark, Airflow, dbt, AWS, reliability, "
             "and production data platforms."
         ),
+        polarity="positive",
     ),
     SemanticProfile(
         profile_id="ml_engineering",
@@ -77,8 +84,138 @@ DEFAULT_SEMANTIC_PROFILES: tuple[SemanticProfile, ...] = (
             "model serving, feature pipelines, training infrastructure, LLM applications, evaluation, "
             "Python, production systems, and builder-oriented AI work."
         ),
+        polarity="positive",
+    ),
+    SemanticProfile(
+        profile_id="business_analyst_consulting",
+        text=(
+            "Low-fit internship centered on business analyst or consulting work: case teams, client meetings, "
+            "presentations and reports, workshops and interviews, strategy consulting, commercialization, "
+            "business development, market analysis, stakeholder communication, and generalist business problem solving "
+            "without building software, data pipelines, or ML systems."
+        ),
+        polarity="negative",
+    ),
+    SemanticProfile(
+        profile_id="marketing_content_social",
+        text=(
+            "Low-fit internship centered on marketing, content creation, social media, TikTok, brand campaigns, "
+            "filming, editing, creator partnerships, trendspotting, and communications rather than data engineering or ML systems."
+        ),
+        polarity="negative",
+    ),
+    SemanticProfile(
+        profile_id="web_frontend_product",
+        text=(
+            "Low-fit internship centered on web development, frontend product work, websites, user experience, "
+            "SEO, page performance, newsletters, content workflows, React, Next.js, Vue, JavaScript, TypeScript, "
+            "and general product engineering without primary focus on data engineering, analytics engineering, "
+            "production ML, ETL pipelines, or ML systems."
+        ),
+        polarity="negative",
     ),
 )
+
+_BUILDER_EVIDENCE_BUCKETS: dict[str, tuple[str, ...]] = {
+    "data_platform": (
+        r"\betl\b",
+        r"\belt\b",
+        r"\bpipelines?\b",
+        r"\bdata warehouse\b",
+        r"\bwarehousing\b",
+        r"\blakehouse\b",
+        r"\bspark\b",
+        r"\bairflow\b",
+        r"\bdbt\b",
+    ),
+    "programming": (
+        r"\bpython\b",
+        r"\bsql\b",
+        r"\bjava\b",
+        r"\bscala\b",
+    ),
+    "infra_production": (
+        r"\baws\b",
+        r"\bgcp\b",
+        r"\bazure\b",
+        r"\bdeployment\b",
+        r"\bproduction\b",
+        r"\borchestration\b",
+        r"\bterraform\b",
+        r"\bkubernetes\b",
+    ),
+    "software_systems": (
+        r"\bbackend\b",
+        r"\bapis?\b",
+        r"\bmicroservices?\b",
+        r"\bdistributed systems?\b",
+        r"\bautomation\b",
+        r"\bsystems?\b",
+    ),
+    "ml_systems": (
+        r"\bmodel deployment\b",
+        r"\bmodel serving\b",
+        r"\bfeature pipelines?\b",
+        r"\btraining infrastructure\b",
+        r"\bllm\b",
+        r"\bevaluation\b",
+        r"\bml systems\b",
+    ),
+}
+
+_GENERALIST_ANALYTICAL_PATTERNS: tuple[str, ...] = (
+    r"\bbusiness analyst\b",
+    r"\bclient meetings?\b",
+    r"\bpresentations? and reports?\b",
+    r"\bworkshops? and interviews?\b",
+    r"\bstrategy consulting\b",
+    r"\bcommercialization\b",
+    r"\bbusiness development\b",
+    r"\bstakeholders?\b",
+    r"\bmarket analysis\b",
+    r"\bcommunications?\b",
+    r"\breports?\b",
+)
+
+_NEGATIVE_PROFILE_LEXICAL_PATTERNS: dict[str, tuple[str, ...]] = {
+    "business_analyst_consulting": (
+        r"\bbusiness analyst\b",
+        r"\bclient meetings?\b",
+        r"\bpresentations? and reports?\b",
+        r"\bworkshops? and interviews?\b",
+        r"\bstrategy consulting\b",
+        r"\bcommercialization\b",
+        r"\bbusiness development\b",
+        r"\bstakeholders?\b",
+        r"\bmarket analysis\b",
+    ),
+    "marketing_content_social": (
+        r"\bcontent creation\b",
+        r"\bsocial media\b",
+        r"\btiktok\b",
+        r"\bbrand campaigns?\b",
+        r"\bfilming\b",
+        r"\bediting\b",
+        r"\bcreator partnerships?\b",
+        r"\btrendspotting\b",
+        r"\bcommunications?\b",
+    ),
+    "web_frontend_product": (
+        r"\bweb(?:site)?\b",
+        r"\bfrontend\b",
+        r"\buser experience\b",
+        r"\bseo\b",
+        r"\bpage performance\b",
+        r"\bnewsletters?\b",
+        r"\bcontent workflows?\b",
+        r"\breact\b",
+        r"\bnext\.js\b",
+        r"\bvue\b",
+        r"\bjavascript\b",
+        r"\btypescript\b",
+        r"\bproduct features?\b",
+    ),
+}
 
 
 class SemanticShadowScorer:
@@ -97,6 +234,8 @@ class SemanticShadowScorer:
         self.profile_version = profile_version
         self.scorer_version = scorer_version
         self._profile_matrix: np.ndarray | None = None
+        self._positive_profile_indices = [idx for idx, profile in enumerate(self.profiles) if profile.polarity == "positive"]
+        self._negative_profile_indices = [idx for idx, profile in enumerate(self.profiles) if profile.polarity == "negative"]
 
     def score(self, job: JobRecord) -> SemanticStage2Result:
         job_text = build_job_text_v1(job)
@@ -121,14 +260,28 @@ class SemanticShadowScorer:
 
         profile_matrix = self._get_profile_matrix()
         similarity_scores = np.matmul(profile_matrix, job_vectors[0])
-        best_index = int(np.argmax(similarity_scores))
-        base_score = float(similarity_scores[best_index])
-        best_profile = self.profiles[best_index]
+        positive_index, base_score = _best_profile_match(similarity_scores, self._positive_profile_indices)
+        best_profile = self.profiles[positive_index]
+        negative_penalty, negative_reason_codes = _negative_profile_adjustment(
+            similarity_scores,
+            self.profiles,
+            self._negative_profile_indices,
+            job_text,
+        )
         research_heaviness_score, adjustment_reason_codes = _research_heaviness_adjustment(job_text)
-        adjusted_score = max(0.0, min(base_score - research_heaviness_score, 1.0))
+        builder_evidence_penalty, builder_adjustment_reason_codes = _builder_evidence_adjustment(
+            job_text,
+            pre_adjustment_score=max(0.0, min(base_score - negative_penalty - research_heaviness_score, 1.0)),
+        )
+        adjusted_score = max(
+            0.0,
+            min(base_score - negative_penalty - research_heaviness_score - builder_evidence_penalty, 1.0),
+        )
         label = _semantic_label(adjusted_score)
         reasons = _semantic_reason_codes(adjusted_score, best_profile.profile_id)
+        reasons.extend(negative_reason_codes)
         reasons.extend(adjustment_reason_codes)
+        reasons.extend(builder_adjustment_reason_codes)
         return SemanticStage2Result(
             semantic_match_score=adjusted_score,
             semantic_match_label=label,
@@ -173,6 +326,77 @@ def _semantic_reason_codes(score: float, profile_id: str) -> list[str]:
     else:
         reasons.append("semantic_similarity_low")
     return reasons
+
+
+def _best_profile_match(similarity_scores: np.ndarray, indices: list[int]) -> tuple[int, float]:
+    if not indices:
+        return 0, 0.0
+    best_index = max(indices, key=lambda idx: float(similarity_scores[idx]))
+    return best_index, float(similarity_scores[best_index])
+
+
+def _negative_profile_adjustment(
+    similarity_scores: np.ndarray,
+    profiles: tuple[SemanticProfile, ...],
+    negative_indices: list[int],
+    job_text: str,
+) -> tuple[float, list[str]]:
+    if not negative_indices:
+        return 0.0, []
+    supported_candidates = [
+        idx
+        for idx in negative_indices
+        if _has_negative_profile_lexical_support(job_text, profiles[idx].profile_id)
+    ]
+    if not supported_candidates:
+        return 0.0, []
+    best_index, best_score = _best_profile_match(similarity_scores, supported_candidates)
+    if best_score < 0.52:
+        return 0.0, []
+    penalty = max(0.0, best_score - 0.52) * NEGATIVE_PROFILE_PENALTY_SCALE
+    profile_id = profiles[best_index].profile_id
+    return penalty, [
+        f"semantic_negative_profile_{profile_id}",
+        "semantic_penalty_negative_profile_match",
+    ]
+
+
+def _builder_evidence_adjustment(job_text: str, *, pre_adjustment_score: float) -> tuple[float, list[str]]:
+    if pre_adjustment_score < 0.52:
+        return 0.0, []
+    blob = job_text.lower()
+    builder_hits = _builder_evidence_hits(blob)
+    bucket_count = len(builder_hits)
+    if bucket_count >= 2:
+        return 0.0, []
+    has_generalist_signal = any(re.search(pattern, blob, flags=re.IGNORECASE) for pattern in _GENERALIST_ANALYTICAL_PATTERNS)
+    if not has_generalist_signal and bucket_count == 1:
+        return 0.0, []
+    if bucket_count == 0:
+        return BUILDER_SPARSE_PENALTY_ZERO_BUCKETS, [
+            "semantic_penalty_missing_builder_evidence",
+            "semantic_penalty_builder_bucket_count_0",
+        ]
+    return BUILDER_SPARSE_PENALTY_ONE_BUCKET, [
+        "semantic_penalty_missing_builder_evidence",
+        "semantic_penalty_builder_bucket_count_1",
+    ]
+
+
+def _builder_evidence_hits(blob: str) -> list[str]:
+    hits: list[str] = []
+    for bucket, patterns in _BUILDER_EVIDENCE_BUCKETS.items():
+        if any(re.search(pattern, blob, flags=re.IGNORECASE) for pattern in patterns):
+            hits.append(bucket)
+    return hits
+
+
+def _has_negative_profile_lexical_support(job_text: str, profile_id: str) -> bool:
+    patterns = _NEGATIVE_PROFILE_LEXICAL_PATTERNS.get(profile_id, ())
+    if not patterns:
+        return False
+    blob = job_text.lower()
+    return any(re.search(pattern, blob, flags=re.IGNORECASE) for pattern in patterns)
 
 
 def _research_heaviness_adjustment(job_text: str) -> tuple[float, list[str]]:
