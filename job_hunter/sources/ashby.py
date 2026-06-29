@@ -5,7 +5,7 @@ import logging
 import re
 import urllib.request
 
-from job_hunter.sources.base import SourceConnector, USER_AGENT
+from job_hunter.sources.base import SourceConnector, USER_AGENT, clamp_bulk_source_timeout
 
 LOG = logging.getLogger(__name__)
 APP_DATA_RE = re.compile(r"window\.__appData\s*=\s*(\{.*?\});", re.S)
@@ -18,6 +18,7 @@ class AshbySource(SourceConnector):
         self._fetch_meta: dict[str, int] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
+        http_timeout_seconds = clamp_bulk_source_timeout(timeout_seconds)
         dead_token_count = 0
         logged_errors = 0
         max_error_logs = 10
@@ -28,7 +29,7 @@ class AshbySource(SourceConnector):
             board_url = f"https://jobs.ashbyhq.com/{slug}"
             try:
                 req = urllib.request.Request(board_url, headers={"User-Agent": USER_AGENT})
-                with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                with urllib.request.urlopen(req, timeout=http_timeout_seconds) as resp:
                     html = resp.read().decode("utf-8", errors="replace")
             except Exception as exc:
                 dead_token_count += 1

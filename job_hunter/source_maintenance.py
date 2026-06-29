@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from job_hunter.config import Settings
-from job_hunter.sources.base import USER_AGENT, get_json
+from job_hunter.sources.base import USER_AGENT, clamp_bulk_source_timeout, get_json
 from job_hunter.storage import JobStore
 
 LOG = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ def run_source_maintenance(
     probe_limit_per_source: int = 20,
     timeout_seconds: int | None = None,
 ) -> dict[str, int]:
-    timeout = timeout_seconds or settings.request_timeout_seconds
+    timeout = clamp_bulk_source_timeout(timeout_seconds or settings.request_timeout_seconds)
     summary = {
         "quarantined_count": 0,
         "restored_count": 0,

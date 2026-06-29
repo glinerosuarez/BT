@@ -6,6 +6,7 @@ import importlib.util
 import json
 import logging
 import re
+import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -214,13 +215,18 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
     for source in build_sources(settings, store=store):
         source_stats = outcome.source_stats.setdefault(source.name, SourceRunStats())
         pre_refreshed_dedupe_keys: set[str] = set()
+        source_started = time.monotonic()
+        LOG.info("source_fetch_started source=%s", source.name)
         try:
             raw_jobs = source.fetch(settings.request_timeout_seconds)
         except Exception:
             LOG.exception("source_fetch_failed", extra={"source": source.name})
             outcome.error_count += 1
             source_stats.error_count += 1
+            elapsed = time.monotonic() - source_started
+            LOG.info("source_fetch_finished source=%s status=error elapsed_seconds=%.2f", source.name, elapsed)
             continue
+        elapsed = time.monotonic() - source_started
 
         fetch_meta = source.get_fetch_meta() if hasattr(source, "get_fetch_meta") else {}
         source_stats.dead_token_count += int(fetch_meta.get("dead_token_count", 0))
@@ -234,6 +240,12 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
 
         outcome.source_count += len(raw_jobs)
         source_stats.fetched_count += len(raw_jobs)
+        LOG.info(
+            "source_fetch_finished source=%s status=ok elapsed_seconds=%.2f fetched_count=%s",
+            source.name,
+            elapsed,
+            len(raw_jobs),
+        )
 
         for raw_job in raw_jobs:
             job = _normalize_record(raw_job, ingested_at=now_iso)

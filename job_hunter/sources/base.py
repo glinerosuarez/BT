@@ -18,6 +18,12 @@ class SourceConnector:
 
 
 USER_AGENT = "job-hunter/0.1 (+internship-sourcing)"
+DEFAULT_BULK_SOURCE_HTTP_TIMEOUT_SECONDS = 8
+
+
+def clamp_bulk_source_timeout(timeout_seconds: int, *, cap_seconds: int = DEFAULT_BULK_SOURCE_HTTP_TIMEOUT_SECONDS) -> int:
+    safe_timeout = max(int(timeout_seconds), 1)
+    return min(safe_timeout, cap_seconds)
 
 
 def get_json(

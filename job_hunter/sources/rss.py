@@ -6,7 +6,7 @@ import re
 import urllib.request
 import xml.etree.ElementTree as ET
 
-from job_hunter.sources.base import SourceConnector, USER_AGENT
+from job_hunter.sources.base import SourceConnector, USER_AGENT, clamp_bulk_source_timeout
 
 LOG = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ class RssSource(SourceConnector):
         self._fetch_meta: dict[str, int] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
+        http_timeout_seconds = clamp_bulk_source_timeout(timeout_seconds)
         feed_error_count = 0
         max_error_logs = 10
         logged_errors = 0
@@ -26,7 +27,7 @@ class RssSource(SourceConnector):
         for feed_url in self.feeds:
             try:
                 req = urllib.request.Request(feed_url, headers={"User-Agent": USER_AGENT})
-                with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                with urllib.request.urlopen(req, timeout=http_timeout_seconds) as resp:
                     raw = resp.read()
             except Exception as exc:
                 feed_error_count += 1

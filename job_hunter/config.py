@@ -179,6 +179,7 @@ class Settings:
     rss_quarantine_file: str | None
     source_failure_quarantine_threshold: int
     source_restore_success_threshold: int
+    source_probe_limit_per_run: int
     handshake_profile_dir: str
     handshake_headless: bool
     handshake_max_results: int
@@ -297,6 +298,7 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         rss_quarantine_file=rss_quarantine_file,
         source_failure_quarantine_threshold=_env_int("JOB_HUNTER_SOURCE_FAILURE_QUARANTINE_THRESHOLD", 2),
         source_restore_success_threshold=_env_int("JOB_HUNTER_SOURCE_RESTORE_SUCCESS_THRESHOLD", 2),
+        source_probe_limit_per_run=_env_int("JOB_HUNTER_SOURCE_PROBE_LIMIT_PER_RUN", 5),
         handshake_profile_dir=os.getenv("JOB_HUNTER_HANDSHAKE_PROFILE_DIR", DEFAULT_HANDSHAKE_PROFILE_DIR),
         handshake_headless=_env_bool("JOB_HUNTER_HANDSHAKE_HEADLESS", True),
         handshake_max_results=_env_int("JOB_HUNTER_HANDSHAKE_MAX_RESULTS", 25),

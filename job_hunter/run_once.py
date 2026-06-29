@@ -57,7 +57,11 @@ def main() -> int:
 
     try:
         if not args.skip_source_maintenance:
-            run_source_maintenance(settings, store)
+            run_source_maintenance(
+                settings,
+                store,
+                probe_limit_per_source=settings.source_probe_limit_per_run,
+            )
         refresh_urls: list[str] = []
         refresh_kind = ""
         if args.handshake_quarantine_refresh_days > 0:

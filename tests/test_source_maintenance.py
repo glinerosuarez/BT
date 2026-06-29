@@ -60,6 +60,7 @@ def make_settings(db_path: str, data_dir: Path) -> Settings:
         rss_quarantine_file=str(data_dir / "rss_feeds.quarantine.txt"),
         source_failure_quarantine_threshold=1,
         source_restore_success_threshold=2,
+        source_probe_limit_per_run=5,
         handshake_profile_dir=".handshake-profile",
         handshake_headless=True,
         handshake_max_results=25,

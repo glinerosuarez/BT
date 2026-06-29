@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 import logging
 
-from job_hunter.sources.base import SourceConnector, get_json
+from job_hunter.sources.base import SourceConnector, clamp_bulk_source_timeout, get_json
 
 LOG = logging.getLogger(__name__)
 
@@ -15,6 +15,7 @@ class LeverSource(SourceConnector):
         self._fetch_meta: dict[str, int] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
+        http_timeout_seconds = clamp_bulk_source_timeout(timeout_seconds)
         dead_token_count = 0
         max_error_logs = 10
         logged_errors = 0
@@ -24,7 +25,7 @@ class LeverSource(SourceConnector):
             try:
                 jobs = get_json(
                     f"https://api.lever.co/v0/postings/{company}",
-                    timeout_seconds,
+                    http_timeout_seconds,
                     params={"mode": "json"},
                 )
             except Exception as exc:

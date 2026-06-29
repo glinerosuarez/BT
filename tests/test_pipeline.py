@@ -80,6 +80,7 @@ def make_settings(db_path: str) -> Settings:
         rss_quarantine_file=None,
         source_failure_quarantine_threshold=3,
         source_restore_success_threshold=2,
+        source_probe_limit_per_run=5,
         handshake_profile_dir=".handshake-profile",
         handshake_headless=True,
         handshake_max_results=25,
