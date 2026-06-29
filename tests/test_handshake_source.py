@@ -369,7 +369,7 @@ class HandshakeSourceTests(unittest.TestCase):
         self.assertNotIn("This job posting describes a data engineering intern position", row["description"])
         self.assertIn("Position Overview: As a Commercialization Intern", row["description"])
 
-    def test_build_row_flags_polluted_title_and_falls_back_to_card_title(self) -> None:
+    def test_build_row_recovers_polluted_title_from_card_title(self) -> None:
         row = _build_row(
             "Citizens for Responsibility and Ethics in Washington\nCommunications Intern\n$18/hr · Internship\nWashington, DC\n2d ago\n",
             POLLUTED_TITLE_DETAIL_TEXT,
@@ -380,9 +380,10 @@ class HandshakeSourceTests(unittest.TestCase):
         )
         self.assertIsNotNone(row)
         self.assertEqual(row["title"], "Communications Intern")
-        self.assertEqual(row["source_metadata"]["detail_quality_status"], "detail_polluted")
-        self.assertEqual(row["source_metadata"]["detail_fallback_reason"], "polluted_title")
+        self.assertEqual(row["source_metadata"]["detail_quality_status"], "detail_complete")
+        self.assertEqual(row["source_metadata"]["detail_fallback_reason"], "")
         self.assertTrue(row["source_metadata"]["detail_title_polluted"])
+        self.assertTrue(row["source_metadata"]["detail_title_recovered_from_card"])
         self.assertNotIn("Summary Beta", row["description"])
         self.assertIn("The communications intern will assist", row["description"])
 

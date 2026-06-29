@@ -370,7 +370,8 @@ def _build_row(
         return None
     detail = _parse_detail_text(cleaned_detail_text)
     detail_title = str(detail.get("title") or "").strip()
-    title = card["title"] if _looks_like_polluted_title(detail_title) else (detail_title or card["title"])
+    recovered_from_card_title = _looks_like_polluted_title(detail_title)
+    title = card["title"] if recovered_from_card_title else (detail_title or card["title"])
     company = detail.get("company") or card["company"]
     location = detail.get("location") or card["location"]
     posted_at = detail.get("posted_at") or card["posted_at"]
@@ -379,6 +380,7 @@ def _build_row(
     source_metadata = _build_source_metadata(
         card=card,
         detail=detail,
+        effective_title=title,
         card_text=card_text,
         raw_detail_text=raw_detail_text,
         cleaned_detail_text=cleaned_detail_text,
@@ -430,6 +432,7 @@ def _build_row_from_job_page(
     source_metadata = _build_source_metadata(
         card={"title": title, "company": company},
         detail=detail,
+        effective_title=title,
         card_text=card_text,
         raw_detail_text=raw_detail_text,
         cleaned_detail_text=cleaned_detail_text,
@@ -578,6 +581,7 @@ def _build_source_metadata(
     *,
     card: dict[str, str],
     detail: dict[str, str],
+    effective_title: str,
     card_text: str,
     raw_detail_text: str,
     cleaned_detail_text: str,
@@ -591,15 +595,17 @@ def _build_source_metadata(
     normalized_description = str(detail.get("description") or "").strip()
     detail_title = str(detail.get("title") or "").strip()
     detail_title_polluted = _looks_like_polluted_title(detail_title)
-    title_matches = not detail_title or _normalize_title_token(detail_title) == _normalize_title_token(card["title"])
+    effective_title_matches_card = _normalize_title_token(effective_title) == _normalize_title_token(card["title"])
+    title_matches = effective_title_matches_card
     contains_job_description = "job description" in cleaned_detail.lower()
     contains_at_a_glance = "at a glance" in cleaned_detail.lower()
     had_summary_beta = _looks_like_summary_beta_pollution(raw_detail)
-    detail_polluted = detail_title_polluted or _looks_like_summary_beta_pollution(normalized_description) or _looks_like_summary_beta_pollution(cleaned_detail)
+    description_polluted = _looks_like_summary_beta_pollution(normalized_description) or _looks_like_summary_beta_pollution(cleaned_detail)
+    detail_polluted = (detail_title_polluted and not effective_title_matches_card) or description_polluted
     detail_complete = (
         bool(cleaned_detail)
         and title_matches
-        and not detail_title_polluted
+        and not detail_polluted
         and contains_job_description
         and len(normalized_description) > len(card_text)
     )
@@ -610,7 +616,7 @@ def _build_source_metadata(
         fallback_reason = "missing_detail_text"
     elif detail_polluted:
         detail_quality_status = "detail_polluted"
-        fallback_reason = "polluted_title" if detail_title_polluted else "summary_beta_pollution"
+        fallback_reason = "polluted_title" if detail_title_polluted and not effective_title_matches_card else "summary_beta_pollution"
     elif not title_matches:
         detail_quality_status = "detail_mismatch"
         fallback_reason = "title_mismatch"
@@ -633,6 +639,7 @@ def _build_source_metadata(
         "detail_text_length": len(cleaned_detail),
         "detail_title_matches_card": title_matches,
         "detail_title_polluted": detail_title_polluted,
+        "detail_title_recovered_from_card": detail_title_polluted and effective_title_matches_card,
         "detail_had_summary_beta": had_summary_beta,
         "detail_quality_status": detail_quality_status,
         "detail_fallback_reason": fallback_reason,
