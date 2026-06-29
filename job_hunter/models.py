@@ -27,6 +27,7 @@ class SourceRunStats:
     error_count: int = 0
     dead_token_count: int = 0
     feed_error_count: int = 0
+    security_verification_blocked_count: int = 0
 
 
 @dataclass(slots=True)

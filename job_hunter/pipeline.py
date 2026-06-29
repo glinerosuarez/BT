@@ -225,6 +225,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
         fetch_meta = source.get_fetch_meta() if hasattr(source, "get_fetch_meta") else {}
         source_stats.dead_token_count += int(fetch_meta.get("dead_token_count", 0))
         source_stats.feed_error_count += int(fetch_meta.get("feed_error_count", 0))
+        source_stats.security_verification_blocked_count += int(fetch_meta.get("security_verification_blocked_count", 0))
         raw_item_results = fetch_meta.get("item_results", [])
         if isinstance(raw_item_results, list):
             item_results = [item for item in raw_item_results if isinstance(item, dict)]

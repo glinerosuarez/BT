@@ -805,7 +805,7 @@ class PipelineIntegrationTests(unittest.TestCase):
 
         class FakeMetaSource(FakeSource):
             def get_fetch_meta(self) -> dict[str, int]:
-                return {"dead_token_count": 3, "feed_error_count": 2}
+                return {"dead_token_count": 3, "feed_error_count": 2, "security_verification_blocked_count": 4}
 
         with patch("job_hunter.pipeline.build_sources", return_value=[FakeMetaSource(payload)]):
             outcome = run_pipeline(self.settings, self.store, None)
@@ -816,6 +816,7 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(outcome.source_stats["fake"].after_stage_1c_count, 1)
         self.assertEqual(outcome.source_stats["fake"].dead_token_count, 3)
         self.assertEqual(outcome.source_stats["fake"].feed_error_count, 2)
+        self.assertEqual(outcome.source_stats["fake"].security_verification_blocked_count, 4)
 
     def test_missing_core_fields_are_tracked_separately(self) -> None:
         payload = [

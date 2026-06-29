@@ -71,7 +71,8 @@ def _render_text(report: dict[str, object]) -> str:
                 (
                     "    duplicates={duplicate_count} persisted={persisted_count} "
                     "notified={notified_count} errors={error_count} "
-                    "dead_tokens={dead_token_count} feed_errors={feed_error_count}"
+                    "dead_tokens={dead_token_count} feed_errors={feed_error_count} "
+                    "security_blocks={security_verification_blocked_count}"
                 ).format(**row),
             ]
         )

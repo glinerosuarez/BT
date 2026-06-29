@@ -146,6 +146,7 @@ class JobStore:
                 error_count INTEGER NOT NULL,
                 dead_token_count INTEGER NOT NULL DEFAULT 0,
                 feed_error_count INTEGER NOT NULL DEFAULT 0,
+                security_verification_blocked_count INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(run_log_id) REFERENCES run_logs(id)
             );
 
@@ -211,6 +212,7 @@ class JobStore:
         self._ensure_column("source_run_logs", "after_stage_1c_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "dead_token_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "feed_error_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "security_verification_blocked_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "rejected_source_quality_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "recovered_source_quality_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_item_health", "consecutive_successes", "INTEGER NOT NULL DEFAULT 0")
@@ -611,8 +613,8 @@ class JobStore:
                     rejected_eligibility_count, rejected_relevance_count, rejected_source_quality_count,
                     recovered_source_quality_count,
                     persisted_count, notified_count, duplicate_count, error_count,
-                    dead_token_count, feed_error_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    dead_token_count, feed_error_count, security_verification_blocked_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_log_id,
@@ -639,6 +641,7 @@ class JobStore:
                     stats.error_count,
                     stats.dead_token_count,
                     stats.feed_error_count,
+                    stats.security_verification_blocked_count,
                 ),
             )
         self._conn.commit()
@@ -1061,7 +1064,8 @@ class JobStore:
                    after_stage_1b_count, rejected_policy_gate_count, after_stage_1c_count,
                    rejected_eligibility_count, rejected_relevance_count, rejected_source_quality_count,
                    recovered_source_quality_count, persisted_count,
-                   notified_count, duplicate_count, error_count, dead_token_count, feed_error_count
+                   notified_count, duplicate_count, error_count, dead_token_count, feed_error_count,
+                   security_verification_blocked_count
             FROM source_run_logs
             WHERE run_log_id = ?
             ORDER BY source_name
@@ -1108,6 +1112,7 @@ class JobStore:
                     "error_count": int(row["error_count"] or 0),
                     "dead_token_count": int(row["dead_token_count"] or 0),
                     "feed_error_count": int(row["feed_error_count"] or 0),
+                    "security_verification_blocked_count": int(row["security_verification_blocked_count"] or 0),
                 }
                 for row in source_rows
             ],

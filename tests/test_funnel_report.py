@@ -114,6 +114,7 @@ class FunnelReportTests(unittest.TestCase):
                     notified_count=0,
                     duplicate_count=1,
                     error_count=0,
+                    security_verification_blocked_count=2,
                 )
             },
         )
@@ -128,6 +129,7 @@ class FunnelReportTests(unittest.TestCase):
             exit_code = main()
 
         text = stdout.getvalue()
+        self.assertIn("security_blocks=2", text)
         self.assertEqual(exit_code, 0)
         self.assertIn("overall", text)
         self.assertIn("after_stage_1a=8 after_stage_1b=3 after_stage_1c=2", text)

@@ -18,6 +18,10 @@ SECURITY_VERIFICATION_MARKERS = (
     "this website uses a security service to protect against malicious bots",
     "performance and security by cloudflare",
 )
+
+
+class HandshakeSecurityVerificationError(RuntimeError):
+    pass
 DETAIL_TEXT_SCRIPT = """
 () => {
   let best = null;
@@ -98,11 +102,14 @@ class HandshakeSource(SourceConnector):
         self.page_timeout_seconds = max(page_timeout_seconds, 5)
         self.max_posting_age_days = max(max_posting_age_days, 1)
         self.fetch_details = fetch_details
+        self._fetch_meta: dict[str, object] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
         _ = timeout_seconds
         profile_path = Path(self.profile_dir).expanduser()
         profile_path.mkdir(parents=True, exist_ok=True)
+        security_verification_blocked_count = 0
+        item_results: list[dict[str, str]] = []
 
         with sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
@@ -117,14 +124,36 @@ class HandshakeSource(SourceConnector):
                 search_urls, job_urls = _partition_handshake_urls(self.search_urls)
                 for search_url in search_urls:
                     normalized_search_url = _normalize_search_url(search_url)
-                    results.extend(self._fetch_search_page(page, normalized_search_url))
+                    try:
+                        rows = self._fetch_search_page(page, normalized_search_url)
+                    except HandshakeSecurityVerificationError as exc:
+                        security_verification_blocked_count += 1
+                        item_results.append({"item": normalized_search_url, "status": "failure", "error": str(exc)})
+                        LOG.warning("handshake_search_security_verification_blocked url=%s", normalized_search_url)
+                        continue
+                    item_results.append({"item": normalized_search_url, "status": "success", "error": ""})
+                    results.extend(rows)
                 for job_url in job_urls:
-                    parsed = self._fetch_job_page(page, job_url)
+                    try:
+                        parsed = self._fetch_job_page(page, job_url)
+                    except HandshakeSecurityVerificationError as exc:
+                        security_verification_blocked_count += 1
+                        item_results.append({"item": job_url, "status": "failure", "error": str(exc)})
+                        LOG.warning("handshake_job_security_verification_blocked url=%s", job_url)
+                        continue
+                    item_results.append({"item": job_url, "status": "success", "error": ""})
                     if parsed is not None:
                         results.append(parsed)
+                self._fetch_meta = {
+                    "security_verification_blocked_count": security_verification_blocked_count,
+                    "item_results": item_results,
+                }
                 return _dedupe_rows(results)
             finally:
                 context.close()
+
+    def get_fetch_meta(self) -> dict[str, object]:
+        return dict(self._fetch_meta)
 
     def _fetch_search_page(self, page, search_url: str) -> list[dict]:
         self._goto_handshake_page(page, search_url)
@@ -247,7 +276,7 @@ class HandshakeSource(SourceConnector):
             if not _page_body_has_security_verification(page):
                 LOG.info("handshake_security_verification_cleared url=%s wait_ms=%s", url, wait_ms)
                 return
-        raise RuntimeError(f"Handshake security verification blocked fetch for url={url}")
+        raise HandshakeSecurityVerificationError(f"Handshake security verification blocked fetch for url={url}")
 
 
 def _dedupe_rows(rows: list[dict]) -> list[dict]:
