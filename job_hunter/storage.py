@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from job_hunter.models import JobRecord, PipelineOutcome
 
@@ -257,18 +258,19 @@ class JobStore:
         if row is not None:
             return str(row["dedupe_key"])
         if source == "handshake" and url.strip():
-            row = self._conn.execute(
+            normalized_url = _normalize_handshake_storage_url(url)
+            rows = self._conn.execute(
                 """
-                SELECT dedupe_key
+                SELECT dedupe_key, url
                 FROM jobs
-                WHERE source = 'handshake' AND url = ?
+                WHERE source = 'handshake'
                 ORDER BY id DESC
-                LIMIT 1
-                """,
-                (url,),
-            ).fetchone()
-            if row is not None:
-                return str(row["dedupe_key"])
+                """
+            ).fetchall()
+            for candidate in rows:
+                candidate_url = str(candidate["url"] or "").strip()
+                if _normalize_handshake_storage_url(candidate_url) == normalized_url:
+                    return str(candidate["dedupe_key"])
         return ""
 
     def insert_job(self, job: JobRecord, dedupe_key: str) -> bool:
@@ -885,8 +887,8 @@ class JobStore:
         safe_limit = max(limit, 1)
         if unlabeled_only:
             query = """
-                SELECT id, source, company, title, location, posted_at, url,
-                       relevance_score, manual_fit_label, manual_fit_reason_codes, manual_labeled_at
+                SELECT id, source, company, title, location, posted_at, url, description,
+                       source_quality_status, relevance_score, manual_fit_label, manual_fit_reason_codes, manual_labeled_at
                 FROM jobs
                 WHERE manual_fit_label IS NULL OR TRIM(manual_fit_label) = ''
                 ORDER BY ingested_at DESC, id DESC
@@ -896,8 +898,8 @@ class JobStore:
             return _filter_canonical_handshake_rows(rows, safe_limit)
 
         query = """
-            SELECT id, source, company, title, location, posted_at, url,
-                   relevance_score, manual_fit_label, manual_fit_reason_codes, manual_labeled_at
+            SELECT id, source, company, title, location, posted_at, url, description,
+                   source_quality_status, relevance_score, manual_fit_label, manual_fit_reason_codes, manual_labeled_at
             FROM jobs
             ORDER BY ingested_at DESC, id DESC
             LIMIT ?
@@ -984,15 +986,19 @@ class JobStore:
         url = str(row["url"] or "").strip()
         if not url:
             return row
-        candidates = self._conn.execute(
-            """
-            SELECT *
-            FROM jobs
-            WHERE source = 'handshake' AND url = ?
-            ORDER BY id
-            """,
-            (url,),
-        ).fetchall()
+        normalized_url = _normalize_handshake_storage_url(url)
+        candidates = [
+            candidate
+            for candidate in self._conn.execute(
+                """
+                SELECT *
+                FROM jobs
+                WHERE source = 'handshake'
+                ORDER BY id
+                """
+            ).fetchall()
+            if _normalize_handshake_storage_url(str(candidate["url"] or "").strip()) == normalized_url
+        ]
         if not candidates:
             return row
         return max(candidates, key=_handshake_row_rank)
@@ -1373,13 +1379,32 @@ def _has_handshake_page_chrome(value: str) -> bool:
     return any(marker in lowered for marker in HANDSHAKE_PAGE_CHROME_MARKERS)
 
 
-def _handshake_row_rank(row: sqlite3.Row) -> tuple[int, int, int, int, int]:
+def _looks_like_polluted_handshake_title(value: str) -> bool:
+    title = value.strip()
+    if not title:
+        return False
+    lowered = title.lower()
+    if SUMMARY_BETA_MARKER in lowered:
+        return True
+    if " is seeking " in lowered or " is looking for " in lowered:
+        return True
+    if len(title) >= 140:
+        return True
+    if title.count(".") >= 2:
+        return True
+    return False
+
+
+def _handshake_row_rank(row: sqlite3.Row) -> tuple[int, int, int, int, int, int]:
     status = str(_row_value(row, "source_quality_status") or "").strip().lower()
+    title = str(_row_value(row, "title") or "")
     description = str(_row_value(row, "description") or "")
+    has_polluted_title = _looks_like_polluted_handshake_title(title)
     has_page_chrome = _has_handshake_page_chrome(description)
     has_summary_beta = SUMMARY_BETA_MARKER in description.lower()
     return (
         HANDSHAKE_QUALITY_STATUS_SCORES.get(status, 0),
+        0 if has_polluted_title else 1,
         0 if has_page_chrome else 1,
         0 if has_summary_beta else 1,
         len(description.strip()),
@@ -1395,11 +1420,12 @@ def _filter_canonical_handshake_rows(rows: list[sqlite3.Row], limit: int) -> lis
         url = str(_row_value(row, "url") or "").strip()
         if source != "handshake" or not url:
             continue
-        if url not in handshake_best_by_url:
-            handshake_best_by_url[url] = row
+        normalized_url = _normalize_handshake_storage_url(url)
+        if normalized_url not in handshake_best_by_url:
+            handshake_best_by_url[normalized_url] = row
             continue
-        if _handshake_row_rank(row) > _handshake_row_rank(handshake_best_by_url[url]):
-            handshake_best_by_url[url] = row
+        if _handshake_row_rank(row) > _handshake_row_rank(handshake_best_by_url[normalized_url]):
+            handshake_best_by_url[normalized_url] = row
 
     emitted_handshake_urls: set[str] = set()
     filtered: list[sqlite3.Row] = []
@@ -1407,15 +1433,33 @@ def _filter_canonical_handshake_rows(rows: list[sqlite3.Row], limit: int) -> lis
         source = str(_row_value(row, "source") or "")
         url = str(_row_value(row, "url") or "").strip()
         if source == "handshake" and url:
-            if url in emitted_handshake_urls:
+            normalized_url = _normalize_handshake_storage_url(url)
+            if normalized_url in emitted_handshake_urls:
                 continue
-            filtered.append(handshake_best_by_url[url])
-            emitted_handshake_urls.add(url)
+            filtered.append(handshake_best_by_url[normalized_url])
+            emitted_handshake_urls.add(normalized_url)
         else:
             filtered.append(row)
         if len(filtered) >= limit:
             break
     return filtered
+
+
+def _normalize_handshake_storage_url(url: str) -> str:
+    value = url.strip()
+    if not value:
+        return value
+    parsed = urlparse(value)
+    if "/jobs/" in parsed.path:
+        return urlunparse(parsed._replace(query="", fragment=""))
+    if "/job-search/" in parsed.path:
+        parts = parsed.path.rstrip("/").split("/")
+        if parts and parts[-1].isdigit():
+            return urlunparse(parsed._replace(path=f"/jobs/{parts[-1]}", query="", fragment=""))
+        query_pairs = [(key, val) for key, val in parse_qsl(parsed.query, keep_blank_values=True) if key != "searchId"]
+        normalized_query = urlencode(query_pairs, doseq=True)
+        return urlunparse(parsed._replace(query=normalized_query, fragment=""))
+    return value
 
 
 def _row_value(row: sqlite3.Row, key: str) -> object | None:

@@ -350,6 +350,165 @@ class SourceMaintenanceTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("mismatched", error)
 
+    def test_canonical_handshake_row_ignores_search_id_noise(self) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes, notified
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', 0)
+            """,
+            (
+                "dirty-key",
+                "job-dirty",
+                "https://app.joinhandshake.com/jobs/11162812?searchId=old",
+                "Citizens for Responsibility and Ethics in Washington (CREW) is seeking a paid full-time or part-time communications intern.",
+                "Example",
+                "Remote",
+                "2026-06-28",
+                "Dirty description",
+                now_iso,
+                "detail_polluted",
+            ),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes, notified
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', 0)
+            """,
+            (
+                "clean-key",
+                "job-clean",
+                "https://app.joinhandshake.com/jobs/11162812?searchId=new",
+                "Communications Intern",
+                "Example",
+                "Remote",
+                "2026-06-28",
+                "Clean description",
+                now_iso,
+                "detail_complete",
+            ),
+        )
+        self.store._conn.commit()
+
+        rows = self.store.list_jobs_for_labeling(limit=10, unlabeled_only=False)
+        handshake_rows = [row for row in rows if row["source"] == "handshake"]
+        self.assertEqual(len(handshake_rows), 1)
+        self.assertEqual(handshake_rows[0]["title"], "Communications Intern")
+
+    def test_canonical_handshake_row_merges_job_search_and_jobs_urls(self) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes, notified
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', 0)
+            """,
+            (
+                "search-key",
+                "job-search-shape",
+                "https://app.joinhandshake.com/job-search/11162812?query=data+engineer+intern&page=1",
+                "Communications Intern",
+                "Example",
+                "Remote",
+                "2026-06-28",
+                "Card-derived description",
+                now_iso,
+                "card_only",
+            ),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes, notified
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', 0)
+            """,
+            (
+                "jobs-key",
+                "job-detail-shape",
+                "https://app.joinhandshake.com/jobs/11162812?searchId=new",
+                "Communications Intern",
+                "Example",
+                "Remote",
+                "2026-06-28",
+                "Detail description",
+                now_iso,
+                "detail_complete",
+            ),
+        )
+        self.store._conn.commit()
+
+        rows = self.store.list_jobs_for_labeling(limit=10, unlabeled_only=False)
+        handshake_rows = [row for row in rows if row["source"] == "handshake"]
+        self.assertEqual(len(handshake_rows), 1)
+        self.assertEqual(handshake_rows[0]["url"], "https://app.joinhandshake.com/jobs/11162812?searchId=new")
+
+    def test_canonical_handshake_row_prefers_clean_title_over_polluted_title(self) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes, notified
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', 0)
+            """,
+            (
+                "polluted-title-key",
+                "job-polluted-title",
+                "https://app.joinhandshake.com/jobs/11162812?searchId=old",
+                "Citizens for Responsibility and Ethics in Washington (CREW) is seeking a paid full-time or part-time communications intern. As a nonpartisan nonprofit government watchdog.",
+                "Example",
+                "Remote",
+                "2026-06-28",
+                "Detail description",
+                now_iso,
+                "detail_complete",
+            ),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes, notified
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', 0)
+            """,
+            (
+                "clean-title-key",
+                "job-clean-title",
+                "https://app.joinhandshake.com/jobs/11162812?searchId=new",
+                "Communications Intern",
+                "Example",
+                "Remote",
+                "2026-06-28",
+                "Detail description",
+                now_iso,
+                "detail_complete",
+            ),
+        )
+        self.store._conn.commit()
+
+        rows = self.store.list_jobs_for_labeling(limit=10, unlabeled_only=False)
+        handshake_rows = [row for row in rows if row["source"] == "handshake"]
+        self.assertEqual(len(handshake_rows), 1)
+        self.assertEqual(handshake_rows[0]["title"], "Communications Intern")
+
 
 if __name__ == "__main__":
     unittest.main()
