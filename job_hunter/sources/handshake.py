@@ -118,12 +118,22 @@ class HandshakeSource(SourceConnector):
                 headless=self.headless,
             )
             try:
+                context.set_default_timeout(self.page_timeout_seconds * 1000)
+                context.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
                 page = context.pages[0] if context.pages else context.new_page()
                 page.set_default_timeout(self.page_timeout_seconds * 1000)
+                page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
                 results: list[dict] = []
                 search_urls, job_urls = _partition_handshake_urls(self.search_urls)
-                for search_url in search_urls:
+                total_search_urls = len(search_urls)
+                for index, search_url in enumerate(search_urls, start=1):
                     normalized_search_url = _normalize_search_url(search_url)
+                    LOG.info(
+                        "handshake_search_fetch_started index=%s total=%s url=%s",
+                        index,
+                        total_search_urls,
+                        normalized_search_url,
+                    )
                     try:
                         rows = self._fetch_search_page(page, normalized_search_url)
                     except HandshakeSecurityVerificationError as exc:
@@ -132,6 +142,13 @@ class HandshakeSource(SourceConnector):
                         LOG.warning("handshake_search_security_verification_blocked url=%s", normalized_search_url)
                         continue
                     item_results.append({"item": normalized_search_url, "status": "success", "error": ""})
+                    LOG.info(
+                        "handshake_search_fetch_finished index=%s total=%s url=%s fetched_count=%s",
+                        index,
+                        total_search_urls,
+                        normalized_search_url,
+                        len(rows),
+                    )
                     results.extend(rows)
                 for job_url in job_urls:
                     try:
@@ -170,8 +187,16 @@ class HandshakeSource(SourceConnector):
         body_text = page.locator("body").inner_text()
         card_payloads = _extract_cards_from_page_text(body_text)
         rows: list[dict] = []
-        for card in card_payloads[: self.max_results]:
+        max_cards = min(len(card_payloads), self.max_results)
+        for card_index, card in enumerate(card_payloads[: self.max_results], start=1):
             if _is_card_older_than_lookback(card, self.max_posting_age_days):
+                LOG.info(
+                    "handshake_search_stopped_on_age url=%s card_index=%s max_cards=%s title=%s",
+                    search_url,
+                    card_index,
+                    max_cards,
+                    str(card.get("title") or ""),
+                )
                 break
             company = str(card.get("company") or "")
             title = str(card.get("title") or "")
@@ -180,6 +205,13 @@ class HandshakeSource(SourceConnector):
             freshness = str(card.get("freshness") or "")
             if not company or not title:
                 continue
+            LOG.info(
+                "handshake_card_fetch_started url=%s card_index=%s max_cards=%s title=%s",
+                search_url,
+                card_index,
+                max_cards,
+                title,
+            )
             card_text = "\n".join([company, title, meta, location, freshness])
             card_url = ""
             detail_text = ""
@@ -225,6 +257,15 @@ class HandshakeSource(SourceConnector):
             )
             if parsed is not None:
                 rows.append(parsed)
+                LOG.info(
+                    "handshake_card_fetch_finished url=%s card_index=%s max_cards=%s title=%s quality=%s resolved_url=%s",
+                    search_url,
+                    card_index,
+                    max_cards,
+                    title,
+                    str(parsed.get("source_metadata", {}).get("detail_quality_status") or ""),
+                    str(parsed.get("url") or ""),
+                )
         return rows
 
     def _fetch_job_page(self, page, job_url: str) -> dict | None:
@@ -249,6 +290,7 @@ class HandshakeSource(SourceConnector):
     def _fetch_detail_text_from_job_url(self, context, job_url: str) -> str:
         detail_page = context.new_page()
         detail_page.set_default_timeout(self.page_timeout_seconds * 1000)
+        detail_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
         try:
             self._goto_handshake_page(detail_page, job_url, post_wait_ms=1500)
             if "joinhandshake.com/login" in detail_page.url or "users/sign_in" in detail_page.url:
@@ -261,6 +303,7 @@ class HandshakeSource(SourceConnector):
                 detail_text = str(detail_page.locator("body").inner_text() or "")
             return detail_text
         except PlaywrightTimeoutError:
+            LOG.warning("handshake_direct_detail_timeout url=%s", job_url)
             return ""
         finally:
             detail_page.close()
