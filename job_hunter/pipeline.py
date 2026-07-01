@@ -36,6 +36,7 @@ from job_hunter.sources import (
     HandshakeSource,
     GreenhouseSource,
     LeverSource,
+    LinkedInSource,
     RemotiveSource,
     RssSource,
     SourceConnector,
@@ -117,6 +118,7 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
     github_repo_readmes = settings.github_repo_readmes
     ashby_boards = settings.ashby_boards
     handshake_search_urls = settings.handshake_search_urls
+    linkedin_search_urls = settings.linkedin_search_urls
 
     if store is not None:
         greenhouse_boards = _filter_suppressed_items(
@@ -164,6 +166,18 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 page_timeout_seconds=settings.handshake_page_timeout_seconds,
                 max_posting_age_days=settings.max_posting_age_days,
                 fetch_details=settings.handshake_fetch_details,
+            )
+        )
+    if settings.use_linkedin and linkedin_search_urls:
+        sources.append(
+            LinkedInSource(
+                search_urls=linkedin_search_urls,
+                profile_dir=settings.linkedin_profile_dir,
+                headless=settings.linkedin_headless,
+                max_results=settings.linkedin_max_results,
+                page_timeout_seconds=settings.linkedin_page_timeout_seconds,
+                max_posting_age_days=settings.max_posting_age_days,
+                fetch_details=settings.linkedin_fetch_details,
             )
         )
 

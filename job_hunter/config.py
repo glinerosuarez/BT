@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -64,6 +64,7 @@ DEFAULT_ASHBY_BOARDS = [
     "homebase",
 ]
 DEFAULT_HANDSHAKE_PROFILE_DIR = str(Path(__file__).resolve().parent.parent / ".handshake-profile")
+DEFAULT_LINKEDIN_PROFILE_DIR = str(Path(__file__).resolve().parent.parent / ".linkedin-profile")
 DEFAULT_TITLE_BLACKLIST_PATTERNS = [
     r"\brecruiter\b",
     r"\brecruiting\b",
@@ -195,6 +196,14 @@ class Settings:
     adzuna_country: str
     adzuna_pages: int
 
+    use_linkedin: bool = False
+    linkedin_search_urls: list[str] = field(default_factory=list)
+    linkedin_profile_dir: str = DEFAULT_LINKEDIN_PROFILE_DIR
+    linkedin_headless: bool = True
+    linkedin_max_results: int = 25
+    linkedin_page_timeout_seconds: int = 30
+    linkedin_fetch_details: bool = True
+
 
 DEFAULT_DB_PATH = "job_hunter.db"
 
@@ -228,6 +237,7 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
     greenhouse_token_file = os.getenv("JOB_HUNTER_GREENHOUSE_TOKEN_FILE", DEFAULT_GREENHOUSE_TOKEN_FILE)
     lever_token_file = os.getenv("JOB_HUNTER_LEVER_TOKEN_FILE", DEFAULT_LEVER_TOKEN_FILE)
     rss_feed_file = os.getenv("JOB_HUNTER_RSS_FEED_FILE", DEFAULT_RSS_FEED_FILE)
+    linkedin_search_urls = _env_csv("JOB_HUNTER_LINKEDIN_SEARCH_URLS", [])
     greenhouse_quarantine_file = os.getenv(
         "JOB_HUNTER_GREENHOUSE_QUARANTINE_FILE",
         _derive_quarantine_file(greenhouse_token_file, DEFAULT_GREENHOUSE_TOKEN_FILE),
@@ -311,4 +321,11 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         adzuna_app_key=os.getenv("JOB_HUNTER_ADZUNA_APP_KEY"),
         adzuna_country=os.getenv("JOB_HUNTER_ADZUNA_COUNTRY", "us"),
         adzuna_pages=_env_int("JOB_HUNTER_ADZUNA_PAGES", 2),
+        use_linkedin=_env_bool("JOB_HUNTER_SOURCE_LINKEDIN", False),
+        linkedin_search_urls=linkedin_search_urls,
+        linkedin_profile_dir=os.getenv("JOB_HUNTER_LINKEDIN_PROFILE_DIR", DEFAULT_LINKEDIN_PROFILE_DIR),
+        linkedin_headless=_env_bool("JOB_HUNTER_LINKEDIN_HEADLESS", True),
+        linkedin_max_results=_env_int("JOB_HUNTER_LINKEDIN_MAX_RESULTS", 25),
+        linkedin_page_timeout_seconds=_env_int("JOB_HUNTER_LINKEDIN_PAGE_TIMEOUT_SECONDS", 30),
+        linkedin_fetch_details=_env_bool("JOB_HUNTER_LINKEDIN_FETCH_DETAILS", True),
     )
