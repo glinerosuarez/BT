@@ -163,6 +163,35 @@ class JobStore:
                 last_checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (source_name, item_value)
             );
+
+            CREATE TABLE IF NOT EXISTS tailoring_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                profile_name TEXT NOT NULL,
+                provider_name TEXT NOT NULL,
+                model_name TEXT NOT NULL,
+                prompt_version TEXT NOT NULL,
+                resume_source_hash TEXT NOT NULL,
+                cover_letter_source_hash TEXT NOT NULL,
+                preferences_source_hash TEXT NOT NULL,
+                job_context_hash TEXT NOT NULL,
+                resume_markdown TEXT NOT NULL,
+                cover_letter_markdown TEXT NOT NULL,
+                highlight_requirements TEXT NOT NULL,
+                evidence_map TEXT NOT NULL,
+                output_dir TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (
+                    job_id,
+                    profile_name,
+                    prompt_version,
+                    resume_source_hash,
+                    cover_letter_source_hash,
+                    preferences_source_hash,
+                    job_context_hash
+                ),
+                FOREIGN KEY(job_id) REFERENCES jobs(id)
+            );
             """
         )
         self._ensure_column("jobs", "age_days", "REAL")
@@ -762,7 +791,12 @@ class JobStore:
             SELECT id, dedupe_key, url, title, company, description, source_quality_status,
                    source_quality_prev_status, source_quality_recovered_at, manual_fit_label,
                    manual_fit_reason_codes, manual_labeled_at, notified, notified_at,
-                   job_text_snapshot
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   profile_version, scorer_version, job_text_version, job_text_snapshot,
+                   semantic_match_score, semantic_match_label, semantic_match_reason_codes,
+                   semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
+                   semantic_profile_id, semantic_model_name, semantic_scorer_version,
+                   semantic_text_hash
             FROM jobs
             WHERE source = 'handshake' AND url IS NOT NULL AND TRIM(url) <> ''
             ORDER BY url, id
@@ -770,7 +804,8 @@ class JobStore:
         ).fetchall()
         by_url: dict[str, list[sqlite3.Row]] = {}
         for row in rows:
-            by_url.setdefault(str(row["url"]), []).append(row)
+            normalized_url = _normalize_handshake_storage_url(str(row["url"] or "").strip())
+            by_url.setdefault(normalized_url, []).append(row)
 
         deleted_count = 0
         for url_rows in by_url.values():
@@ -799,7 +834,23 @@ class JobStore:
         canonical_notified_at = str(canonical["notified_at"] or "")
         canonical_prev_status = str(canonical["source_quality_prev_status"] or "")
         canonical_recovered_at = str(canonical["source_quality_recovered_at"] or "")
+        canonical_profile_match_score = float(canonical["profile_match_score"] or 0.0)
+        canonical_profile_match_label = str(canonical["profile_match_label"] or "")
+        canonical_profile_match_reason_codes = str(canonical["profile_match_reason_codes"] or "")
+        canonical_profile_version = str(canonical["profile_version"] or "")
+        canonical_scorer_version = str(canonical["scorer_version"] or "")
+        canonical_job_text_version = str(canonical["job_text_version"] or "")
         canonical_snapshot = str(canonical["job_text_snapshot"] or "")
+        canonical_semantic_match_score = float(canonical["semantic_match_score"] or 0.0)
+        canonical_semantic_match_label = str(canonical["semantic_match_label"] or "")
+        canonical_semantic_match_reason_codes = str(canonical["semantic_match_reason_codes"] or "")
+        canonical_semantic_base_score = float(canonical["semantic_base_score"] or 0.0)
+        canonical_semantic_research_heaviness_score = float(canonical["semantic_research_heaviness_score"] or 0.0)
+        canonical_semantic_adjustment_reason_codes = str(canonical["semantic_adjustment_reason_codes"] or "")
+        canonical_semantic_profile_id = str(canonical["semantic_profile_id"] or "")
+        canonical_semantic_model_name = str(canonical["semantic_model_name"] or "")
+        canonical_semantic_scorer_version = str(canonical["semantic_scorer_version"] or "")
+        canonical_semantic_text_hash = str(canonical["semantic_text_hash"] or "")
 
         for row in duplicates:
             if not canonical_manual_fit_label and str(row["manual_fit_label"] or "").strip():
@@ -813,8 +864,27 @@ class JobStore:
                 canonical_prev_status = str(row["source_quality_prev_status"] or "")
             if not canonical_recovered_at and str(row["source_quality_recovered_at"] or "").strip():
                 canonical_recovered_at = str(row["source_quality_recovered_at"] or "")
+            if not canonical_profile_match_label and str(row["profile_match_label"] or "").strip():
+                canonical_profile_match_score = float(row["profile_match_score"] or 0.0)
+                canonical_profile_match_label = str(row["profile_match_label"] or "")
+                canonical_profile_match_reason_codes = str(row["profile_match_reason_codes"] or "")
+                canonical_profile_version = str(row["profile_version"] or "")
+                canonical_scorer_version = str(row["scorer_version"] or "")
+                if not canonical_job_text_version and str(row["job_text_version"] or "").strip():
+                    canonical_job_text_version = str(row["job_text_version"] or "")
             if not canonical_snapshot and str(row["job_text_snapshot"] or "").strip():
                 canonical_snapshot = str(row["job_text_snapshot"] or "")
+            if not canonical_semantic_match_label and str(row["semantic_match_label"] or "").strip():
+                canonical_semantic_match_score = float(row["semantic_match_score"] or 0.0)
+                canonical_semantic_match_label = str(row["semantic_match_label"] or "")
+                canonical_semantic_match_reason_codes = str(row["semantic_match_reason_codes"] or "")
+                canonical_semantic_base_score = float(row["semantic_base_score"] or 0.0)
+                canonical_semantic_research_heaviness_score = float(row["semantic_research_heaviness_score"] or 0.0)
+                canonical_semantic_adjustment_reason_codes = str(row["semantic_adjustment_reason_codes"] or "")
+                canonical_semantic_profile_id = str(row["semantic_profile_id"] or "")
+                canonical_semantic_model_name = str(row["semantic_model_name"] or "")
+                canonical_semantic_scorer_version = str(row["semantic_scorer_version"] or "")
+                canonical_semantic_text_hash = str(row["semantic_text_hash"] or "")
 
         self._conn.execute(
             """
@@ -826,7 +896,23 @@ class JobStore:
                 notified_at = ?,
                 source_quality_prev_status = ?,
                 source_quality_recovered_at = ?,
-                job_text_snapshot = ?
+                profile_match_score = ?,
+                profile_match_label = ?,
+                profile_match_reason_codes = ?,
+                profile_version = ?,
+                scorer_version = ?,
+                job_text_version = ?,
+                job_text_snapshot = ?,
+                semantic_match_score = ?,
+                semantic_match_label = ?,
+                semantic_match_reason_codes = ?,
+                semantic_base_score = ?,
+                semantic_research_heaviness_score = ?,
+                semantic_adjustment_reason_codes = ?,
+                semantic_profile_id = ?,
+                semantic_model_name = ?,
+                semantic_scorer_version = ?,
+                semantic_text_hash = ?
             WHERE id = ?
             """,
             (
@@ -837,7 +923,23 @@ class JobStore:
                 canonical_notified_at or None,
                 canonical_prev_status or None,
                 canonical_recovered_at or None,
+                canonical_profile_match_score,
+                canonical_profile_match_label or None,
+                canonical_profile_match_reason_codes or None,
+                canonical_profile_version or None,
+                canonical_scorer_version or None,
+                canonical_job_text_version or None,
                 canonical_snapshot or None,
+                canonical_semantic_match_score,
+                canonical_semantic_match_label or None,
+                canonical_semantic_match_reason_codes or None,
+                canonical_semantic_base_score,
+                canonical_semantic_research_heaviness_score,
+                canonical_semantic_adjustment_reason_codes or None,
+                canonical_semantic_profile_id or None,
+                canonical_semantic_model_name or None,
+                canonical_semantic_scorer_version or None,
+                canonical_semantic_text_hash or None,
                 int(canonical["id"]),
             ),
         )
@@ -1321,6 +1423,218 @@ class JobStore:
         params.append(safe_limit * 3)
         rows = self._conn.execute(query, tuple(params)).fetchall()
         return _filter_canonical_handshake_rows(rows, safe_limit)
+
+    def get_job_for_tailoring(self, job_id: int) -> sqlite3.Row | None:
+        row = self._conn.execute(
+            """
+            SELECT id, source, company, title, location, posted_at, url, description,
+                   relevance_score, compensation_type, source_quality_status,
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   job_text_version, job_text_snapshot
+            FROM jobs
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        resolved = self._resolve_canonical_handshake_row(row)
+        return resolved or row
+
+    def list_tailoring_candidates(
+        self,
+        *,
+        limit: int = 10,
+        label: str | None = None,
+        source: str | None = None,
+    ) -> list[sqlite3.Row]:
+        safe_limit = max(limit, 1)
+        clauses: list[str] = []
+        params: list[object] = []
+        if label:
+            clauses.append("profile_match_label = ?")
+            params.append(label)
+        else:
+            clauses.append("profile_match_label IN ('pass', 'review')")
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        where_sql = ""
+        if clauses:
+            where_sql = "WHERE " + " AND ".join(clauses)
+        rows = self._conn.execute(
+            f"""
+            SELECT id, source, company, title, location, posted_at, url, description,
+                   relevance_score, compensation_type, source_quality_status,
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   job_text_version, job_text_snapshot, ingested_at
+            FROM jobs
+            {where_sql}
+            ORDER BY profile_match_score DESC, ingested_at DESC, id DESC
+            LIMIT ?
+            """,
+            (*params, safe_limit * 3),
+        ).fetchall()
+        return _filter_canonical_handshake_rows(rows, safe_limit)
+
+    def find_tailoring_artifact(
+        self,
+        *,
+        job_id: int,
+        profile_name: str,
+        prompt_version: str,
+        resume_source_hash: str,
+        cover_letter_source_hash: str,
+        preferences_source_hash: str,
+        job_context_hash: str,
+    ) -> sqlite3.Row | None:
+        return self._conn.execute(
+            """
+            SELECT *
+            FROM tailoring_artifacts
+            WHERE job_id = ?
+              AND profile_name = ?
+              AND prompt_version = ?
+              AND resume_source_hash = ?
+              AND cover_letter_source_hash = ?
+              AND preferences_source_hash = ?
+              AND job_context_hash = ?
+            LIMIT 1
+            """,
+            (
+                job_id,
+                profile_name,
+                prompt_version,
+                resume_source_hash,
+                cover_letter_source_hash,
+                preferences_source_hash,
+                job_context_hash,
+            ),
+        ).fetchone()
+
+    def upsert_tailoring_artifact(
+        self,
+        *,
+        job_id: int,
+        profile_name: str,
+        provider_name: str,
+        model_name: str,
+        prompt_version: str,
+        resume_source_hash: str,
+        cover_letter_source_hash: str,
+        preferences_source_hash: str,
+        job_context_hash: str,
+        resume_markdown: str,
+        cover_letter_markdown: str,
+        highlight_requirements: list[str],
+        evidence_map: list[dict[str, str]],
+        output_dir: str,
+    ) -> tuple[int, bool]:
+        existing = self.find_tailoring_artifact(
+            job_id=job_id,
+            profile_name=profile_name,
+            prompt_version=prompt_version,
+            resume_source_hash=resume_source_hash,
+            cover_letter_source_hash=cover_letter_source_hash,
+            preferences_source_hash=preferences_source_hash,
+            job_context_hash=job_context_hash,
+        )
+        if existing is not None:
+            self._conn.execute(
+                """
+                UPDATE tailoring_artifacts
+                SET provider_name = ?,
+                    model_name = ?,
+                    resume_markdown = ?,
+                    cover_letter_markdown = ?,
+                    highlight_requirements = ?,
+                    evidence_map = ?,
+                    output_dir = ?,
+                    created_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    provider_name,
+                    model_name,
+                    resume_markdown,
+                    cover_letter_markdown,
+                    json.dumps(highlight_requirements),
+                    json.dumps(evidence_map),
+                    output_dir,
+                    int(existing["id"]),
+                ),
+            )
+            self._conn.commit()
+            return int(existing["id"]), False
+
+        cursor = self._conn.execute(
+            """
+            INSERT INTO tailoring_artifacts (
+                job_id, profile_name, provider_name, model_name, prompt_version,
+                resume_source_hash, cover_letter_source_hash, preferences_source_hash, job_context_hash,
+                resume_markdown, cover_letter_markdown, highlight_requirements, evidence_map,
+                output_dir
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                profile_name,
+                provider_name,
+                model_name,
+                prompt_version,
+                resume_source_hash,
+                cover_letter_source_hash,
+                preferences_source_hash,
+                job_context_hash,
+                resume_markdown,
+                cover_letter_markdown,
+                json.dumps(highlight_requirements),
+                json.dumps(evidence_map),
+                output_dir,
+            ),
+        )
+        self._conn.commit()
+        return int(cursor.lastrowid), True
+
+    def list_tailoring_artifacts(self, *, limit: int = 20, profile_name: str | None = None) -> list[sqlite3.Row]:
+        safe_limit = max(limit, 1)
+        clauses: list[str] = []
+        params: list[object] = []
+        if profile_name:
+            clauses.append("ta.profile_name = ?")
+            params.append(profile_name)
+        where_sql = ""
+        if clauses:
+            where_sql = "WHERE " + " AND ".join(clauses)
+        return self._conn.execute(
+            f"""
+            SELECT ta.id, ta.job_id, ta.profile_name, ta.provider_name, ta.model_name, ta.prompt_version,
+                   ta.output_dir, ta.created_at, j.company, j.title, j.source, j.profile_match_label
+            FROM tailoring_artifacts ta
+            JOIN jobs j ON j.id = ta.job_id
+            {where_sql}
+            ORDER BY ta.created_at DESC, ta.id DESC
+            LIMIT ?
+            """,
+            (*params, safe_limit),
+        ).fetchall()
+
+    def get_tailoring_artifact(self, artifact_id: int) -> sqlite3.Row | None:
+        return self._conn.execute(
+            """
+            SELECT ta.id, ta.job_id, ta.profile_name, ta.provider_name, ta.model_name, ta.prompt_version,
+                   ta.resume_source_hash, ta.cover_letter_source_hash, ta.preferences_source_hash,
+                   ta.job_context_hash, ta.resume_markdown, ta.cover_letter_markdown,
+                   ta.highlight_requirements, ta.evidence_map, ta.output_dir, ta.created_at,
+                   j.company, j.title, j.source, j.url
+            FROM tailoring_artifacts ta
+            JOIN jobs j ON j.id = ta.job_id
+            WHERE ta.id = ?
+            LIMIT 1
+            """,
+            (artifact_id,),
+        ).fetchone()
 
     def list_recent_handshake_quarantined_urls(self, days: int = 7, limit: int = 50) -> list[str]:
         safe_days = max(days, 1)

@@ -333,6 +333,103 @@ class SourceMaintenanceTests(unittest.TestCase):
         self.assertEqual(rows[0]["dedupe_key"], "clean-key")
         self.assertNotIn("Skip to content", rows[0]["description"])
 
+    def test_cleanup_handshake_duplicate_rows_merges_normalized_url_and_stage2_fields(self) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes,
+                profile_match_score, profile_match_label, profile_match_reason_codes,
+                profile_version, scorer_version, job_text_version, job_text_snapshot,
+                semantic_match_score, semantic_match_label, semantic_match_reason_codes,
+                semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
+                semantic_profile_id, semantic_model_name, semantic_scorer_version, semantic_text_hash
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "search-key",
+                "job-search",
+                "https://app.joinhandshake.com/job-search/11149721?query=machine+learning&sort=posted_date_desc",
+                "AI Engineering Intern, Voice & LLM Systems",
+                "Presto",
+                "Remote",
+                "2026-06-27",
+                "Search row description",
+                now_iso,
+                "",
+                0.92,
+                "pass",
+                '["target_title_alignment"]',
+                "default_v1",
+                "shadow_rules_v1",
+                "job_text_v1",
+                "TITLE: AI Engineering Intern",
+                0.81,
+                "pass",
+                '["semantic_similarity_high"]',
+                0.79,
+                0.05,
+                '["semantic_penalty_masters_signal"]',
+                "data_engineering",
+                "fake-semantic-model",
+                "semantic_shadow_v1",
+                "abc123",
+            ),
+        )
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship,
+                posted_at, description, compensation_type, work_auth_signals, sponsorship_signals,
+                skills, ingested_at, relevance_score, eligibility_confidence, eligibility_status,
+                relevance_hits, source_quality_status, source_quality_reason_codes
+            ) VALUES (?, 'handshake', ?, ?, ?, ?, ?, 1, ?, ?, 'unknown', '[]', '[]', '[]', ?, 0.0, 0.0, 'ambiguous', '[]', ?, '[]')
+            """,
+            (
+                "detail-key",
+                "job-detail",
+                "https://app.joinhandshake.com/jobs/11149721?searchId=abc",
+                "AI Engineering Intern, Voice & LLM Systems",
+                "Presto",
+                "Remote",
+                "2026-06-28",
+                "Clean direct job page description",
+                now_iso,
+                "detail_complete",
+            ),
+        )
+        self.store._conn.commit()
+
+        summary = self.store.cleanup_handshake_duplicate_rows()
+        self.assertEqual(summary["deleted_count"], 1)
+        row = self.store._conn.execute(
+            """
+            SELECT id, dedupe_key, url, source_quality_status,
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   profile_version, scorer_version, job_text_version, job_text_snapshot,
+                   semantic_match_score, semantic_match_label, semantic_match_reason_codes,
+                   semantic_profile_id, semantic_model_name, semantic_scorer_version, semantic_text_hash
+            FROM jobs
+            WHERE source = 'handshake'
+            """
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["dedupe_key"], "detail-key")
+        self.assertEqual(row["source_quality_status"], "detail_complete")
+        self.assertEqual(row["profile_match_label"], "pass")
+        self.assertAlmostEqual(float(row["profile_match_score"]), 0.92)
+        self.assertEqual(row["job_text_version"], "job_text_v1")
+        self.assertIn("AI Engineering Intern", row["job_text_snapshot"])
+        self.assertEqual(row["semantic_match_label"], "pass")
+        self.assertAlmostEqual(float(row["semantic_match_score"]), 0.81)
+        self.assertEqual(row["semantic_profile_id"], "data_engineering")
+        self.assertEqual(row["semantic_model_name"], "fake-semantic-model")
+        self.assertEqual(row["semantic_scorer_version"], "semantic_shadow_v1")
+        self.assertEqual(row["semantic_text_hash"], "abc123")
+
     def test_rss_probe_rejects_malformed_xml(self) -> None:
         class FakeResponse:
             def __enter__(self) -> "FakeResponse":

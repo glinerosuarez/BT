@@ -2,6 +2,8 @@
 
 Automated sourcing pipeline for US-based ML/Data internships with eligibility-aware filtering and Telegram alerts.
 
+It also includes a manual tailoring module that can generate job-specific resume and cover-letter artifacts from repo-local profile files plus stored job records.
+
 ## What it does
 
 - Pulls postings from multi-source connectors (`Arbeitnow`, `Remotive`, `The Muse`, `Greenhouse`, `Lever`, `RSS`, `Ashby`, optional public GitHub internship repos).
@@ -70,6 +72,10 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `python -m job_hunter.funnel_report`
 - `python -m job_hunter.funnel_report --format json`
 - `python -m job_hunter.handshake_login`
+- `python -m job_hunter.tailor_jobs generate --job-id N --profile default`
+- `python -m job_hunter.tailor_jobs batch --profile default --limit 10`
+- `python -m job_hunter.tailor_jobs list --limit 20`
+- `python -m job_hunter.tailor_jobs show --artifact-id N --format json`
 - `python -m job_hunter.stage2_report list --limit 20`
 - `python -m job_hunter.stage2_report show --job-id N`
 - `python -m job_hunter.stage2_report export-labeled --output /tmp/stage2-labeled.json --limit 200`
@@ -84,6 +90,23 @@ python -m job_hunter.run_loop --interval-minutes 15
 ## Design notes
 
 - [Two-stage reranking plan](</Users/gabriel.linero/repos/job-hunter/TWO_STAGE_RERANKING_PLAN.md>)
+
+## Tailoring setup
+
+- Create a shared preferences file at `profiles/default/preferences.md`.
+- Create a profile at `profiles/<profile-name>/` with:
+  - `resume.md`
+  - `cover_letter.md`
+  - optional profile-specific `preferences.md`
+- Set:
+  - `JOB_HUNTER_TAILORING_ANTHROPIC_MODEL`
+  - `ANTHROPIC_API_KEY`
+- Tailored artifacts are written under `artifacts/tailoring/<profile>/<job-id>-<company>-<title>/`.
+  - `resume.md`
+  - `cover_letter.md`
+  - `resume.pdf`
+  - `cover_letter.pdf`
+  - `metadata.json`
 
 ## SQLite tables
 

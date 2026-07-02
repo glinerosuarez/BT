@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "Automated internship sourcing pipeline"
 requires-python = ">=3.10"
 dependencies = [
+    "anthropic>=0.72,<1",
     "playwright>=1.60,<2",
+    "reportlab>=4.4,<5",
 ]
 
 [project.optional-dependencies]
@@ -18,4 +20,4 @@ local-embeddings = [
 ]
 
 [tool.setuptools]
-packages = ["job_hunter", "job_hunter.sources"]
+packages = ["job_hunter", "job_hunter.sources", "job_hunter.tailoring"]

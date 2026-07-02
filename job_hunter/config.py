@@ -196,6 +196,11 @@ class Settings:
     adzuna_country: str
     adzuna_pages: int
 
+    tailoring_profile_root: str = "profiles"
+    tailoring_output_root: str = "artifacts/tailoring"
+    tailoring_provider: str = "anthropic"
+    tailoring_anthropic_model: str | None = None
+    tailoring_batch_default_limit: int = 10
     use_linkedin: bool = False
     linkedin_search_urls: list[str] = field(default_factory=list)
     linkedin_profile_dir: str = DEFAULT_LINKEDIN_PROFILE_DIR
@@ -321,6 +326,11 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         adzuna_app_key=os.getenv("JOB_HUNTER_ADZUNA_APP_KEY"),
         adzuna_country=os.getenv("JOB_HUNTER_ADZUNA_COUNTRY", "us"),
         adzuna_pages=_env_int("JOB_HUNTER_ADZUNA_PAGES", 2),
+        tailoring_profile_root=os.getenv("JOB_HUNTER_TAILORING_PROFILE_ROOT", "profiles"),
+        tailoring_output_root=os.getenv("JOB_HUNTER_TAILORING_OUTPUT_ROOT", "artifacts/tailoring"),
+        tailoring_provider=os.getenv("JOB_HUNTER_TAILORING_PROVIDER", "anthropic"),
+        tailoring_anthropic_model=os.getenv("JOB_HUNTER_TAILORING_ANTHROPIC_MODEL"),
+        tailoring_batch_default_limit=_env_int("JOB_HUNTER_TAILORING_BATCH_DEFAULT_LIMIT", 10),
         use_linkedin=_env_bool("JOB_HUNTER_SOURCE_LINKEDIN", False),
         linkedin_search_urls=linkedin_search_urls,
         linkedin_profile_dir=os.getenv("JOB_HUNTER_LINKEDIN_PROFILE_DIR", DEFAULT_LINKEDIN_PROFILE_DIR),

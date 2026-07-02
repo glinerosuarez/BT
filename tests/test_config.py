@@ -47,6 +47,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.handshake_max_results, 25)
         self.assertEqual(settings.handshake_page_timeout_seconds, 30)
         self.assertTrue(settings.handshake_fetch_details)
+        self.assertEqual(settings.tailoring_profile_root, "profiles")
+        self.assertEqual(settings.tailoring_output_root, "artifacts/tailoring")
+        self.assertEqual(settings.tailoring_provider, "anthropic")
+        self.assertIsNone(settings.tailoring_anthropic_model)
+        self.assertEqual(settings.tailoring_batch_default_limit, 10)
 
     def test_requested_dotenv_loads_handshake_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
