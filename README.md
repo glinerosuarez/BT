@@ -2,7 +2,7 @@
 
 Automated sourcing pipeline for US-based ML/Data internships with eligibility-aware filtering and Telegram alerts.
 
-It also includes a manual tailoring module that can generate job-specific resume and cover-letter artifacts from repo-local profile files plus stored job records.
+It also includes a tailoring module for job-specific artifacts and an adapter-based application module for resumable automated submits on supported targets.
 
 ## What it does
 
@@ -76,6 +76,11 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `python -m job_hunter.tailor_jobs batch --profile default --limit 10`
 - `python -m job_hunter.tailor_jobs list --limit 20`
 - `python -m job_hunter.tailor_jobs show --artifact-id N --format json`
+- `python -m job_hunter.apply_jobs submit --job-id N --profile default`
+- `python -m job_hunter.apply_jobs batch --profile default --limit 5`
+- `python -m job_hunter.apply_jobs list --status blocked --limit 20`
+- `python -m job_hunter.apply_jobs show --application-id N --format json`
+- `python -m job_hunter.apply_jobs resume --application-id N`
 - `python -m job_hunter.stage2_report list --limit 20`
 - `python -m job_hunter.stage2_report show --job-id N`
 - `python -m job_hunter.stage2_report export-labeled --output /tmp/stage2-labeled.json --limit 200`
@@ -108,6 +113,17 @@ python -m job_hunter.run_loop --interval-minutes 15
   - `cover_letter.pdf`
   - `metadata.json`
 
+## Application setup
+
+- Create `profiles/<profile>/application_profile.json`.
+- Create `profiles/<profile>/application_answers.json`.
+- Automated submit currently supports `LinkedIn Easy Apply` and `Greenhouse`.
+- Unsupported portals, captchas, login/account walls, unknown required questions, and ambiguous submit states are stored as `blocked` runs for manual takeover.
+- Application artifacts are written under `artifacts/applications/<profile>/<application-id>/`.
+  - `run.json`
+  - `blocker.json` when blocked
+  - `confirmation.json` when submitted
+
 ## SQLite tables
 
 - `jobs`: normalized postings with score/eligibility fields and notification state.
@@ -116,6 +132,9 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `run_logs`: per-run metrics.
 - `source_run_logs`: per-source funnel diagnostics (fetched, dead tokens/feed errors, rejected by rule, persisted, notified).
 - `source_item_health`: per-token/feed health state used for quarantine/restore automation.
+- `tailoring_artifacts`: tailored output records keyed by job, profile, and context hashes.
+- `application_runs`: resumable application attempts and final outcomes.
+- `application_steps`: per-step state snapshots for blocker/debug visibility.
 
 ## Core environment variables
 
@@ -163,6 +182,16 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `JOB_HUNTER_USAJOBS_AUTH_KEY`
 - `JOB_HUNTER_ADZUNA_APP_ID`
 - `JOB_HUNTER_ADZUNA_APP_KEY`
+- `JOB_HUNTER_TAILORING_PROVIDER`
+- `JOB_HUNTER_TAILORING_ANTHROPIC_MODEL`
+- `JOB_HUNTER_TAILORING_BATCH_DEFAULT_LIMIT`
+- `JOB_HUNTER_APPLY_PROVIDER`
+- `JOB_HUNTER_APPLY_ANTHROPIC_MODEL`
+- `JOB_HUNTER_APPLY_BROWSER_PROFILE_DIR`
+- `JOB_HUNTER_APPLY_HEADLESS`
+- `JOB_HUNTER_APPLY_PAGE_TIMEOUT_SECONDS`
+- `JOB_HUNTER_APPLY_BATCH_DEFAULT_LIMIT`
+- `JOB_HUNTER_APPLY_OUTPUT_ROOT`
 - `JOB_HUNTER_TELEGRAM_BOT_TOKEN`
 - `JOB_HUNTER_TELEGRAM_CHAT_ID`
 

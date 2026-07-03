@@ -192,6 +192,45 @@ class JobStore:
                 ),
                 FOREIGN KEY(job_id) REFERENCES jobs(id)
             );
+
+            CREATE TABLE IF NOT EXISTS application_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                profile_name TEXT NOT NULL,
+                tailoring_artifact_id INTEGER,
+                adapter_name TEXT NOT NULL,
+                source TEXT NOT NULL,
+                target_url TEXT NOT NULL,
+                current_url TEXT,
+                status TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                blocked_reason TEXT,
+                blocked_payload TEXT,
+                confirmation_payload TEXT,
+                output_dir TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                submitted_at TEXT,
+                FOREIGN KEY(job_id) REFERENCES jobs(id),
+                FOREIGN KEY(tailoring_artifact_id) REFERENCES tailoring_artifacts(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS application_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                application_run_id INTEGER NOT NULL,
+                step_key TEXT NOT NULL,
+                step_label TEXT NOT NULL,
+                status TEXT NOT NULL,
+                field_name TEXT,
+                field_type TEXT,
+                question_text TEXT,
+                answer_source TEXT,
+                answer_value TEXT,
+                screenshot_path TEXT,
+                payload_json TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(application_run_id) REFERENCES application_runs(id)
+            );
             """
         )
         self._ensure_column("jobs", "age_days", "REAL")
@@ -250,6 +289,13 @@ class JobStore:
         self._ensure_column("source_item_health", "total_successes", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_item_health", "last_error", "TEXT")
         self._ensure_column("source_item_health", "last_checked_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        self._ensure_column("application_runs", "tailoring_artifact_id", "INTEGER")
+        self._ensure_column("application_runs", "current_url", "TEXT")
+        self._ensure_column("application_runs", "attempt_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("application_runs", "blocked_reason", "TEXT")
+        self._ensure_column("application_runs", "blocked_payload", "TEXT")
+        self._ensure_column("application_runs", "confirmation_payload", "TEXT")
+        self._ensure_column("application_runs", "submitted_at", "TEXT")
         self._conn.commit()
 
     def _ensure_column(self, table_name: str, column_name: str, column_def: str) -> None:
@@ -1635,6 +1681,246 @@ class JobStore:
             """,
             (artifact_id,),
         ).fetchone()
+
+    def get_job_for_application(self, job_id: int) -> sqlite3.Row | None:
+        row = self._conn.execute(
+            """
+            SELECT id, source, company, title, location, posted_at, url, description,
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   job_text_version, job_text_snapshot
+            FROM jobs
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        resolved = self._resolve_canonical_handshake_row(row)
+        return resolved or row
+
+    def find_latest_tailoring_artifact(self, *, job_id: int, profile_name: str) -> sqlite3.Row | None:
+        return self._conn.execute(
+            """
+            SELECT ta.id, ta.job_id, ta.profile_name, ta.provider_name, ta.model_name, ta.prompt_version,
+                   ta.resume_source_hash, ta.cover_letter_source_hash, ta.preferences_source_hash,
+                   ta.job_context_hash, ta.resume_markdown, ta.cover_letter_markdown,
+                   ta.highlight_requirements, ta.evidence_map, ta.output_dir, ta.created_at,
+                   j.company, j.title, j.source, j.url
+            FROM tailoring_artifacts ta
+            JOIN jobs j ON j.id = ta.job_id
+            WHERE ta.job_id = ? AND ta.profile_name = ?
+            ORDER BY ta.created_at DESC, ta.id DESC
+            LIMIT 1
+            """,
+            (job_id, profile_name),
+        ).fetchone()
+
+    def find_application_run(
+        self,
+        *,
+        job_id: int,
+        profile_name: str,
+        adapter_name: str,
+        status: str | None = None,
+    ) -> sqlite3.Row | None:
+        clauses = ["job_id = ?", "profile_name = ?", "adapter_name = ?"]
+        params: list[object] = [job_id, profile_name, adapter_name]
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        return self._conn.execute(
+            f"""
+            SELECT *
+            FROM application_runs
+            WHERE {" AND ".join(clauses)}
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            tuple(params),
+        ).fetchone()
+
+    def create_application_run(
+        self,
+        *,
+        job_id: int,
+        profile_name: str,
+        tailoring_artifact_id: int | None,
+        adapter_name: str,
+        source: str,
+        target_url: str,
+        current_url: str,
+        status: str,
+        output_dir: str,
+        blocked_reason: str | None = None,
+        blocked_payload: dict[str, object] | None = None,
+        confirmation_payload: dict[str, object] | None = None,
+        submitted_at: str | None = None,
+    ) -> int:
+        cursor = self._conn.execute(
+            """
+            INSERT INTO application_runs (
+                job_id, profile_name, tailoring_artifact_id, adapter_name, source, target_url,
+                current_url, status, attempt_count, blocked_reason, blocked_payload,
+                confirmation_payload, output_dir, submitted_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                job_id,
+                profile_name,
+                tailoring_artifact_id,
+                adapter_name,
+                source,
+                target_url,
+                current_url,
+                status,
+                blocked_reason,
+                json.dumps(blocked_payload) if blocked_payload is not None else None,
+                json.dumps(confirmation_payload) if confirmation_payload is not None else None,
+                output_dir,
+                submitted_at,
+            ),
+        )
+        self._conn.commit()
+        return int(cursor.lastrowid)
+
+    def update_application_run(
+        self,
+        application_run_id: int,
+        *,
+        tailoring_artifact_id: int | None = None,
+        target_url: str | None = None,
+        current_url: str | None = None,
+        status: str | None = None,
+        blocked_reason: str | None = None,
+        blocked_payload: dict[str, object] | None = None,
+        confirmation_payload: dict[str, object] | None = None,
+        increment_attempt_count: bool = False,
+        submitted_at: str | None = None,
+        output_dir: str | None = None,
+    ) -> None:
+        assignments = ["updated_at = CURRENT_TIMESTAMP"]
+        params: list[object] = []
+        if tailoring_artifact_id is not None:
+            assignments.append("tailoring_artifact_id = ?")
+            params.append(tailoring_artifact_id)
+        if target_url is not None:
+            assignments.append("target_url = ?")
+            params.append(target_url)
+        if current_url is not None:
+            assignments.append("current_url = ?")
+            params.append(current_url)
+        if status is not None:
+            assignments.append("status = ?")
+            params.append(status)
+        if blocked_reason is not None or status == "blocked":
+            assignments.append("blocked_reason = ?")
+            params.append(blocked_reason)
+        if blocked_payload is not None or status == "blocked":
+            assignments.append("blocked_payload = ?")
+            params.append(json.dumps(blocked_payload) if blocked_payload is not None else None)
+        if confirmation_payload is not None or status == "submitted":
+            assignments.append("confirmation_payload = ?")
+            params.append(json.dumps(confirmation_payload) if confirmation_payload is not None else None)
+        if increment_attempt_count:
+            assignments.append("attempt_count = attempt_count + 1")
+        if submitted_at is not None:
+            assignments.append("submitted_at = ?")
+            params.append(submitted_at)
+        if output_dir is not None:
+            assignments.append("output_dir = ?")
+            params.append(output_dir)
+        params.append(application_run_id)
+        self._conn.execute(
+            f"""
+            UPDATE application_runs
+            SET {", ".join(assignments)}
+            WHERE id = ?
+            """,
+            tuple(params),
+        )
+        self._conn.commit()
+
+    def get_application_run(self, application_run_id: int) -> sqlite3.Row | None:
+        return self._conn.execute(
+            """
+            SELECT ar.*, j.company, j.title, j.url AS job_url
+            FROM application_runs ar
+            JOIN jobs j ON j.id = ar.job_id
+            WHERE ar.id = ?
+            LIMIT 1
+            """,
+            (application_run_id,),
+        ).fetchone()
+
+    def list_application_runs(self, *, status: str | None = None, limit: int = 20) -> list[sqlite3.Row]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if status:
+            clauses.append("ar.status = ?")
+            params.append(status)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return self._conn.execute(
+            f"""
+            SELECT ar.*, j.company, j.title
+            FROM application_runs ar
+            JOIN jobs j ON j.id = ar.job_id
+            {where_sql}
+            ORDER BY ar.updated_at DESC, ar.id DESC
+            LIMIT ?
+            """,
+            (*params, max(limit, 1)),
+        ).fetchall()
+
+    def insert_application_step(
+        self,
+        *,
+        application_run_id: int,
+        step_key: str,
+        step_label: str,
+        status: str,
+        field_name: str | None = None,
+        field_type: str | None = None,
+        question_text: str | None = None,
+        answer_source: str | None = None,
+        answer_value: str | None = None,
+        screenshot_path: str | None = None,
+        payload_json: dict[str, object] | None = None,
+    ) -> int:
+        cursor = self._conn.execute(
+            """
+            INSERT INTO application_steps (
+                application_run_id, step_key, step_label, status, field_name, field_type,
+                question_text, answer_source, answer_value, screenshot_path, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                application_run_id,
+                step_key,
+                step_label,
+                status,
+                field_name,
+                field_type,
+                question_text,
+                answer_source,
+                answer_value,
+                screenshot_path,
+                json.dumps(payload_json) if payload_json is not None else None,
+            ),
+        )
+        self._conn.commit()
+        return int(cursor.lastrowid)
+
+    def list_application_steps(self, application_run_id: int) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            """
+            SELECT *
+            FROM application_steps
+            WHERE application_run_id = ?
+            ORDER BY id ASC
+            """,
+            (application_run_id,),
+        ).fetchall()
 
     def list_recent_handshake_quarantined_urls(self, days: int = 7, limit: int = 50) -> list[str]:
         safe_days = max(days, 1)

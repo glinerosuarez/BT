@@ -52,6 +52,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.tailoring_provider, "anthropic")
         self.assertIsNone(settings.tailoring_anthropic_model)
         self.assertEqual(settings.tailoring_batch_default_limit, 10)
+        self.assertEqual(settings.apply_provider, "anthropic")
+        self.assertIsNone(settings.apply_anthropic_model)
+        self.assertEqual(settings.apply_browser_profile_dir, ".job-apply-profile")
+        self.assertTrue(settings.apply_headless)
+        self.assertEqual(settings.apply_page_timeout_seconds, 30)
+        self.assertEqual(settings.apply_batch_default_limit, 5)
+        self.assertEqual(settings.apply_output_root, "artifacts/applications")
 
     def test_requested_dotenv_loads_handshake_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

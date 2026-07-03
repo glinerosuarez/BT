@@ -20,4 +20,4 @@ local-embeddings = [
 ]
 
 [tool.setuptools]
-packages = ["job_hunter", "job_hunter.sources", "job_hunter.tailoring"]
+packages = ["job_hunter", "job_hunter.apply", "job_hunter.apply.adapters", "job_hunter.sources", "job_hunter.tailoring"]

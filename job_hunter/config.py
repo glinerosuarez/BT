@@ -201,6 +201,13 @@ class Settings:
     tailoring_provider: str = "anthropic"
     tailoring_anthropic_model: str | None = None
     tailoring_batch_default_limit: int = 10
+    apply_provider: str = "anthropic"
+    apply_anthropic_model: str | None = None
+    apply_browser_profile_dir: str = ".job-apply-profile"
+    apply_headless: bool = True
+    apply_page_timeout_seconds: int = 30
+    apply_batch_default_limit: int = 5
+    apply_output_root: str = "artifacts/applications"
     use_linkedin: bool = False
     linkedin_search_urls: list[str] = field(default_factory=list)
     linkedin_profile_dir: str = DEFAULT_LINKEDIN_PROFILE_DIR
@@ -331,6 +338,13 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         tailoring_provider=os.getenv("JOB_HUNTER_TAILORING_PROVIDER", "anthropic"),
         tailoring_anthropic_model=os.getenv("JOB_HUNTER_TAILORING_ANTHROPIC_MODEL"),
         tailoring_batch_default_limit=_env_int("JOB_HUNTER_TAILORING_BATCH_DEFAULT_LIMIT", 10),
+        apply_provider=os.getenv("JOB_HUNTER_APPLY_PROVIDER", "anthropic"),
+        apply_anthropic_model=os.getenv("JOB_HUNTER_APPLY_ANTHROPIC_MODEL"),
+        apply_browser_profile_dir=os.getenv("JOB_HUNTER_APPLY_BROWSER_PROFILE_DIR", ".job-apply-profile"),
+        apply_headless=_env_bool("JOB_HUNTER_APPLY_HEADLESS", True),
+        apply_page_timeout_seconds=_env_int("JOB_HUNTER_APPLY_PAGE_TIMEOUT_SECONDS", 30),
+        apply_batch_default_limit=_env_int("JOB_HUNTER_APPLY_BATCH_DEFAULT_LIMIT", 5),
+        apply_output_root=os.getenv("JOB_HUNTER_APPLY_OUTPUT_ROOT", "artifacts/applications"),
         use_linkedin=_env_bool("JOB_HUNTER_SOURCE_LINKEDIN", False),
         linkedin_search_urls=linkedin_search_urls,
         linkedin_profile_dir=os.getenv("JOB_HUNTER_LINKEDIN_PROFILE_DIR", DEFAULT_LINKEDIN_PROFILE_DIR),

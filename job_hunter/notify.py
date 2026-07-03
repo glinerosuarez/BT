@@ -19,6 +19,9 @@ class TelegramNotifier:
 
     def send(self, job: JobRecord) -> bool:
         text = _format_alert(job)
+        return self.send_text(text)
+
+    def send_text(self, text: str) -> bool:
         endpoint = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         data = urllib.parse.urlencode(
             {
