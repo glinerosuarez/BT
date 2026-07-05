@@ -14,6 +14,7 @@ from job_hunter.pipeline import (
     _classify_compensation,
     _dedupe_key,
     _evaluate_eligibility,
+    _evaluate_source_quality,
     _fails_policy_gate,
     _is_internship,
     _passes_data_role_gate,
@@ -196,6 +197,29 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertIn("no_current_future_sponsorship", negative)
         self.assertEqual(positive, [])
 
+    def test_eligibility_rejects_bosch_style_indefinite_us_auth_and_future_sponsorship_unavailable(self) -> None:
+        job = JobRecord(
+            source="linkedin",
+            external_id="4",
+            url="https://example.com/4",
+            title="Business Intelligence Intern - Fall",
+            company="Bosch USA",
+            location="Watertown, MA",
+            is_internship=True,
+            posted_at="2026-07-02",
+            description=(
+                "Indefinite U.S. work authorized individuals only. "
+                "Future sponsorship for work authorization unavailable."
+            ),
+            ingested_at="2026-07-03T00:00:00+00:00",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("us_work_authorized_only", negative)
+        self.assertIn("future_sponsorship_work_auth_unavailable", negative)
+        self.assertEqual(positive, [])
+
     def test_internship_and_us_scope_filters(self) -> None:
         job = JobRecord(
             source="x",
@@ -220,6 +244,21 @@ class PipelineUnitTests(unittest.TestCase):
             title="Data Science Intern",
             company="Example",
             location="Washington, DC",
+            is_internship=True,
+            posted_at=None,
+            description="Python and SQL",
+            ingested_at="now",
+        )
+        self.assertTrue(_is_us_scope(job))
+
+    def test_us_scope_accepts_accented_city_state_locations(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="1a",
+            url="https://example.com/1a",
+            title="Machine Learning Engineer Project Intern",
+            company="Example",
+            location="San José, CA",
             is_internship=True,
             posted_at=None,
             description="Python and SQL",
@@ -429,6 +468,36 @@ class PipelineUnitTests(unittest.TestCase):
                 ],
             )
         )
+
+    def test_policy_gate_rejects_undergraduate_only_roles(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="2",
+            url="https://example.com/2",
+            title="Data Science Intern",
+            company="Example",
+            location="US",
+            is_internship=True,
+            posted_at=None,
+            description="Currently enrolled as an undergraduate student at an accredited university. Undergraduate students only.",
+            ingested_at="now",
+        )
+        self.assertTrue(_fails_policy_gate(job, policy_reject_regexes=[]))
+
+    def test_policy_gate_allows_bs_ms_language_without_exclusive_undergrad_restriction(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="3",
+            url="https://example.com/3",
+            title="AI/ML Software Engineer Intern (BS/MS)",
+            company="Example",
+            location="US",
+            is_internship=True,
+            posted_at=None,
+            description="Currently pursuing a bachelor's or master's degree in computer science, data science, or a related field.",
+            ingested_at="now",
+        )
+        self.assertFalse(_fails_policy_gate(job, policy_reject_regexes=[]))
         self.assertFalse(
             _passes_data_role_gate(
                 job,
@@ -1058,6 +1127,75 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(row["source_quality_prev_status"], "card_only")
         self.assertTrue(str(row["source_quality_recovered_at"] or "").strip())
         self.assertEqual(int(row["notified"] or 0), 1)
+
+    def test_linkedin_closed_job_is_quarantined(self) -> None:
+        job = JobRecord(
+            source="linkedin",
+            external_id="li-closed-1",
+            url="https://www.linkedin.com/jobs/view/4434342327",
+            title="Data Ops-Intern",
+            company="Innovaccer",
+            location="United States",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Data ops internship with SQL and Python.",
+            ingested_at=datetime.now(timezone.utc).isoformat(),
+            source_metadata={
+                "detail_fetch_attempted": True,
+                "detail_quality_status": "detail_complete",
+                "accepting_applications": False,
+            },
+        )
+        status, reasons, notify_allowed = _evaluate_source_quality(job)
+        self.assertEqual(status, "closed")
+        self.assertEqual(reasons, ["linkedin_closed"])
+        self.assertFalse(notify_allowed)
+
+    def test_query_level_run_logs_record_linkedin_search_url_stats(self) -> None:
+        payload = [
+            {
+                "source": "linkedin",
+                "external_id": "li-query-1",
+                "url": "https://www.linkedin.com/jobs/view/4405987988",
+                "title": "AI/ML Software Engineer Intern (Data Platform) - 2026 Summer (BS/MS)",
+                "company": "TikTok",
+                "location": "San Jose, CA",
+                "posted_at": recent_posted_at(),
+                "description": "Build AI/ML systems on a large-scale data platform internship with Python and SQL.",
+                "skills": [],
+                "source_detail": "https://www.linkedin.com/jobs/search-results/?keywords=data+engineer+intern&f_TPR=r86400&sortBy=DD",
+                "source_metadata": {
+                    "detail_fetch_attempted": True,
+                    "detail_quality_status": "detail_complete",
+                    "accepting_applications": True,
+                },
+            }
+        ]
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertEqual(outcome.source_stats["fake"].fetched_count, 1)
+        self.assertIn("fake", outcome.source_query_stats)
+        query_key = "https://www.linkedin.com/jobs/search-results/?keywords=data+engineer+intern&f_TPR=r86400&sortBy=DD"
+        self.assertIn(query_key, outcome.source_query_stats["fake"])
+        query_stats = outcome.source_query_stats["fake"][query_key]
+        self.assertEqual(query_stats.fetched_count, 1)
+        self.assertEqual(query_stats.after_stage_1b_count, 1)
+
+        row = self.store._conn.execute(
+            """
+            SELECT source_name, query_key, fetched_count, after_stage_1b_count
+            FROM source_query_run_logs
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_name"], "fake")
+        self.assertEqual(row["query_key"], query_key)
+        self.assertEqual(int(row["fetched_count"] or 0), 1)
+        self.assertEqual(int(row["after_stage_1b_count"] or 0), 1)
 
     def test_handshake_refresh_updates_existing_row_by_url_even_when_rejected_later(self) -> None:
         self.store._conn.execute(

@@ -55,7 +55,11 @@ JOB_CANDIDATES_SCRIPT = """
   for (const card of cards) {
     const text = (card.innerText || '').trim();
     if (!text) continue;
-    rows.push({ card_text: text });
+    const anchor = card.querySelector('a[href*="/jobs/view/"]');
+    rows.push({
+      card_text: text,
+      card_url: anchor ? (anchor.href || '') : '',
+    });
   }
   return rows;
 }
@@ -69,6 +73,11 @@ JOB_URL_RE = re.compile(r"/jobs/view/(?:[^/]+/)?(\d+)")
 LOCATION_HINT_RE = re.compile(
     r"\b(remote|remoto|hybrid|híbrido|on-site|onsite|presencial|united states|estados unidos|new york|nueva york|san francisco|los angeles|seattle|austin|boston|chicago|washington, dc|san jos[eé])\b",
     re.IGNORECASE,
+)
+LINKEDIN_CLOSED_PATTERNS = (
+    "no longer accepting applications",
+    "ya no acepta solicitudes",
+    "ya no se aceptan solicitudes",
 )
 GENERIC_NOISE_LINES = {
     "jobs",
@@ -213,59 +222,85 @@ class LinkedInSource(SourceConnector):
         profile_path.mkdir(parents=True, exist_ok=True)
 
         with sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                str(profile_path),
-                channel="chrome",
-                headless=self.headless,
-            )
-            try:
-                context.set_default_timeout(self.page_timeout_seconds * 1000)
-                context.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
-                page = context.pages[0] if context.pages else context.new_page()
-                page.set_default_timeout(self.page_timeout_seconds * 1000)
-                page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
-                results: list[dict] = []
-                search_urls, job_urls = _partition_linkedin_urls(self.search_urls)
-                total_search_urls = len(search_urls)
-                for index, search_url in enumerate(search_urls, start=1):
-                    normalized_search_url = _normalize_search_url(search_url)
-                    LOG.info(
-                        "linkedin_search_fetch_started index=%s total=%s url=%s",
-                        index,
-                        total_search_urls,
-                        normalized_search_url,
-                    )
-                    rows = self._fetch_search_page(page, normalized_search_url)
-                    LOG.info(
-                        "linkedin_search_fetch_finished index=%s total=%s url=%s fetched_count=%s",
-                        index,
-                        total_search_urls,
-                        normalized_search_url,
-                        len(rows),
-                    )
-                    results.extend(rows)
-                for job_url in job_urls:
-                    parsed = self._fetch_job_page(page, job_url)
-                    if parsed is not None:
-                        results.append(parsed)
-                return _dedupe_rows(results)
-            finally:
-                context.close()
+            results: list[dict] = []
+            search_urls, job_urls = _partition_linkedin_urls(self.search_urls)
+            total_search_urls = len(search_urls)
+            for index, search_url in enumerate(search_urls, start=1):
+                normalized_search_url = _normalize_search_url(search_url)
+                LOG.info(
+                    "linkedin_search_fetch_started index=%s total=%s url=%s",
+                    index,
+                    total_search_urls,
+                    normalized_search_url,
+                )
+                context = self._launch_context(playwright, profile_path)
+                try:
+                    query_page = context.new_page()
+                    query_page.set_default_timeout(self.page_timeout_seconds * 1000)
+                    query_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
+                    try:
+                        rows = self._fetch_search_page(query_page, normalized_search_url)
+                    finally:
+                        query_page.close()
+                finally:
+                    context.close()
+                LOG.info(
+                    "linkedin_search_fetch_finished index=%s total=%s url=%s fetched_count=%s",
+                    index,
+                    total_search_urls,
+                    normalized_search_url,
+                    len(rows),
+                )
+                results.extend(rows)
+            for job_url in job_urls:
+                context = self._launch_context(playwright, profile_path)
+                try:
+                    job_page = context.new_page()
+                    job_page.set_default_timeout(self.page_timeout_seconds * 1000)
+                    job_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
+                    try:
+                        parsed = self._fetch_job_page(job_page, job_url)
+                        if parsed is not None:
+                            results.append(parsed)
+                    finally:
+                        job_page.close()
+                finally:
+                    context.close()
+            return _dedupe_rows(results)
+
+    def _launch_context(self, playwright, profile_path: Path):
+        context = playwright.chromium.launch_persistent_context(
+            str(profile_path),
+            channel="chrome",
+            headless=self.headless,
+        )
+        context.set_default_timeout(self.page_timeout_seconds * 1000)
+        context.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
+        return context
 
     def _fetch_search_page(self, page, search_url: str) -> list[dict]:
         self._goto_linkedin_page(page, search_url)
         if _page_requires_login(page.url):
             raise RuntimeError("LinkedIn session not authenticated. Run `python -m job_hunter.linkedin_login` first.")
 
-        page.wait_for_timeout(1000)
-        candidates = page.evaluate(JOB_CANDIDATES_SCRIPT) or []
+        candidates = self._load_search_candidates(page, search_url)
         rows: list[dict] = []
         max_cards = min(len(candidates), self.max_results)
         for card_index, candidate in enumerate(candidates[: self.max_results], start=1):
             card_text = str(candidate.get("card_text") or "").strip()
-            card = _parse_card_text(card_text, fallback_url=search_url)
+            candidate_url = _canonical_linkedin_job_url(str(candidate.get("card_url") or "").strip())
+            card = _parse_card_text(card_text, fallback_url=candidate_url or search_url)
             title = str(card.get("title") or "").strip()
             if not title:
+                continue
+            if bool(card.get("is_reposted")):
+                LOG.info(
+                    "linkedin_card_skipped_reposted url=%s card_index=%s max_cards=%s title=%s",
+                    search_url,
+                    card_index,
+                    max_cards,
+                    title,
+                )
                 continue
             if _is_card_older_than_lookback(card, self.max_posting_age_days):
                 LOG.info(
@@ -286,8 +321,12 @@ class LinkedInSource(SourceConnector):
             )
             detail_text = ""
             job_url = ""
+            locator = page.locator('[data-view-name="job-search-job-card"]').nth(card_index - 1)
+            locator_url = self._extract_card_job_url(locator)
+            if locator_url:
+                card["url"] = locator_url
+                candidate_url = locator_url
             if self.fetch_details:
-                locator = page.locator('[data-view-name="job-search-job-card"]').nth(card_index - 1)
                 click_succeeded = False
                 try:
                     locator.scroll_into_view_if_needed(timeout=3000)
@@ -308,7 +347,8 @@ class LinkedInSource(SourceConnector):
                     except Exception:
                         LOG.warning("linkedin_card_click_timeout url=%s card_index=%s title=%s", search_url, card_index, title)
                 if click_succeeded:
-                    job_url = _canonical_linkedin_job_url(page.url)
+                    locator_url = self._extract_card_job_url(locator)
+                    job_url = locator_url or candidate_url or _canonical_linkedin_job_url(page.url)
                     if not job_url:
                         selected_links = page.locator("a[href*='/jobs/view/']").evaluate_all(
                             """
@@ -339,6 +379,32 @@ class LinkedInSource(SourceConnector):
                 )
         return rows
 
+    def _extract_card_job_url(self, locator) -> str:
+        try:
+            href = locator.locator("a[href*='/jobs/view/']").first.get_attribute("href", timeout=2000)
+        except Exception:
+            return ""
+        return _canonical_linkedin_job_url(str(href or "").strip())
+
+    def _load_search_candidates(self, page, search_url: str) -> list[dict]:
+        wait_schedule_ms = (1000, 2500, 5000)
+        candidates: list[dict] = []
+        for attempt, wait_ms in enumerate(wait_schedule_ms, start=1):
+            page.wait_for_timeout(wait_ms)
+            raw_candidates = page.evaluate(JOB_CANDIDATES_SCRIPT) or []
+            candidates = [item for item in raw_candidates if isinstance(item, dict) and str(item.get("card_text") or "").strip()]
+            if candidates:
+                if attempt > 1:
+                    LOG.info(
+                        "linkedin_search_candidates_retried url=%s attempt=%s candidate_count=%s",
+                        search_url,
+                        attempt,
+                        len(candidates),
+                    )
+                return candidates
+        LOG.warning("linkedin_search_candidates_empty url=%s", search_url)
+        return candidates
+
     def _fetch_job_page(self, page, job_url: str) -> dict | None:
         self._goto_linkedin_page(page, job_url)
         if _page_requires_login(page.url):
@@ -350,6 +416,9 @@ class LinkedInSource(SourceConnector):
         if not detail_text.strip():
             detail_text = str(page.locator("body").inner_text() or "")
         detail = _parse_detail_text(detail_text)
+        if bool(detail.get("is_reposted")):
+            LOG.info("linkedin_job_skipped_reposted url=%s", job_url)
+            return None
         if not detail.get("title") or not detail.get("company"):
             return None
         card = {
@@ -442,6 +511,7 @@ def _page_requires_login(url: str) -> bool:
 
 def _parse_card_text(card_text: str, *, fallback_url: str) -> dict[str, str]:
     lines = [line.strip() for line in card_text.splitlines() if line.strip()]
+    lines = _strip_leading_noise(lines)
     title = ""
     company = ""
     location = ""
@@ -459,7 +529,7 @@ def _parse_card_text(card_text: str, *, fallback_url: str) -> dict[str, str]:
         lines = lines[2:]
     for line in lines:
         lowered = line.lower()
-        if lowered in GENERIC_NOISE_LINES:
+        if lowered in GENERIC_NOISE_LINES or _starts_with_noise_prefix(lowered):
             continue
         cleaned_line = _strip_verified_marker(line)
         if not title and _looks_like_role_title(cleaned_line) and not _looks_like_age_line(cleaned_line):
@@ -489,6 +559,7 @@ def _parse_card_text(card_text: str, *, fallback_url: str) -> dict[str, str]:
         "url": _canonical_linkedin_job_url(fallback_url),
         "card_text": card_text.strip(),
         "age_line": age_line,
+        "is_reposted": _is_reposted_age_line(age_line),
     }
 
 
@@ -537,12 +608,16 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
         posted_at = _relative_age_to_iso(posted_line) or ""
 
     description = _extract_description(lines)
+    accepting_applications = not _is_linkedin_closed(lines)
     return {
         "title": title,
         "company": company,
         "location": location,
         "posted_at": posted_at,
         "description": description,
+        "accepting_applications": accepting_applications,
+        "posted_line": posted_line,
+        "is_reposted": _is_reposted_age_line(posted_line),
     }
 
 
@@ -581,6 +656,8 @@ def _build_row(
     detail_fetch_attempted: bool,
 ) -> dict | None:
     detail = _parse_detail_text(detail_text)
+    if bool(detail.get("is_reposted")) or bool(card.get("is_reposted")):
+        return None
     detail_title = str(detail.get("title") or "").strip()
     detail_company = str(detail.get("company") or "").strip()
     card_title = str(card.get("title") or "").strip()
@@ -594,6 +671,7 @@ def _build_row(
     if use_detail_company and _normalize_title_token(detail_company) == _normalize_title_token(title) and _normalize_title_token(card_company) != _normalize_title_token(title):
         use_detail_company = False
     company = detail_company if use_detail_company else card_company
+    company = _clean_company(company)
 
     detail_location = str(detail.get("location") or "").strip()
     location = detail_location if _is_valid_location(detail_location) else str(card.get("location") or "").strip()
@@ -611,6 +689,7 @@ def _build_row(
         "detail_fetch_attempted": detail_fetch_attempted,
         "detail_quality_status": detail_status,
         "resolved_job_url": job_url,
+        "accepting_applications": bool(detail.get("accepting_applications", True)),
     }
     return {
         "source": "linkedin",
@@ -671,6 +750,10 @@ def _looks_like_age_line(value: str) -> bool:
     return RELATIVE_AGE_RE.search(value) is not None
 
 
+def _is_reposted_age_line(value: str) -> bool:
+    return "reposted" in value.lower()
+
+
 def _relative_age_to_iso(value: str) -> str | None:
     match = RELATIVE_AGE_RE.search(value)
     if not match:
@@ -713,6 +796,10 @@ def _matches_noise_prefix(value: str, prefix: str) -> bool:
     return value.startswith(f"{prefix} ")
 
 
+def _starts_with_noise_prefix(value: str) -> bool:
+    return any(_matches_noise_prefix(value, prefix) for prefix in LEADING_NOISE_PREFIXES)
+
+
 def _looks_like_role_title(value: str) -> bool:
     lowered = value.lower()
     if any(marker in lowered for marker in ("empleo verificado", "verified job")):
@@ -740,8 +827,23 @@ def _clean_location(value: str) -> str:
     return primary
 
 
+def _clean_company(value: str) -> str:
+    cleaned = value.strip()
+    if re.search(r"[A-Za-z]", cleaned):
+        cleaned = re.sub(r"(?<=\D)\s+\d+$", "", cleaned).strip()
+    return cleaned
+
+
 def _strip_verified_marker(value: str) -> str:
     return re.sub(r"\s*\((verified job|empleo verificado)\)\s*", " ", value, flags=re.IGNORECASE).strip()
+
+
+def _is_linkedin_closed(lines: list[str]) -> bool:
+    for line in lines:
+        lowered = line.strip().lower()
+        if any(pattern in lowered for pattern in LINKEDIN_CLOSED_PATTERNS):
+            return True
+    return False
 
 
 def _is_valid_title(value: str) -> bool:
@@ -766,6 +868,8 @@ def _is_valid_company(value: str) -> bool:
     if not lowered:
         return False
     if any(lowered.startswith(prefix) for prefix in INVALID_HEADER_PREFIXES):
+        return False
+    if _starts_with_noise_prefix(lowered):
         return False
     if _looks_like_compensation_line(value):
         return False

@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 from dataclasses import asdict
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -105,6 +106,24 @@ NEGATED_SPONSORSHIP_REGEXES = {
     ),
     "future_sponsorship_not_available": re.compile(
         r"\b(no|not|without)\s+(current|future)\s+sponsorship\b",
+        flags=re.IGNORECASE,
+    ),
+    "future_sponsorship_work_auth_unavailable": re.compile(
+        r"\bfuture sponsorship for work authorization unavailable\b",
+        flags=re.IGNORECASE,
+    ),
+}
+BUILTIN_POLICY_REJECT_REGEXES = {
+    "undergraduate_only": re.compile(
+        r"\b((undergraduate students?|undergraduates?)\s+only|only\s+(open to\s+)?undergraduate students?)\b",
+        flags=re.IGNORECASE,
+    ),
+    "undergraduate_enrollment_required": re.compile(
+        r"\b(currently enrolled (as|in) an? undergraduate student|must be currently enrolled in an undergraduate (program|degree))\b",
+        flags=re.IGNORECASE,
+    ),
+    "graduate_students_not_eligible": re.compile(
+        r"\b((graduate students?|master'?s students?|masters students?)\s+(are\s+)?not eligible|not open to\s+(graduate|master'?s|masters)\s+students)\b",
         flags=re.IGNORECASE,
     ),
 }
@@ -254,6 +273,12 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
 
         outcome.source_count += len(raw_jobs)
         source_stats.fetched_count += len(raw_jobs)
+        for raw_job in raw_jobs:
+            query_key = _query_key_from_raw(raw_job)
+            if not query_key:
+                continue
+            query_stats = _query_stats_bucket(outcome, source.name, query_key)
+            query_stats.fetched_count += 1
         LOG.info(
             "source_fetch_finished source=%s status=ok elapsed_seconds=%.2f fetched_count=%s",
             source.name,
@@ -265,16 +290,25 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
             job = _normalize_record(raw_job, ingested_at=now_iso)
             outcome.normalized_count += 1
             source_stats.normalized_count += 1
+            query_stats = _query_stats_bucket(outcome, source.name, query_key) if (query_key := _query_key_for_job(job)) else None
+            if query_stats is not None:
+                query_stats.normalized_count += 1
             if not job.url or not job.title:
                 outcome.rejected_missing_core_fields_count += 1
                 source_stats.rejected_missing_core_fields_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_missing_core_fields_count += 1
                 continue
 
             if _is_too_old(job, now, settings.max_posting_age_days):
                 source_stats.rejected_age_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_age_count += 1
                 continue
             outcome.after_stage_1a_count += 1
             source_stats.after_stage_1a_count += 1
+            if query_stats is not None:
+                query_stats.after_stage_1a_count += 1
 
             early_source_quality_status = ""
             early_source_quality_reason_codes: list[str] = []
@@ -294,15 +328,23 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 pre_refreshed_dedupe_keys.add(existing_dedupe_key)
                 if bool(refresh_meta.get("source_quality_recovered")):
                     source_stats.recovered_source_quality_count += 1
+                    if query_stats is not None:
+                        query_stats.recovered_source_quality_count += 1
 
             if not _is_internship(job):
                 source_stats.rejected_internship_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_internship_count += 1
                 continue
             if not _is_us_scope(job):
                 source_stats.rejected_us_scope_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_us_scope_count += 1
                 continue
             if _is_blacklisted_title(job, title_blacklist_regexes):
                 source_stats.rejected_title_blacklist_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_title_blacklist_count += 1
                 continue
             if not _passes_data_role_gate(
                 job,
@@ -311,18 +353,26 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 min_data_signal_count=settings.min_data_signal_count,
             ):
                 source_stats.rejected_data_role_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_data_role_count += 1
                 continue
             job.role_relevance_label = "pass"
             job.role_relevance_reason_codes = _role_relevance_reason_codes(job)
             outcome.after_stage_1b_count += 1
             source_stats.after_stage_1b_count += 1
+            if query_stats is not None:
+                query_stats.after_stage_1b_count += 1
             if _fails_policy_gate(job, policy_reject_regexes):
                 source_stats.rejected_policy_gate_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_policy_gate_count += 1
                 continue
             job.policy_gate_status = "pass"
             job.policy_gate_reason_codes = []
             outcome.after_stage_1c_count += 1
             source_stats.after_stage_1c_count += 1
+            if query_stats is not None:
+                query_stats.after_stage_1c_count += 1
 
             eligibility_status, eligibility_confidence, work_auth_hits, sponsor_hits = _evaluate_eligibility(job)
             job.eligibility_status = eligibility_status
@@ -332,6 +382,8 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
 
             if job.eligibility_status == "reject" or job.eligibility_confidence < settings.min_eligibility_confidence:
                 source_stats.rejected_eligibility_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_eligibility_count += 1
                 continue
 
             relevance_score, relevance_hits = _score_relevance(job)
@@ -363,6 +415,8 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
 
             if job.relevance_score < settings.min_relevance_score:
                 source_stats.rejected_relevance_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_relevance_count += 1
                 continue
 
             if early_source_quality_status:
@@ -380,6 +434,8 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 pass_notify = True
             if not source_quality_notify_allowed:
                 source_stats.rejected_source_quality_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_source_quality_count += 1
                 pass_notify = False
 
             outcome.passed_filter_count += 1
@@ -388,24 +444,34 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                     refresh_meta = store.update_existing_job(job, existing_dedupe_key)
                     if bool(refresh_meta.get("source_quality_recovered")):
                         source_stats.recovered_source_quality_count += 1
+                        if query_stats is not None:
+                            query_stats.recovered_source_quality_count += 1
                 outcome.duplicate_count += 1
                 source_stats.duplicate_count += 1
+                if query_stats is not None:
+                    query_stats.duplicate_count += 1
                 if notifier is not None and pass_notify and not store.was_notified(existing_dedupe_key):
                     sent = notifier.send(job)
                     store.mark_notified(existing_dedupe_key, sent)
                     if sent:
                         outcome.notified_count += 1
                         source_stats.notified_count += 1
+                        if query_stats is not None:
+                            query_stats.notified_count += 1
                 continue
 
             persisted = store.insert_job(job, dedupe_key)
             if not persisted:
                 outcome.duplicate_count += 1
                 source_stats.duplicate_count += 1
+                if query_stats is not None:
+                    query_stats.duplicate_count += 1
                 continue
 
             outcome.persisted_count += 1
             source_stats.persisted_count += 1
+            if query_stats is not None:
+                query_stats.persisted_count += 1
 
             if notifier is not None and pass_notify:
                 sent = notifier.send(job)
@@ -413,6 +479,8 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 if sent:
                     outcome.notified_count += 1
                     source_stats.notified_count += 1
+                    if query_stats is not None:
+                        query_stats.notified_count += 1
 
     store.log_run(outcome)
     LOG.info("pipeline_completed %s", json.dumps(asdict(outcome), sort_keys=True))
@@ -489,6 +557,35 @@ def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
     )
 
 
+def _query_key_from_raw(raw: dict) -> str:
+    return _normalize_query_key(str(raw.get("source_detail", "")))
+
+
+def _query_key_for_job(job: JobRecord) -> str:
+    return _normalize_query_key(job.source_detail)
+
+
+def _normalize_query_key(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if "linkedin.com/jobs/search" in lowered:
+        return text
+    if "joinhandshake.com/job-search/" in lowered:
+        return text
+    return ""
+
+
+def _query_stats_bucket(outcome: PipelineOutcome, source_name: str, query_key: str) -> SourceRunStats:
+    source_queries = outcome.source_query_stats.setdefault(source_name, {})
+    stats = source_queries.get(query_key)
+    if stats is None:
+        stats = SourceRunStats()
+        source_queries[query_key] = stats
+    return stats
+
+
 def _clean_text(value: str) -> str:
     text = html.unescape(value)
     text = re.sub(r"<[^>]+>", " ", text)
@@ -508,6 +605,12 @@ def _job_blob(job: JobRecord) -> str:
 
 
 def _evaluate_source_quality(job: JobRecord) -> tuple[str, list[str], bool]:
+    if job.source == "linkedin":
+        accepting_applications = job.source_metadata.get("accepting_applications", True)
+        if accepting_applications is False:
+            return "closed", ["linkedin_closed"], False
+        return "ok", [], True
+
     if job.source != "handshake":
         return "ok", [], True
 
@@ -613,8 +716,6 @@ def _passes_data_role_gate(
 
 
 def _fails_policy_gate(job: JobRecord, policy_reject_regexes: list[re.Pattern[str]]) -> bool:
-    if not policy_reject_regexes:
-        return False
     blob = " ".join(
         [
             job.title or "",
@@ -624,6 +725,9 @@ def _fails_policy_gate(job: JobRecord, policy_reject_regexes: list[re.Pattern[st
             job.source_detail or "",
         ]
     )
+    for pattern in BUILTIN_POLICY_REJECT_REGEXES.values():
+        if pattern.search(blob):
+            return True
     for pattern in policy_reject_regexes:
         if pattern.search(blob):
             return True
@@ -706,7 +810,7 @@ def _is_internship(job: JobRecord) -> bool:
 
 
 def _is_us_scope(job: JobRecord) -> bool:
-    location = job.location.lower()
+    location = _normalize_scope_text(job.location)
     if not location:
         return True
     if "remote" in location:
@@ -714,6 +818,12 @@ def _is_us_scope(job: JobRecord) -> bool:
     if US_CITY_STATE_RE.search(location):
         return True
     return any(hint in location for hint in US_LOCATION_HINTS)
+
+
+def _normalize_scope_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return ascii_text.lower()
 
 
 def _evaluate_eligibility(job: JobRecord) -> tuple[str, float, list[str], list[str]]:

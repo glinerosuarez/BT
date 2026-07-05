@@ -97,6 +97,7 @@ NEGATIVE_WORK_AUTH_PATTERNS = {
     "authorized_us_required": r"\bauthorized to work in the (us|u\.s\.|united states)\b",
     "requires_us_work_auth": r"\brequires?\s+(current\s+)?(us|u\.s\.|united states)\s+work authorization\b",
     "must_have_us_work_auth": r"\bmust have\s+(current\s+)?(us|u\.s\.|united states)\s+work authorization\b",
+    "us_work_authorized_only": r"\b(indefinite\s+)?(us|u\.s\.|united states)\s+work authorized individuals only\b",
     "citizen_or_pr_required": r"\b(us citizens?\s+only|must be a us citizen|must be (a )?permanent resident)\b",
 }
 

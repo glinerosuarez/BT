@@ -40,6 +40,42 @@ San Francisco, CA (Presencial)
 Publicado hace 18 horas
 """
 
+TIKTOK_CARD_TEXT = """AI/ML Software Engineer Intern (Data Platform) - 2026 Summer (BS/MS) (Empleo verificado)
+AI/ML Software Engineer Intern (Data Platform) - 2026 Summer (BS/MS)
+
+TikTok 2
+
+San José, CA
+
+Prestación de servicios médicos
+
+1 contacto trabaja aquí
+
+Visto
+
+ ·
+
+Adelántate a solicitar el empleo
+
+ ·
+
+Publicado hace 14 horas
+hace 14 horas
+"""
+
+THREEM_CARD_TEXT = """Data Science Intern
+3M
+Remote
+Posted 6 hours ago
+"""
+
+NOISY_CARD_TEXT = """Skip to main content
+AI Engineer Intern
+Athena
+United States
+Posted 3 hours ago
+"""
+
 DETAIL_TEXT = """Machine Learning Scientist Intern
 LinkedIn
 Mountain View, CA
@@ -146,6 +182,17 @@ About the job
 We are looking for a machine learning intern to build production models.
 """
 
+CLOSED_DETAIL_TEXT = """Innovaccer
+
+Data Ops-Intern
+
+United States · Posted 8 hours ago
+No longer accepting applications
+
+About the job
+We are looking for a Data Ops - Intern to help customers explore healthcare data.
+"""
+
 
 class LinkedInSourceTests(unittest.TestCase):
     def test_partition_linkedin_urls_separates_search_and_job_urls(self) -> None:
@@ -171,6 +218,13 @@ class LinkedInSourceTests(unittest.TestCase):
         )
         self.assertEqual(canonical_from_search, "https://www.linkedin.com/jobs/view/1234567890")
 
+    def test_parse_card_text_prefers_live_locator_job_url_when_supplied(self) -> None:
+        parsed = _parse_card_text(
+            CARD_TEXT,
+            fallback_url="https://www.linkedin.com/jobs/view/9999999999/?trackingId=stale",
+        )
+        self.assertEqual(parsed["url"], "https://www.linkedin.com/jobs/view/9999999999")
+
     def test_parse_card_text(self) -> None:
         parsed = _parse_card_text(
             CARD_TEXT,
@@ -180,6 +234,7 @@ class LinkedInSourceTests(unittest.TestCase):
         self.assertEqual(parsed["company"], "LinkedIn")
         self.assertEqual(parsed["location"], "Mountain View, CA")
         self.assertTrue(parsed["posted_at"])
+        self.assertTrue(parsed["is_reposted"])
         self.assertEqual(parsed["url"], "https://www.linkedin.com/jobs/view/1234567890")
 
     def test_parse_card_text_company_first_layout(self) -> None:
@@ -210,11 +265,49 @@ class LinkedInSourceTests(unittest.TestCase):
         self.assertEqual(parsed["company"], "Mercor")
         self.assertEqual(parsed["location"], "San Francisco, CA (Presencial)")
 
+    def test_parse_card_text_ignores_leading_navigation_noise(self) -> None:
+        parsed = _parse_card_text(
+            NOISY_CARD_TEXT,
+            fallback_url="https://www.linkedin.com/jobs/view/4435408803",
+        )
+        self.assertEqual(parsed["title"], "AI Engineer Intern")
+        self.assertEqual(parsed["company"], "Athena")
+        self.assertEqual(parsed["location"], "United States")
+
+    def test_build_row_strips_spurious_trailing_company_count(self) -> None:
+        card = _parse_card_text(
+            TIKTOK_CARD_TEXT,
+            fallback_url="https://www.linkedin.com/jobs/view/4405987988",
+        )
+        row = _build_row(
+            card=card,
+            detail_text="",
+            search_url="https://www.linkedin.com/jobs/search/?keywords=data+engineer+intern",
+            detail_fetch_attempted=False,
+        )
+        assert row is not None
+        self.assertEqual(row["company"], "TikTok")
+
+    def test_build_row_keeps_legitimate_numeric_company_name(self) -> None:
+        card = _parse_card_text(
+            THREEM_CARD_TEXT,
+            fallback_url="https://www.linkedin.com/jobs/view/4400000000",
+        )
+        row = _build_row(
+            card=card,
+            detail_text="",
+            search_url="https://www.linkedin.com/jobs/search/?keywords=data+science+intern",
+            detail_fetch_attempted=False,
+        )
+        assert row is not None
+        self.assertEqual(row["company"], "3M")
+
     def test_parse_detail_text(self) -> None:
         parsed = _parse_detail_text(DETAIL_TEXT)
         self.assertEqual(parsed["title"], "Machine Learning Scientist Intern")
         self.assertEqual(parsed["company"], "LinkedIn")
         self.assertEqual(parsed["location"], "Mountain View, CA")
+        self.assertTrue(parsed["is_reposted"])
         self.assertIn("production models", parsed["description"])
 
     def test_parse_detail_text_strips_linkedin_page_chrome(self) -> None:
@@ -253,14 +346,34 @@ class LinkedInSourceTests(unittest.TestCase):
         self.assertEqual(parsed["title"], "Machine Learning Engineer, Marketplace")
         self.assertEqual(parsed["location"], "San Francisco, CA")
 
+    def test_parse_detail_text_detects_closed_job(self) -> None:
+        parsed = _parse_detail_text(CLOSED_DETAIL_TEXT)
+        self.assertEqual(parsed["company"], "Innovaccer")
+        self.assertEqual(parsed["title"], "Data Ops-Intern")
+        self.assertEqual(parsed["location"], "United States")
+        self.assertFalse(parsed["accepting_applications"])
+
     def test_build_row_prefers_detail_fields(self) -> None:
         card = _parse_card_text(
-            CARD_TEXT,
+            """Machine Learning Scientist Intern
+LinkedIn
+Mountain View, CA
+Posted 2 days ago
+""",
             fallback_url="https://www.linkedin.com/jobs/view/1234567890/?trackingId=abc",
         )
         row = _build_row(
             card=card,
-            detail_text=DETAIL_TEXT,
+            detail_text="""Machine Learning Scientist Intern
+LinkedIn
+Mountain View, CA
+Posted 2 days ago
+About the job
+We are looking for a machine learning intern to build production models, evaluate experiments, and work with Python and SQL.
+This role supports applied ML systems and data pipelines in production.
+Seniority level
+Internship
+""",
             search_url="https://www.linkedin.com/jobs/search/?keywords=machine+learning",
             detail_fetch_attempted=True,
         )
@@ -273,7 +386,11 @@ class LinkedInSourceTests(unittest.TestCase):
 
     def test_build_row_falls_back_to_card_fields_when_detail_header_is_noise(self) -> None:
         card = _parse_card_text(
-            CARD_TEXT,
+            """Machine Learning Scientist Intern
+LinkedIn
+Mountain View, CA
+Posted 3 hours ago
+""",
             fallback_url="https://www.linkedin.com/jobs/view/1234567890/?trackingId=abc",
         )
         row = _build_row(
@@ -285,6 +402,54 @@ class LinkedInSourceTests(unittest.TestCase):
         assert row is not None
         self.assertEqual(row["title"], "Machine Learning Scientist Intern")
         self.assertEqual(row["company"], "LinkedIn")
+
+    def test_build_row_marks_closed_linkedin_job(self) -> None:
+        card = _parse_card_text(
+            """Data Ops-Intern
+Innovaccer
+United States
+Posted 8 hours ago
+""",
+            fallback_url="https://www.linkedin.com/jobs/view/1234567890/?trackingId=abc",
+        )
+        row = _build_row(
+            card=card,
+            detail_text=CLOSED_DETAIL_TEXT,
+            search_url="https://www.linkedin.com/jobs/search/?keywords=data",
+            detail_fetch_attempted=True,
+        )
+        assert row is not None
+        self.assertFalse(bool(row["source_metadata"]["accepting_applications"]))
+
+    def test_build_row_skips_reposted_card(self) -> None:
+        card = _parse_card_text(
+            CARD_TEXT,
+            fallback_url="https://www.linkedin.com/jobs/view/1234567890/?trackingId=abc",
+        )
+        row = _build_row(
+            card=card,
+            detail_text="",
+            search_url="https://www.linkedin.com/jobs/search/?keywords=machine+learning",
+            detail_fetch_attempted=False,
+        )
+        self.assertIsNone(row)
+
+    def test_build_row_skips_reposted_detail(self) -> None:
+        card = _parse_card_text(
+            """Machine Learning Scientist Intern
+LinkedIn
+Mountain View, CA
+Posted 3 hours ago
+""",
+            fallback_url="https://www.linkedin.com/jobs/view/1234567890/?trackingId=abc",
+        )
+        row = _build_row(
+            card=card,
+            detail_text=DETAIL_TEXT,
+            search_url="https://www.linkedin.com/jobs/search/?keywords=machine+learning",
+            detail_fetch_attempted=True,
+        )
+        self.assertIsNone(row)
 
     def test_relative_age_to_iso(self) -> None:
         self.assertIsNotNone(_relative_age_to_iso("Reposted 2 days ago"))
