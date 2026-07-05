@@ -50,8 +50,23 @@ class BrowserManager:
             str(profile_dir),
             channel="chrome",
             headless=self.settings.apply_headless,
+            args=[
+                "--lang=en-US",
+                "--disable-translate",
+                "--disable-features=Translate,TranslateUI",
+                "--translate-script-url=",
+            ],
+            locale="en-US",
+            timezone_id="America/Bogota",
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
         )
         context.set_default_timeout(self.settings.apply_page_timeout_seconds * 1000)
+        context.add_init_script(
+            """
+            Object.defineProperty(navigator, 'language', { get: () => 'en-US' });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            """
+        )
         session = PlaywrightBrowserSession(context)
         original_close = session.close
 

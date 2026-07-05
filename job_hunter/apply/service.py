@@ -96,7 +96,7 @@ class ApplicationService:
                 output_dir=str(output_dir),
             )
             result = adapter.submit(page=page, resolver=resolver, context=context)
-            self._persist_result(run_id=run_id, result=result, output_dir=output_dir)
+            self._persist_result(run_id=run_id, result=result, output_dir=output_dir, page=page)
             self._maybe_notify(job=job, run_id=run_id, result=result)
             return self._run_record(run_id)
         finally:
@@ -244,7 +244,7 @@ class ApplicationService:
             return "greenhouse", self.greenhouse_adapter, target_url
         raise RuntimeError(f"Unsupported apply target for job source={job['source']} url={target_url}")
 
-    def _persist_result(self, *, run_id: int, result: SubmitResult, output_dir: Path) -> None:
+    def _persist_result(self, *, run_id: int, result: SubmitResult, output_dir: Path, page) -> None:
         self.store.update_application_run(
             run_id,
             current_url=result.current_url,
@@ -275,6 +275,10 @@ class ApplicationService:
                 json.dumps(result.blocker.to_dict(), indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
+            try:
+                (output_dir / "page.html").write_text(page.content(), encoding="utf-8")
+            except Exception:
+                pass
         if result.confirmation_payload:
             (output_dir / "confirmation.json").write_text(
                 json.dumps(result.confirmation_payload, indent=2, sort_keys=True) + "\n",

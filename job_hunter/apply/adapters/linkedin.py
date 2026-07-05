@@ -4,6 +4,7 @@ from pathlib import Path
 
 from job_hunter.apply.resolver import AnswerResolver, ResolutionError
 from job_hunter.apply.types import Blocker, StepSnapshot, SubmitResult
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 _EASY_APPLY_LABELS = (
     "Easy Apply",
@@ -16,10 +17,29 @@ _NEXT_LABELS = (
     "Continuar",
     "Review",
     "Revisar",
+    "Save",
+    "Guardar",
 )
 _SUBMIT_LABELS = (
     "Submit application",
     "Enviar solicitud",
+)
+_DELETE_EDUCATION_LABELS = (
+    "Delete education",
+    "Eliminar educación",
+)
+_EDIT_EDUCATION_LABELS = (
+    "Edit, education",
+    "Editar, educación",
+)
+_CONFIRM_DELETE_LABELS = (
+    "Delete",
+    "Eliminar",
+)
+_UPLOAD_RESUME_LABELS = (
+    "Upload resume",
+    "Subir currículum",
+    "Cargar currículum",
 )
 _DISMISS_LABELS = (
     "Dismiss",
@@ -29,6 +49,13 @@ _TOP_CHOICE_MARKERS = (
     "mark this job as a top choice",
     "top choice",
 )
+_EMPTY_SELECT_PLACEHOLDERS = {
+    "",
+    "month",
+    "year",
+    "mes",
+    "año",
+}
 _KNOWN_RADIO_QUESTIONS: tuple[tuple[str, str], ...] = (
     ("require sponsorship", "work_authorization.requires_future_sponsorship"),
     ("employment visa status", "work_authorization.requires_future_sponsorship"),
@@ -70,13 +97,30 @@ class LinkedInEasyApplyAdapter:
 
         self._open_easy_apply(page)
         steps: list[StepSnapshot] = []
-        for _ in range(8):
+        for _ in range(16):
             if self._has_login_wall(page):
                 return self._blocked("login_wall", page, steps)
             if self._has_captcha(page):
                 return self._blocked("captcha", page, steps)
             if self._has_unknown_submit_state(page):
                 return self._blocked("ambiguous_submit_state", page, steps)
+            if self._handle_delete_confirmation(page, steps):
+                continue
+            if self._handle_education_removal_flow(page, steps):
+                continue
+            if self._handle_review_after_education_fix(page, steps):
+                continue
+            validation_blocker = self._detect_profile_validation_blocker(page)
+            if validation_blocker is not None:
+                return self._blocked(
+                    validation_blocker.reason,
+                    page,
+                    steps,
+                    validation_blocker.field_name,
+                    validation_blocker.field_type,
+                    validation_blocker.question_text,
+                    validation_blocker.details,
+                )
 
             if self._handle_optional_top_choice(page, steps):
                 action = self._advance(page)
@@ -137,12 +181,17 @@ class LinkedInEasyApplyAdapter:
                 if isinstance(radio_blocker, SubmitResult):
                     return radio_blocker
 
+            self._handle_education_editor_fields(page, resolver, steps)
+
             for field in self._extract_fields(page):
                 question_text = str(field.get("question_text") or field.get("label") or field.get("field_name") or "").strip()
                 field_name = str(field.get("field_name") or "")
                 field_type = str(field.get("field_type") or "text")
                 required = bool(field.get("required", True))
-                current_value = str(field.get("current_value") or "").strip()
+                current_value = self._normalized_current_value(
+                    field_type=field_type,
+                    current_value=str(field.get("current_value") or ""),
+                )
                 if field_type == "file":
                     upload_path = context.cover_letter_pdf_path if "cover" in question_text.lower() else context.resume_pdf_path
                     self._set_field(page, field, upload_path)
@@ -252,6 +301,9 @@ class LinkedInEasyApplyAdapter:
                   if (parentLabel) label = parentLabel.textContent || '';
                 }
                 if (!label) {
+                  label = el.getAttribute('aria-label') || '';
+                }
+                if (!label) {
                   const container = el.closest('div');
                   if (container) {
                     const text = Array.from(container.querySelectorAll('label, legend, div, span, p'))
@@ -349,20 +401,36 @@ class LinkedInEasyApplyAdapter:
         if callable(submitter):
             submitter()
             return "submit"
-        dialog = page.locator("dialog[open]").first
-        for label in _SUBMIT_LABELS:
-            button = dialog.get_by_role("button", name=label)
-            if button.count() > 0:
-                button.first.click()
+        for _ in range(2):
+            dialog = page.locator("dialog[open]").first
+            for label in _SUBMIT_LABELS:
+                button = dialog.get_by_role("button", name=label)
+                if button.count() > 0:
+                    self._click_dialog_button(page, button.first, label)
+                    page.wait_for_timeout(3000)
+                    return "submit"
+            for label in _NEXT_LABELS:
+                button = dialog.get_by_role("button", name=label)
+                if button.count() > 0:
+                    self._click_dialog_button(page, button.first, label)
+                    page.wait_for_timeout(3000)
+                    return "next"
+            if self._dialog_has_loader(page):
                 page.wait_for_timeout(3000)
-                return "submit"
-        for label in _NEXT_LABELS:
-            button = dialog.get_by_role("button", name=label)
-            if button.count() > 0:
-                button.first.click()
-                page.wait_for_timeout(3000)
-                return "next"
+                continue
         return ""
+
+    def _dialog_has_loader(self, page) -> bool:
+        return bool(
+            page.evaluate(
+                """
+                () => {
+                  const dialog = document.querySelector('dialog[open]') || document;
+                  return Boolean(dialog.querySelector('[data-testid="loader"]'));
+                }
+                """
+            )
+        )
 
     def _extract_confirmation(self, page) -> dict[str, object]:
         extractor = getattr(page, "extract_confirmation", None)
@@ -397,16 +465,27 @@ class LinkedInEasyApplyAdapter:
         if not on_resume_page:
             return False
 
+        dialog = page.locator("dialog[open]").first
         resume_name = Path(resume_pdf_path).name
-        if resume_name.lower() in lowered:
+        upload_button = None
+        for label in _UPLOAD_RESUME_LABELS:
+            candidate = dialog.get_by_role("button", name=label)
+            if candidate.count() > 0:
+                upload_button = candidate.first
+                break
+        if upload_button is not None:
+            with page.expect_file_chooser() as chooser_info:
+                self._click_dialog_button(page, upload_button, _UPLOAD_RESUME_LABELS[0], fallback_labels=_UPLOAD_RESUME_LABELS)
+            chooser_info.value.set_files(resume_pdf_path)
+            page.wait_for_timeout(4000)
             self._select_document_option(page, resume_name)
             steps.append(
                 StepSnapshot(
-                    step_key="resume:select_uploaded",
-                    step_label="Select tailored resume",
+                    step_key="resume:upload",
+                    step_label="Upload tailored resume",
                     status="completed",
                     field_name="resume",
-                    field_type="radio",
+                    field_type="file",
                     question_text="Resume*",
                     answer_source="artifact",
                     answer_value=resume_pdf_path,
@@ -414,22 +493,16 @@ class LinkedInEasyApplyAdapter:
             )
             return True
 
-        dialog = page.locator("dialog[open]").first
-        upload_button = dialog.get_by_role("button", name="Upload resume")
-        if upload_button.count() == 0:
+        if resume_name.lower() not in lowered:
             return False
-        with page.expect_file_chooser() as chooser_info:
-            upload_button.first.click()
-        chooser_info.value.set_files(resume_pdf_path)
-        page.wait_for_timeout(4000)
         self._select_document_option(page, resume_name)
         steps.append(
             StepSnapshot(
-                step_key="resume:upload",
-                step_label="Upload tailored resume",
+                step_key="resume:select_uploaded",
+                step_label="Select tailored resume",
                 status="completed",
                 field_name="resume",
-                field_type="file",
+                field_type="radio",
                 question_text="Resume*",
                 answer_source="artifact",
                 answer_value=resume_pdf_path,
@@ -462,6 +535,465 @@ class LinkedInEasyApplyAdapter:
         if "phone country code" in lowered:
             return resolver.resolve(question_text="country", field_name="identity.country", field_type=field_type)
         return resolver.resolve(question_text=question_text, field_name=field_name, field_type=field_type)
+
+    def _normalized_current_value(self, *, field_type: str, current_value: str) -> str:
+        normalized = current_value.strip()
+        if field_type in {"select", "select-one"} and normalized.lower() in _EMPTY_SELECT_PLACEHOLDERS:
+            return ""
+        return normalized
+
+    def _handle_delete_education_validation(self, page, steps: list[StepSnapshot]) -> bool:
+        payload = page.evaluate(
+            """
+            () => {
+              const dialogs = Array.from(document.querySelectorAll('dialog[open]'));
+              const dialog = dialogs[dialogs.length - 1] || document;
+              const text = (dialog.innerText || '').toLowerCase();
+              if (!text.includes('edit education') && !text.includes('editar educación')) {
+                return null;
+              }
+              const buttons = Array.from(dialog.querySelectorAll('[data-view-name="remove-section-unify"], button, [role="button"]'));
+              const match = buttons.find((button) => {
+                const text = (button.innerText || button.getAttribute('aria-label') || '').trim();
+                return text === 'Delete education' || text === 'Eliminar educación';
+              });
+              if (!match) {
+                return null;
+              }
+              return {
+                label: (match.innerText || match.getAttribute('aria-label') || '').trim(),
+              };
+            }
+            """
+        )
+        if not payload:
+            return False
+        dialogs = page.locator("dialog[open]")
+        dialog = dialogs.nth(dialogs.count() - 1)
+        delete_button = None
+        candidate = dialog.locator("[data-view-name='remove-section-unify']")
+        if candidate.count() > 0:
+            delete_button = candidate.last
+        for label in _DELETE_EDUCATION_LABELS:
+            if delete_button is not None:
+                break
+            candidate = dialog.get_by_role("button", name=label)
+            if candidate.count() > 0:
+                delete_button = candidate.last
+                break
+        if delete_button is None:
+            for label in _DELETE_EDUCATION_LABELS:
+                candidate = dialog.locator("button, [role='button']").filter(has_text=label)
+                if candidate.count() > 0:
+                    delete_button = candidate.last
+                    break
+        if delete_button is None:
+            return False
+        for _ in range(2):
+            try:
+                delete_button.scroll_into_view_if_needed(timeout=1000)
+            except Exception:
+                pass
+            self._click_dialog_button(page, delete_button, _DELETE_EDUCATION_LABELS[0], fallback_labels=_DELETE_EDUCATION_LABELS)
+            page.wait_for_timeout(1500)
+            if self._is_visible(page, "[data-view-name='confirm-remove-unify']"):
+                break
+            clicked = page.evaluate(
+                """
+                () => {
+                  const buttons = Array.from(document.querySelectorAll('[data-view-name="remove-section-unify"]'));
+                  const button = buttons[buttons.length - 1];
+                  if (!button) return false;
+                  button.scrollIntoView({ block: 'center' });
+                  button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                  button.click();
+                  return true;
+                }
+                """
+            )
+            if clicked:
+                page.wait_for_timeout(1500)
+        if not self._is_visible(page, "[data-view-name='confirm-remove-unify']"):
+            return False
+        steps.append(
+            StepSnapshot(
+                step_key="linkedin:delete_education",
+                step_label="Delete invalid education entry",
+                status="completed",
+                field_name="education",
+                field_type="profile_fixup",
+                question_text="Education",
+                answer_source="user_approved_fixup",
+                answer_value="Delete education",
+                payload=dict(payload),
+            )
+        )
+        return True
+
+    def _handle_education_removal_flow(self, page, steps: list[StepSnapshot]) -> bool:
+        if self._handle_confirm_education_deletion(page, steps):
+            return True
+        if self._handle_delete_education_validation(page, steps):
+            return True
+        return self._handle_open_education_editor(page, steps)
+
+    def _handle_open_education_editor(self, page, steps: list[StepSnapshot]) -> bool:
+        payload = page.evaluate(
+            """
+            () => {
+              const dialog = document.querySelector('dialog[open]') || document;
+              const text = (dialog.innerText || '').toLowerCase();
+              if (text.includes('edit education') || text.includes('editar educación')) {
+                return null;
+              }
+              if (!text.includes('education') && !text.includes('educación')) {
+                return null;
+              }
+              if (!text.includes('this field is required') && !text.includes('este campo es obligatorio')) {
+                return null;
+              }
+              const buttons = Array.from(dialog.querySelectorAll('button[aria-label], [role="button"][aria-label]'))
+                .map((button, index) => ({
+                  index,
+                  label: (button.getAttribute('aria-label') || '').trim(),
+                }))
+                .filter((button) => ['Edit, education', 'Editar, educación'].includes(button.label));
+              if (!buttons.length) {
+                return null;
+              }
+              return {
+                count: buttons.length,
+                label: buttons[buttons.length - 1].label,
+              };
+            }
+            """
+        )
+        if not payload:
+            return False
+        dialog = page.locator("dialog[open]").first
+        edit_button = None
+        for label in _EDIT_EDUCATION_LABELS:
+            candidate = dialog.get_by_role("button", name=label)
+            if candidate.count() > 0:
+                edit_button = candidate.last
+                break
+        if edit_button is None:
+            return False
+        self._click_dialog_button(page, edit_button, _EDIT_EDUCATION_LABELS[0], fallback_labels=_EDIT_EDUCATION_LABELS)
+        page.wait_for_timeout(1000)
+        steps.append(
+            StepSnapshot(
+                step_key="linkedin:edit_education",
+                step_label="Open education editor",
+                status="completed",
+                field_name="education",
+                field_type="profile_fixup",
+                question_text="Education",
+                answer_source="user_approved_fixup",
+                answer_value="Edit education",
+                payload=dict(payload),
+            )
+        )
+        return True
+
+    def _handle_review_after_education_fix(self, page, steps: list[StepSnapshot]) -> bool:
+        if self._dialog_has_validation_error(page) or self._dialog_has_remove_education_button(page):
+            return False
+        payload = page.evaluate(
+            """
+            () => {
+              const dialog = document.querySelector('dialog[open]') || document;
+              const reviewButton = dialog.querySelector('[data-view-name="review-unify"]');
+              if (!reviewButton) {
+                return null;
+              }
+              const text = (reviewButton.innerText || reviewButton.getAttribute('aria-label') || '').trim();
+              if (text !== 'Review' && text !== 'Revisar') {
+                return null;
+              }
+              return { label: text };
+            }
+            """
+        )
+        if not payload:
+            return False
+        dialog = page.locator("dialog[open]").first
+        button = dialog.locator("[data-view-name='review-unify']").first
+        self._click_dialog_button(page, button, "Review", fallback_labels=("Review", "Revisar"))
+        page.wait_for_timeout(2000)
+        steps.append(
+            StepSnapshot(
+                step_key="linkedin:review_after_education_fix",
+                step_label="Advance to review after education fix",
+                status="completed",
+                field_name="education",
+                field_type="profile_fixup",
+                question_text="Education review",
+                answer_source="user_approved_fixup",
+                answer_value=str(payload.get("label") or "Review"),
+                payload=dict(payload),
+            )
+        )
+        return True
+
+    def _dialog_has_validation_error(self, page) -> bool:
+        return bool(
+            page.evaluate(
+                """
+                () => {
+                  const dialog = document.querySelector('dialog[open]') || document;
+                  const text = (dialog.innerText || '').toLowerCase();
+                  return text.includes('this field is required') || text.includes('este campo es obligatorio');
+                }
+                """
+            )
+        )
+
+    def _dialog_has_remove_education_button(self, page) -> bool:
+        return bool(
+            page.evaluate(
+                """
+                () => {
+                  const dialogs = Array.from(document.querySelectorAll('dialog[open]'));
+                  const dialog = dialogs[dialogs.length - 1] || document;
+                  const text = (dialog.innerText || '').toLowerCase();
+                  if (!text.includes('edit education') && !text.includes('editar educación')) {
+                    return false;
+                  }
+                  return Boolean(dialog.querySelector('[data-view-name="remove-section-unify"]'));
+                }
+                """
+            )
+        )
+
+    def _handle_education_editor_fields(self, page, resolver: AnswerResolver, steps: list[StepSnapshot]) -> None:
+        dialog_text = self._dialog_text(page).lower()
+        if "edit education" not in dialog_text and "editar educación" not in dialog_text:
+            return
+        for field in self._extract_fields(page):
+            question_text = str(field.get("question_text") or field.get("label") or field.get("field_name") or "").strip()
+            if question_text.lower() != "city":
+                continue
+            current_value = self._normalized_current_value(
+                field_type=str(field.get("field_type") or "text"),
+                current_value=str(field.get("current_value") or ""),
+            )
+            if current_value:
+                continue
+            resolution = resolver.resolve(question_text="city", field_name="identity.city", field_type="text")
+            self._set_field(page, field, resolution.answer)
+            steps.append(
+                StepSnapshot(
+                    step_key="education:city",
+                    step_label="Fill education city",
+                    status="completed",
+                    field_name=str(field.get("field_name") or ""),
+                    field_type=str(field.get("field_type") or "text"),
+                    question_text=question_text,
+                    answer_source=resolution.source,
+                    answer_value=resolution.answer,
+                )
+            )
+
+    def _dialog_contains_any(self, page, markers: tuple[str, ...]) -> bool:
+        lowered_markers = [marker.lower() for marker in markers]
+        return bool(
+            page.evaluate(
+                """
+                ({ markers }) => {
+                  const dialog = document.querySelector('dialog[open]');
+                  if (!dialog) return false;
+                  const text = (dialog.innerText || '').toLowerCase();
+                  return markers.some((marker) => text.includes(marker));
+                }
+                """,
+                {"markers": lowered_markers},
+            )
+        )
+
+    def _is_visible(self, page, selector: str) -> bool:
+        try:
+            return page.locator(selector).last.is_visible(timeout=1000)
+        except Exception:
+            return False
+
+    def _handle_delete_confirmation(self, page, steps: list[StepSnapshot]) -> bool:
+        return self._handle_confirm_education_deletion(page, steps)
+
+    def _handle_confirm_education_deletion(self, page, steps: list[StepSnapshot]) -> bool:
+        if not self._is_visible(page, "[data-view-name='confirm-remove-unify']"):
+            return False
+        confirm_button = page.locator("[data-view-name='confirm-remove-unify']").last
+        try:
+            confirm_button.scroll_into_view_if_needed(timeout=1000)
+        except Exception:
+            pass
+        self._click_dialog_button(
+            page,
+            confirm_button,
+            _CONFIRM_DELETE_LABELS[0],
+            fallback_labels=_CONFIRM_DELETE_LABELS,
+        )
+        page.wait_for_timeout(2000)
+        if self._is_visible(page, "[data-view-name='confirm-remove-unify']"):
+            clicked = page.evaluate(
+                """
+                () => {
+                  const buttons = Array.from(document.querySelectorAll('[data-view-name="confirm-remove-unify"]'));
+                  const button = buttons[buttons.length - 1];
+                  if (!button) return false;
+                  button.scrollIntoView({ block: 'center' });
+                  button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                  button.click();
+                  return true;
+                }
+                """
+            )
+            if clicked:
+                page.wait_for_timeout(2000)
+        if self._is_visible(page, "[data-view-name='confirm-remove-unify']"):
+            return False
+        steps.append(
+            StepSnapshot(
+                step_key="linkedin:confirm_delete_education",
+                step_label="Confirm education deletion",
+                status="completed",
+                field_name="education",
+                field_type="profile_fixup",
+                question_text="Delete education confirmation",
+                answer_source="user_approved_fixup",
+                answer_value="Delete",
+            )
+        )
+        return True
+
+    def _handle_delete_confirmation_legacy(self, page, steps: list[StepSnapshot]) -> bool:
+        payload = page.evaluate(
+            """
+            () => {
+              const dialogs = Array.from(document.querySelectorAll('dialog[open]'));
+              const dialog = dialogs[dialogs.length - 1] || document;
+              const text = (dialog.innerText || '').toLowerCase();
+              if (!text.includes('eliminar de tu solicitud') && !text.includes('remove from your application')) {
+                return null;
+              }
+              return { question: text };
+            }
+            """
+        )
+        if not payload:
+            return False
+        dialogs = page.locator("dialog[open]")
+        dialog = dialogs.nth(dialogs.count() - 1)
+        confirm_button = None
+        for label in _CONFIRM_DELETE_LABELS:
+            candidate = dialog.get_by_role("button", name=label)
+            if candidate.count() > 0:
+                confirm_button = candidate
+                break
+        if confirm_button is None:
+            for label in _CONFIRM_DELETE_LABELS:
+                candidate = dialog.locator("button, [role='button']").filter(has_text=label)
+                if candidate.count() > 0:
+                    confirm_button = candidate
+                    break
+        clicked = False
+        if confirm_button is not None:
+            try:
+                confirm_button.first.scroll_into_view_if_needed(timeout=1000)
+            except Exception:
+                pass
+            self._click_dialog_button(
+                page,
+                confirm_button.first,
+                _CONFIRM_DELETE_LABELS[0],
+                fallback_labels=_CONFIRM_DELETE_LABELS,
+                close_dialog_text=("eliminar de tu solicitud", "remove from your application"),
+            )
+            clicked = True
+        if not clicked or self._dialog_contains_any(page, ("eliminar de tu solicitud", "remove from your application")):
+            clicked = bool(
+                page.evaluate(
+                    """
+                    () => {
+                      const dialogs = Array.from(document.querySelectorAll('dialog[open]'));
+                      const dialog = dialogs[dialogs.length - 1] || document;
+                      const buttons = Array.from(dialog.querySelectorAll('button, [role="button"]'));
+                      for (const button of buttons) {
+                        const text = (button.innerText || button.getAttribute('aria-label') || '').trim();
+                        if (text !== 'Eliminar' && text !== 'Delete') continue;
+                        button.scrollIntoView({ block: 'center' });
+                        button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                        button.click();
+                        return true;
+                      }
+                      return false;
+                    }
+                    """
+                )
+            )
+            if not clicked:
+                return False
+        page.wait_for_timeout(2000)
+        if self._dialog_contains_any(page, ("eliminar de tu solicitud", "remove from your application")):
+            return False
+        steps.append(
+            StepSnapshot(
+                step_key="linkedin:confirm_delete_education",
+                step_label="Confirm education deletion",
+                status="completed",
+                field_name="education",
+                field_type="profile_fixup",
+                question_text="Delete education confirmation",
+                answer_source="user_approved_fixup",
+                answer_value="Delete",
+            )
+        )
+        return True
+
+    def _detect_profile_validation_blocker(self, page) -> Blocker | None:
+        payload = page.evaluate(
+            """
+            () => {
+              const dialog = document.querySelector('dialog[open]') || document;
+              const text = (dialog.innerText || '').toLowerCase();
+              if (!text.includes('this field is required') && !text.includes('este campo es obligatorio')) {
+                return null;
+              }
+              const selects = Array.from(dialog.querySelectorAll('select'));
+              const placeholders = selects
+                .map((el) => {
+                  const selected = el.selectedIndex >= 0 ? (el.options[el.selectedIndex]?.text || el.value || '') : '';
+                  return selected.trim();
+                })
+                .filter((value) => ['Month', 'Year', 'Mes', 'Año'].includes(value));
+              if (!placeholders.length) {
+                return null;
+              }
+              const heading = Array.from(dialog.querySelectorAll('h2, h3, p, span, div'))
+                .map((node) => (node.textContent || '').trim())
+                .find((value) => value === 'Education' || value === 'Dates attended' || value === 'Work experience');
+              return {
+                reason: 'linkedin_profile_validation_required',
+                field_name: '',
+                field_type: 'select',
+                question_text: heading || 'LinkedIn profile field',
+                details: {
+                  placeholders,
+                },
+              };
+            }
+            """
+        )
+        if not payload:
+            return None
+        return Blocker(
+            reason=str(payload.get("reason") or "linkedin_profile_validation_required"),
+            field_name=str(payload.get("field_name") or ""),
+            field_type=str(payload.get("field_type") or ""),
+            question_text=str(payload.get("question_text") or ""),
+            details=dict(payload.get("details") or {}),
+        )
 
     def _select_value(self, page, field: dict[str, object], value: str) -> None:
         selector = str(field.get("selector") or "")
@@ -553,7 +1085,8 @@ class LinkedInEasyApplyAdapter:
         clicked = page.evaluate(
             """
             ({ optionText }) => {
-              const dialog = document.querySelector('dialog[open]') || document;
+              const dialogs = Array.from(document.querySelectorAll('dialog[open]'));
+              const dialog = dialogs[dialogs.length - 1] || document;
               const loweredTarget = optionText.toLowerCase();
               const radioOptions = Array.from(dialog.querySelectorAll('[role="radio"]'));
               for (const option of radioOptions) {
@@ -582,6 +1115,106 @@ class LinkedInEasyApplyAdapter:
         if clicked:
             page.wait_for_timeout(500)
         return bool(clicked)
+
+    def _click_dialog_button(
+        self,
+        page,
+        locator,
+        label: str,
+        fallback_labels: tuple[str, ...] | None = None,
+        close_dialog_text: tuple[str, ...] | None = None,
+    ) -> None:
+        labels = fallback_labels or (label,)
+        close_markers = tuple(text.lower() for text in (close_dialog_text or ()))
+
+        def dialog_still_open() -> bool:
+            if not close_markers:
+                return False
+            return bool(
+                page.evaluate(
+                    """
+                    ({ closeMarkers }) => {
+                      const dialogs = Array.from(document.querySelectorAll('dialog[open]'));
+                      const dialog = dialogs[dialogs.length - 1];
+                      if (!dialog) return false;
+                      const text = (dialog.innerText || '').toLowerCase();
+                      return closeMarkers.some((marker) => text.includes(marker));
+                    }
+                    """,
+                    {"closeMarkers": list(close_markers)},
+                )
+            )
+
+        def dom_click() -> bool:
+            return bool(
+                page.evaluate(
+                    """
+                    ({ labels }) => {
+                      const dialogs = Array.from(document.querySelectorAll('dialog[open]'));
+                      const dialog = dialogs[dialogs.length - 1] || document;
+                      const loweredTargets = labels.map((label) => label.toLowerCase());
+                      const buttons = Array.from(dialog.querySelectorAll('button, [role="button"]'));
+                      for (const button of buttons) {
+                        const text = (button.innerText || button.getAttribute('aria-label') || '').trim().toLowerCase();
+                        if (!loweredTargets.includes(text)) continue;
+                        button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                        button.click();
+                        return true;
+                      }
+                      return false;
+                    }
+                    """,
+                    {"labels": list(labels)},
+                )
+            )
+
+        try:
+            locator.click(timeout=1000)
+        except Exception:
+            pass
+        else:
+            if not dialog_still_open():
+                return
+
+        try:
+            locator.click(timeout=1000, force=True)
+        except Exception:
+            pass
+        else:
+            if not dialog_still_open():
+                return
+
+        try:
+            locator.dispatch_event("click")
+        except Exception:
+            pass
+        else:
+            if not dialog_still_open():
+                return
+
+        try:
+            locator.evaluate(
+                """
+                (button) => {
+                  button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                  button.click();
+                }
+                """
+            )
+        except Exception:
+            pass
+        else:
+            if not dialog_still_open():
+                return
+
+        if dom_click() and not dialog_still_open():
+            return
+
+        try:
+            locator.click(timeout=1000, force=True)
+        except PlaywrightTimeoutError:
+            if not dom_click():
+                raise
 
     def _select_document_option(self, page, document_name: str) -> bool:
         if not hasattr(page, "evaluate"):
