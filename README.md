@@ -192,6 +192,14 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `JOB_HUNTER_APPLY_PAGE_TIMEOUT_SECONDS`
 - `JOB_HUNTER_APPLY_BATCH_DEFAULT_LIMIT`
 - `JOB_HUNTER_APPLY_OUTPUT_ROOT`
+- `JOB_HUNTER_APPLY_GMAIL_VERIFICATION_ENABLED`
+- `JOB_HUNTER_APPLY_GMAIL_ACCESS_TOKEN`
+- `JOB_HUNTER_APPLY_GMAIL_REFRESH_TOKEN`
+- `JOB_HUNTER_APPLY_GMAIL_CLIENT_ID`
+- `JOB_HUNTER_APPLY_GMAIL_CLIENT_SECRET`
+- `JOB_HUNTER_APPLY_GMAIL_POLL_TIMEOUT_SECONDS`
+- `JOB_HUNTER_APPLY_GMAIL_POLL_INTERVAL_SECONDS`
+- `JOB_HUNTER_APPLY_GMAIL_SENDER_FILTER`
 - `JOB_HUNTER_TELEGRAM_BOT_TOKEN`
 - `JOB_HUNTER_TELEGRAM_CHAT_ID`
 
@@ -200,3 +208,19 @@ python -m job_hunter.run_loop --interval-minutes 15
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+## Gmail Bootstrap
+
+To enable automatic Greenhouse email verification via Gmail, first create a Google OAuth desktop client and then run:
+
+```bash
+python -m job_hunter.gmail_auth init --client-secret-file ~/Downloads/client_secret_*.json
+```
+
+This writes the Gmail OAuth values into your local `.env`:
+
+- `JOB_HUNTER_APPLY_GMAIL_VERIFICATION_ENABLED=true`
+- `JOB_HUNTER_APPLY_GMAIL_CLIENT_ID`
+- `JOB_HUNTER_APPLY_GMAIL_CLIENT_SECRET`
+- `JOB_HUNTER_APPLY_GMAIL_ACCESS_TOKEN`
+- `JOB_HUNTER_APPLY_GMAIL_REFRESH_TOKEN`

@@ -7,9 +7,10 @@ from pathlib import Path
 from job_hunter.apply.adapters.greenhouse import GreenhouseAdapter
 from job_hunter.apply.adapters.linkedin import LinkedInEasyApplyAdapter
 from job_hunter.apply.browser import BrowserManager
+from job_hunter.apply.email_codes import GmailVerificationCodeClient
 from job_hunter.apply.profile_loader import load_application_inputs
 from job_hunter.apply.resolver import AnswerResolver
-from job_hunter.apply.types import ApplicationRunRecord, SubmitResult
+from job_hunter.apply.types import ApplicationRunRecord, Blocker, StepSnapshot, SubmitResult
 from job_hunter.config import Settings
 from job_hunter.notify import TelegramNotifier
 from job_hunter.storage import JobStore
@@ -26,6 +27,7 @@ class ApplicationService:
         browser_manager: BrowserManager | None = None,
         linkedin_adapter: LinkedInEasyApplyAdapter | None = None,
         greenhouse_adapter: GreenhouseAdapter | None = None,
+        email_code_client: GmailVerificationCodeClient | None = None,
     ) -> None:
         self.settings = settings
         self.store = store
@@ -33,6 +35,7 @@ class ApplicationService:
         self.browser_manager = browser_manager or BrowserManager(settings)
         self.linkedin_adapter = linkedin_adapter or LinkedInEasyApplyAdapter()
         self.greenhouse_adapter = greenhouse_adapter or GreenhouseAdapter()
+        self.email_code_client = email_code_client
 
     def submit_job(self, *, job_id: int, profile_name: str, force: bool = False) -> ApplicationRunRecord:
         job = self.store.get_job_for_application(job_id)
@@ -95,7 +98,16 @@ class ApplicationService:
                 increment_attempt_count=True,
                 output_dir=str(output_dir),
             )
+            submit_started_at = datetime.now(timezone.utc)
             result = adapter.submit(page=page, resolver=resolver, context=context)
+            result = self._maybe_complete_email_verification(
+                adapter_name=adapter_name,
+                adapter=adapter,
+                page=page,
+                result=result,
+                recipient_email=profile.identity.email,
+                submit_started_at=submit_started_at,
+            )
             self._persist_result(run_id=run_id, result=result, output_dir=output_dir, page=page)
             self._maybe_notify(job=job, run_id=run_id, result=result)
             return self._run_record(run_id)
@@ -285,6 +297,55 @@ class ApplicationService:
                 encoding="utf-8",
             )
 
+    def _maybe_complete_email_verification(
+        self,
+        *,
+        adapter_name: str,
+        adapter,
+        page,
+        result: SubmitResult,
+        recipient_email: str,
+        submit_started_at: datetime,
+    ) -> SubmitResult:
+        if adapter_name != "greenhouse":
+            return result
+        if result.blocker is None or result.blocker.reason != "email_verification_required":
+            return result
+        if self.email_code_client is None or not self.email_code_client.is_enabled():
+            return result
+        try:
+            code = self.email_code_client.poll_for_greenhouse_code(
+                recipient_email=recipient_email,
+                requested_at=submit_started_at,
+            )
+        except RuntimeError as exc:
+            if result.blocker is None:
+                return result
+            details = dict(result.blocker.details)
+            details["gmail_verification_error"] = str(exc)
+            result.blocker = Blocker(
+                reason=result.blocker.reason,
+                question_text=result.blocker.question_text,
+                field_name=result.blocker.field_name,
+                field_type=result.blocker.field_type,
+                details=details,
+            )
+            result.steps.append(
+                StepSnapshot(
+                    step_key="greenhouse:email_verification:gmail",
+                    step_label="Fetch Greenhouse verification code from Gmail",
+                    status="failed",
+                    field_name=result.blocker.field_name,
+                    field_type=result.blocker.field_type,
+                    question_text=result.blocker.question_text,
+                    payload={"error": str(exc)},
+                )
+            )
+            return result
+        if not code:
+            return result
+        return adapter.complete_email_verification(page=page, code=code, steps=result.steps)
+
     def _run_record(self, run_id: int) -> ApplicationRunRecord:
         row = self.store.get_application_run(run_id)
         if row is None:
@@ -331,4 +392,10 @@ def build_application_service(*, settings: Settings, store: JobStore) -> Applica
         raise RuntimeError(f"Unsupported tailoring provider: {settings.tailoring_provider}")
     provider = AnthropicTailoringProvider(model_name=settings.tailoring_anthropic_model or "")
     tailoring_service = TailoringService(settings=settings, store=store, provider=provider)
-    return ApplicationService(settings=settings, store=store, tailoring_service=tailoring_service)
+    email_code_client = GmailVerificationCodeClient(settings) if settings.apply_gmail_verification_enabled else None
+    return ApplicationService(
+        settings=settings,
+        store=store,
+        tailoring_service=tailoring_service,
+        email_code_client=email_code_client,
+    )

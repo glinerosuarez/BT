@@ -272,6 +272,48 @@ class GreenhouseAdapter:
         checker = getattr(page, "detect_unsupported_widget", None)
         return bool(checker()) if callable(checker) else False
 
+    def complete_email_verification(self, *, page, code: str, steps: list[StepSnapshot]) -> SubmitResult:
+        if hasattr(page, "fill_email_verification_code"):
+            page.fill_email_verification_code(code)
+        else:
+            for index, char in enumerate(code[:8]):
+                page.fill(f"#security-input-{index}", char)
+                page.wait_for_timeout(50)
+        steps.append(
+            StepSnapshot(
+                step_key="greenhouse:email_verification",
+                step_label="Fill email verification code",
+                status="completed",
+                field_name="email_verification",
+                field_type="verification_code",
+                question_text="Email verification code",
+                answer_source="gmail",
+                answer_value="redacted",
+            )
+        )
+        self._submit(page)
+        verification_blocker = self._detect_email_verification_blocker(page)
+        if verification_blocker is not None:
+            return self._blocked(
+                verification_blocker.reason,
+                page,
+                steps,
+                field_name=verification_blocker.field_name,
+                field_type=verification_blocker.field_type,
+                question_text=verification_blocker.question_text,
+                details=verification_blocker.details,
+            )
+        confirmation = self._extract_confirmation(page)
+        if not confirmation:
+            return self._blocked("ambiguous_confirmation", page, steps)
+        return SubmitResult(
+            status="submitted",
+            current_url=getattr(page, "url", ""),
+            confirmation_payload=confirmation,
+            steps=steps,
+            adapter_name=self.adapter_name,
+        )
+
     def _detect_email_verification_blocker(self, page) -> Blocker | None:
         if not hasattr(page, "evaluate"):
             return None

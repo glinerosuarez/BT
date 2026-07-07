@@ -10,9 +10,11 @@ from unittest.mock import patch
 
 from job_hunter.apply.adapters.greenhouse import GreenhouseAdapter
 from job_hunter.apply.adapters.linkedin import LinkedInEasyApplyAdapter
+from job_hunter.apply.email_codes import extract_verification_code
 from job_hunter.apply.profile_loader import ProfileValidationError, load_application_inputs
 from job_hunter.apply.resolver import AnswerResolver, ResolutionError
 from job_hunter.apply.service import ApplicationService
+from job_hunter.apply.types import Blocker, SubmitResult
 from job_hunter.config import Settings
 from job_hunter.models import JobRecord
 from job_hunter.storage import JobStore
@@ -49,6 +51,7 @@ class FakePage:
         self.external_url = ""
         self.values: dict[str, str] = {}
         self.submitted = False
+        self.verification_code = ""
 
     def goto(self, url: str, *, wait_until: str = "domcontentloaded") -> None:
         self.url = url
@@ -88,6 +91,11 @@ class FakePage:
 
     def detect_ambiguous_submit_state(self) -> bool:
         return self._ambiguous_submit
+
+    def fill_email_verification_code(self, code: str) -> None:
+        self.verification_code = code
+        if code:
+            self._confirmation = {"message": "Application submitted"}
 
 
 class FakeSession:
@@ -296,6 +304,92 @@ class ApplyJobsTests(unittest.TestCase):
         result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
         self.assertEqual(result.status, "blocked")
         self.assertEqual(result.blocker.reason, "login_wall")
+
+    def test_service_completes_greenhouse_email_verification_from_gmail_code(self) -> None:
+        class FakeEmailCodeClient:
+            def is_enabled(self) -> bool:
+                return True
+
+            def poll_for_greenhouse_code(self, *, recipient_email: str, requested_at):
+                return "AB12CD34"
+
+        class VerificationGreenhouseAdapter(GreenhouseAdapter):
+            def submit(self, *, page, resolver, context):
+                return SubmitResult(
+                    status="blocked",
+                    current_url=page.url,
+                    blocker=Blocker(
+                        reason="email_verification_required",
+                        field_name="email_verification",
+                        field_type="verification_code",
+                        question_text="Enter verification code",
+                        details={"digits": 8},
+                    ),
+                    steps=[],
+                    adapter_name=self.adapter_name,
+                )
+
+        page = FakePage(url="https://boards.greenhouse.io/acme/jobs/1", easy_apply=False)
+        with patch("job_hunter.tailoring.service._render_markdown_pdf", side_effect=self._write_fake_pdf):
+            service = ApplicationService(
+                settings=self.settings,
+                store=self.store,
+                tailoring_service=self.tailoring_service,
+                browser_manager=FakeBrowserManager(page),
+                greenhouse_adapter=VerificationGreenhouseAdapter(),
+                email_code_client=FakeEmailCodeClient(),
+            )
+        run = service.submit_job(job_id=2, profile_name="default", force=True)
+        self.assertEqual(run.status, "submitted")
+        self.assertEqual(page.verification_code, "AB12CD34")
+
+    def test_service_persists_gmail_verification_error_when_polling_fails(self) -> None:
+        class FailingEmailCodeClient:
+            def is_enabled(self) -> bool:
+                return True
+
+            def poll_for_greenhouse_code(self, *, recipient_email: str, requested_at):
+                raise RuntimeError("Gmail API request failed: 403 SERVICE_DISABLED")
+
+        class VerificationGreenhouseAdapter(GreenhouseAdapter):
+            def submit(self, *, page, resolver, context):
+                return SubmitResult(
+                    status="blocked",
+                    current_url=page.url,
+                    blocker=Blocker(
+                        reason="email_verification_required",
+                        field_name="email_verification",
+                        field_type="verification_code",
+                        question_text="Enter verification code",
+                        details={"digits": 8},
+                    ),
+                    steps=[],
+                    adapter_name=self.adapter_name,
+                )
+
+        page = FakePage(url="https://boards.greenhouse.io/acme/jobs/1", easy_apply=False)
+        with patch("job_hunter.tailoring.service._render_markdown_pdf", side_effect=self._write_fake_pdf):
+            service = ApplicationService(
+                settings=self.settings,
+                store=self.store,
+                tailoring_service=self.tailoring_service,
+                browser_manager=FakeBrowserManager(page),
+                greenhouse_adapter=VerificationGreenhouseAdapter(),
+                email_code_client=FailingEmailCodeClient(),
+            )
+        run = service.submit_job(job_id=2, profile_name="default", force=True)
+        self.assertEqual(run.status, "blocked")
+        shown = service.show_run(run.application_run_id)
+        self.assertEqual(
+            shown["blocked_payload"]["details"]["gmail_verification_error"],
+            "Gmail API request failed: 403 SERVICE_DISABLED",
+        )
+        self.assertEqual(shown["steps"][-1]["step_key"], "greenhouse:email_verification:gmail")
+        self.assertEqual(shown["steps"][-1]["status"], "failed")
+
+    def test_extract_verification_code_returns_recent_8_char_code(self) -> None:
+        text = "Hi Gabriel, Copy and paste this code into the security code field on your application: oKGwtMpC"
+        self.assertEqual(extract_verification_code(text), "oKGwtMpC")
 
     def test_resume_retries_blocked_run(self) -> None:
         blocked_page = FakePage(
@@ -515,6 +609,14 @@ def make_settings(db_path: str, profile_root: str, output_root: str) -> Settings
         apply_page_timeout_seconds=30,
         apply_batch_default_limit=5,
         apply_output_root=str(Path(output_root) / "applications"),
+        apply_gmail_verification_enabled=False,
+        apply_gmail_access_token=None,
+        apply_gmail_refresh_token=None,
+        apply_gmail_client_id=None,
+        apply_gmail_client_secret=None,
+        apply_gmail_poll_timeout_seconds=30,
+        apply_gmail_poll_interval_seconds=1,
+        apply_gmail_sender_filter="greenhouse",
         use_linkedin=True,
         linkedin_search_urls=[],
         linkedin_profile_dir=str(Path(output_root) / "linkedin-profile"),

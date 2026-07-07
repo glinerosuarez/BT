@@ -208,6 +208,14 @@ class Settings:
     apply_page_timeout_seconds: int = 30
     apply_batch_default_limit: int = 5
     apply_output_root: str = "artifacts/applications"
+    apply_gmail_verification_enabled: bool = False
+    apply_gmail_access_token: str | None = None
+    apply_gmail_refresh_token: str | None = None
+    apply_gmail_client_id: str | None = None
+    apply_gmail_client_secret: str | None = None
+    apply_gmail_poll_timeout_seconds: int = 120
+    apply_gmail_poll_interval_seconds: int = 5
+    apply_gmail_sender_filter: str = "greenhouse"
     use_linkedin: bool = False
     linkedin_search_urls: list[str] = field(default_factory=list)
     linkedin_profile_dir: str = DEFAULT_LINKEDIN_PROFILE_DIR
@@ -345,6 +353,14 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         apply_page_timeout_seconds=_env_int("JOB_HUNTER_APPLY_PAGE_TIMEOUT_SECONDS", 30),
         apply_batch_default_limit=_env_int("JOB_HUNTER_APPLY_BATCH_DEFAULT_LIMIT", 5),
         apply_output_root=os.getenv("JOB_HUNTER_APPLY_OUTPUT_ROOT", "artifacts/applications"),
+        apply_gmail_verification_enabled=_env_bool("JOB_HUNTER_APPLY_GMAIL_VERIFICATION_ENABLED", False),
+        apply_gmail_access_token=os.getenv("JOB_HUNTER_APPLY_GMAIL_ACCESS_TOKEN"),
+        apply_gmail_refresh_token=os.getenv("JOB_HUNTER_APPLY_GMAIL_REFRESH_TOKEN"),
+        apply_gmail_client_id=os.getenv("JOB_HUNTER_APPLY_GMAIL_CLIENT_ID"),
+        apply_gmail_client_secret=os.getenv("JOB_HUNTER_APPLY_GMAIL_CLIENT_SECRET"),
+        apply_gmail_poll_timeout_seconds=_env_int("JOB_HUNTER_APPLY_GMAIL_POLL_TIMEOUT_SECONDS", 120),
+        apply_gmail_poll_interval_seconds=_env_int("JOB_HUNTER_APPLY_GMAIL_POLL_INTERVAL_SECONDS", 5),
+        apply_gmail_sender_filter=os.getenv("JOB_HUNTER_APPLY_GMAIL_SENDER_FILTER", "greenhouse"),
         use_linkedin=_env_bool("JOB_HUNTER_SOURCE_LINKEDIN", False),
         linkedin_search_urls=linkedin_search_urls,
         linkedin_profile_dir=os.getenv("JOB_HUNTER_LINKEDIN_PROFILE_DIR", DEFAULT_LINKEDIN_PROFILE_DIR),
