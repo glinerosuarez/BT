@@ -178,6 +178,69 @@ class FakeBrowserManager:
         return FakeSession(self.page)
 
 
+class FakeContext:
+    def __init__(self, pages) -> None:
+        self.pages = pages
+
+
+class FakeButtonLocator:
+    def __init__(self, page, *, available: bool) -> None:
+        self._page = page
+        self._available = available
+
+    @property
+    def first(self):
+        return self
+
+    def count(self) -> int:
+        return 1 if self._available else 0
+
+    def click(self) -> None:
+        self._page.trigger_external_apply_button()
+
+
+class FakeInteractiveLinkedInPage:
+    def __init__(self, *, external_target_url: str) -> None:
+        self.url = "https://www.linkedin.com/jobs/view/1"
+        self._external_target_url = external_target_url
+        self.context = FakeContext([self])
+
+    def evaluate(self, script: str):
+        return ""
+
+    def locator(self, selector: str):
+        page = self
+
+        class _Locator:
+            def __init__(self, *, available: bool = False) -> None:
+                self._available = available
+
+            def evaluate_all(self, script: str):
+                return []
+
+            def filter(self, *, has_text: str):
+                return _Locator(available=self._available and has_text in {"Apply", "Apply now"})
+
+            @property
+            def first(self):
+                return self
+
+            def count(self) -> int:
+                return 1 if self._available else 0
+
+            def click(self) -> None:
+                page.trigger_external_apply_button()
+
+        return _Locator(available=selector in {"button", "a", '[role="button"]'})
+
+    def wait_for_timeout(self, milliseconds: int) -> None:
+        return None
+
+    def trigger_external_apply_button(self) -> None:
+        popup = type("PopupPage", (), {"url": self._external_target_url})()
+        self.context.pages.append(popup)
+
+
 class FakeSelectLocator:
     def __init__(self, *, options: list[dict[str, object]], fail_select_option: bool = False) -> None:
         self.options = [dict(option) for option in options]
@@ -333,6 +396,10 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(
             resolver.resolve(question_text="End date year*", field_name="end-year--0").answer,
             "2027",
+        )
+        self.assertEqual(
+            resolver.resolve(question_text="End date month*", field_name="end-month--0").answer,
+            "May",
         )
 
     def test_answer_resolver_computes_professional_experience_fields(self) -> None:
@@ -509,6 +576,16 @@ class ApplyJobsTests(unittest.TestCase):
             "https://job-boards.greenhouse.io/podium81/jobs/7939921?gh_src=8b0de3d81",
         )
 
+    def test_linkedin_adapter_extracts_external_apply_url_from_apply_button_popup(self) -> None:
+        adapter = LinkedInEasyApplyAdapter()
+        page = FakeInteractiveLinkedInPage(
+            external_target_url="https://job-boards.greenhouse.io/neuralink/jobs/12345"
+        )
+
+        result = adapter.extract_external_apply_url(page)
+
+        self.assertEqual(result, "https://job-boards.greenhouse.io/neuralink/jobs/12345")
+
     def test_greenhouse_adapter_handles_common_fields_and_confirmation(self) -> None:
         adapter = GreenhouseAdapter()
         page = FakePage(
@@ -524,6 +601,51 @@ class ApplyJobsTests(unittest.TestCase):
         result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
         self.assertEqual(result.status, "submitted")
         self.assertEqual(result.confirmation_payload["application_id"], "gh-123")
+
+    def test_greenhouse_adapter_handles_required_choice_groups(self) -> None:
+        adapter = GreenhouseAdapter()
+        page = FakePage(
+            url="https://boards.greenhouse.io/acme/jobs/1",
+            fields=[
+                {
+                    "field_name": "work_auth",
+                    "question_text": "Are you currently authorized to work in the United States?",
+                    "field_type": "radio-group",
+                    "required": True,
+                    "current_value": "",
+                    "options": [{"selector": "#work-auth-yes", "label": "Yes"}, {"selector": "#work-auth-no", "label": "No"}],
+                },
+                {
+                    "field_name": "onsite",
+                    "question_text": "I understand that this position requires me to work on-site.",
+                    "field_type": "radio-group",
+                    "required": True,
+                    "current_value": "",
+                    "options": [{"selector": "#onsite-yes", "label": "Yes"}, {"selector": "#onsite-no", "label": "No"}],
+                },
+                {
+                    "field_name": "hear_about_us",
+                    "question_text": "How did you hear about us?",
+                    "field_type": "checkbox-group",
+                    "required": True,
+                    "current_value": "",
+                    "options": [{"selector": "#hear-linkedin", "label": "LinkedIn"}, {"selector": "#hear-friend", "label": "Friend"}],
+                },
+            ],
+            confirmation={"application_id": "gh-choices"},
+            easy_apply=False,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(page.values["work_auth"], "Yes")
+        self.assertEqual(page.values["onsite"], "Yes")
+        self.assertEqual(page.values["hear_about_us"], "LinkedIn")
+
+    def test_greenhouse_adapter_detects_grnh_shortlink_target(self) -> None:
+        adapter = GreenhouseAdapter()
+        self.assertTrue(adapter.is_greenhouse_target("https://grnh.se/73689a903us"))
 
     def test_greenhouse_adapter_blocks_on_login_wall(self) -> None:
         adapter = GreenhouseAdapter()
@@ -816,6 +938,32 @@ class ApplyJobsTests(unittest.TestCase):
             shown["target_url"],
             "https://uscareers-medpace.icims.com/jobs/12767/login?iis=Job%20Board&iisn=LinkedIn",
         )
+
+    def test_service_uses_stored_external_apply_url_before_reopening_linkedin(self) -> None:
+        external_url = "https://uscareers-medpace.icims.com/jobs/12767/login?iis=Job%20Board&iisn=LinkedIn"
+        self.store._conn.execute(
+            "UPDATE jobs SET source_metadata = ? WHERE id = 1",
+            (json.dumps({"external_apply_url": external_url}),),
+        )
+        self.store._conn.commit()
+
+        page = FakePage(
+            url="https://www.linkedin.com/jobs/view/1",
+            easy_apply=False,
+            greenhouse=False,
+            icims=True,
+        )
+        page._frame_texts = [
+            "Welcome page\nEnter Your Information\nSoftware Powered by iCIMS",
+            "Protected by hCaptcha\nVerify",
+        ]
+        service = self._service(page)
+        run = service.submit_job(job_id=1, profile_name="default", force=True)
+        shown = service.show_run(run.application_run_id)
+        self.assertEqual(run.status, "blocked")
+        self.assertEqual(shown["adapter_name"], "icims")
+        self.assertEqual(shown["target_url"], external_url)
+        self.assertEqual(page.url, external_url)
 
     def test_resume_with_manual_gate_prefers_stored_current_url(self) -> None:
         class SubmittedICIMSAdapter(ICIMSAdapter):

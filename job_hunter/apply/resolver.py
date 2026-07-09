@@ -115,6 +115,23 @@ class AnswerResolver:
             if authorized in {"false", "no", "0"}:
                 return AnswerResolution(answer="No", source="computed:work_authorization.us_work_authorized")
 
+        if "authorized to work in the united states" in question:
+            authorized = self._structured.get("work_authorization.us_work_authorized", "").strip().lower()
+            if authorized in {"true", "yes", "1"}:
+                return AnswerResolution(answer="Yes", source="computed:work_authorization.us_work_authorized")
+            if authorized in {"false", "no", "0"}:
+                return AnswerResolution(answer="No", source="computed:work_authorization.us_work_authorized")
+
+        if "require employer sponsorship to work in the united states" in question:
+            sponsorship = self._structured.get("work_authorization.requires_future_sponsorship", "").strip().lower()
+            if sponsorship in {"true", "yes", "1"}:
+                return AnswerResolution(answer="Yes", source="computed:work_authorization.requires_future_sponsorship")
+            if sponsorship in {"false", "no", "0"}:
+                return AnswerResolution(answer="No", source="computed:work_authorization.requires_future_sponsorship")
+
+        if "requires me to work on-site" in question or "requires me to work on site" in question:
+            return AnswerResolution(answer="Yes", source="computed:preferences.on_site_acknowledgement")
+
         if "are you over 18" in question:
             return AnswerResolution(answer="Yes", source="computed:identity.over_18")
 
@@ -204,6 +221,11 @@ class AnswerResolver:
             if major:
                 return AnswerResolution(answer=major, source="computed:education.major")
 
+        if "end date month" in question or field_name.startswith("end-month"):
+            month = _graduation_month_name(self._structured.get("education.graduation_date", ""))
+            if month:
+                return AnswerResolution(answer=month, source="computed:education.end_month")
+
         if "start date year" in question or field_name.startswith("start-year"):
             year = _education_start_year(
                 graduation_date=self._structured.get("education.graduation_date", ""),
@@ -216,6 +238,23 @@ class AnswerResolver:
             year = _graduation_year(self._structured.get("education.graduation_date", ""))
             if year:
                 return AnswerResolution(answer=year, source="computed:education.end_year")
+
+        if "what year will you graduate" in question:
+            year = _graduation_year(self._structured.get("education.graduation_date", ""))
+            if year:
+                return AnswerResolution(answer=year, source="computed:education.end_year")
+
+        if "linkedin profile" in question:
+            value = self._structured.get("identity.linkedin_url", "").strip()
+            if value:
+                return AnswerResolution(answer=value, source="computed:identity.linkedin_url")
+
+        if "additional link" in question:
+            for key in ("identity.github_url", "identity.portfolio_url"):
+                value = self._structured.get(key, "").strip()
+                if value:
+                    return AnswerResolution(answer=value, source=f"computed:{key}")
+
         return None
 
 
@@ -268,6 +307,17 @@ def _visa_expiration_date(graduation_date: str) -> str:
         year, month = value.split("/")
         return f"01/{month}/{year}"
     return ""
+
+
+def _graduation_month_name(graduation_date: str) -> str:
+    value = (graduation_date or "").strip()
+    match = re.match(r"^\d{4}[-/](\d{2})(?:[-/]\d{2})?$", value)
+    if not match:
+        return ""
+    month_number = int(match.group(1))
+    if month_number < 1 or month_number > 12:
+        return ""
+    return datetime(2000, month_number, 1).strftime("%B")
 
 
 def _employment_start_date(years_experience: str) -> dict[str, str]:

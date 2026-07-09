@@ -17,7 +17,8 @@ class GreenhouseAdapter:
     adapter_name = "greenhouse"
 
     def is_greenhouse_target(self, url: str, page=None) -> bool:
-        if "greenhouse" in urlparse(url).netloc.lower():
+        host = urlparse(url).netloc.lower()
+        if "greenhouse" in host or host == "grnh.se":
             return True
         checker = getattr(page, "detect_greenhouse", None) if page is not None else None
         return bool(checker()) if callable(checker) else False
@@ -30,6 +31,37 @@ class GreenhouseAdapter:
         if self._has_unsupported_widget(page):
             return self._blocked("unsupported_widget", page, [])
         steps: list[StepSnapshot] = []
+        for _ in range(3):
+            blocker, filled_count = self._fill_required_fields(page=page, resolver=resolver, context=context, steps=steps)
+            if blocker is not None:
+                return blocker
+            if filled_count == 0:
+                break
+        self._submit(page)
+        verification_blocker = self._detect_email_verification_blocker(page)
+        if verification_blocker is not None:
+            return self._blocked(
+                verification_blocker.reason,
+                page,
+                steps,
+                field_name=verification_blocker.field_name,
+                field_type=verification_blocker.field_type,
+                question_text=verification_blocker.question_text,
+                details=verification_blocker.details,
+            )
+        confirmation = self._extract_confirmation(page)
+        if not confirmation:
+            return self._blocked("ambiguous_confirmation", page, steps)
+        return SubmitResult(
+            status="submitted",
+            current_url=getattr(page, "url", ""),
+            confirmation_payload=confirmation,
+            steps=steps,
+            adapter_name=self.adapter_name,
+        )
+
+    def _fill_required_fields(self, *, page, resolver: AnswerResolver, context, steps: list[StepSnapshot]) -> tuple[SubmitResult | None, int]:
+        filled_count = 0
         for field in self._extract_fields(page):
             question_text = str(field.get("question_text") or field.get("label") or field.get("field_name") or "").strip()
             field_name = str(field.get("field_name") or "")
@@ -55,6 +87,7 @@ class GreenhouseAdapter:
                         answer_value=upload_path,
                     )
                 )
+                filled_count += 1
                 continue
             try:
                 resolution = self._resolve_field_value(
@@ -64,14 +97,17 @@ class GreenhouseAdapter:
                     field_type=field_type,
                 )
             except ResolutionError as exc:
-                return self._blocked(
-                    exc.blocker.reason,
-                    page,
-                    steps,
-                    field_name=field_name,
-                    field_type=field_type,
-                    question_text=question_text,
-                    details=exc.blocker.details,
+                return (
+                    self._blocked(
+                        exc.blocker.reason,
+                        page,
+                        steps,
+                        field_name=field_name,
+                        field_type=field_type,
+                        question_text=question_text,
+                        details=exc.blocker.details,
+                    ),
+                    filled_count,
                 )
             self._set_field(page, field, resolution.answer)
             steps.append(
@@ -86,28 +122,8 @@ class GreenhouseAdapter:
                     answer_value=resolution.answer,
                 )
             )
-        self._submit(page)
-        verification_blocker = self._detect_email_verification_blocker(page)
-        if verification_blocker is not None:
-            return self._blocked(
-                verification_blocker.reason,
-                page,
-                steps,
-                field_name=verification_blocker.field_name,
-                field_type=verification_blocker.field_type,
-                question_text=verification_blocker.question_text,
-                details=verification_blocker.details,
-            )
-        confirmation = self._extract_confirmation(page)
-        if not confirmation:
-            return self._blocked("ambiguous_confirmation", page, steps)
-        return SubmitResult(
-            status="submitted",
-            current_url=getattr(page, "url", ""),
-            confirmation_payload=confirmation,
-            steps=steps,
-            adapter_name=self.adapter_name,
-        )
+            filled_count += 1
+        return None, filled_count
 
     def _extract_fields(self, page) -> list[dict[str, object]]:
         extractor = getattr(page, "extract_fields", None)
@@ -123,6 +139,13 @@ class GreenhouseAdapter:
               };
               const fields = [];
               let counter = 0;
+              const labelTextFor = (el) => {
+                const id = el.getAttribute('id') || '';
+                const direct = id ? document.querySelector(`label[for="${id}"]`) : null;
+                if (direct?.textContent) return direct.textContent.trim();
+                const wrapped = el.closest('label');
+                return (wrapped?.textContent || el.getAttribute('aria-label') || '').trim();
+              };
               const pushField = (el, fieldType, extra = {}) => {
                 if (!visible(el) || el.disabled) return;
                 if (el.getAttribute('aria-hidden') === 'true') return;
@@ -130,9 +153,7 @@ class GreenhouseAdapter:
                 counter += 1;
                 el.setAttribute('data-jobhunter-field-index', String(counter));
                 const id = el.getAttribute('id') || '';
-                const label = id
-                  ? document.querySelector(`label[for="${id}"]`)
-                  : null;
+                const label = id ? document.querySelector(`label[for="${id}"]`) : null;
                 const questionText = (label?.textContent || el.getAttribute('aria-label') || '').trim();
                 const currentValue = fieldType === 'select-one'
                   ? (
@@ -142,12 +163,41 @@ class GreenhouseAdapter:
                     ).trim()
                   : (el.value || '').trim();
                 fields.push({
-                  selector: `[data-jobhunter-field-index="${counter}"]`,
+                  selector: id ? `#${CSS.escape(id)}` : `[data-jobhunter-field-index="${counter}"]`,
                   field_name: el.getAttribute('name') || id || '',
                   field_type: fieldType,
                   question_text: questionText,
                   required: el.required || el.getAttribute('aria-required') === 'true' || extra.required === true,
                   current_value: currentValue,
+                });
+              };
+
+              const pushChoiceGroup = (fieldset, type) => {
+                if (!visible(fieldset)) return;
+                const inputs = Array.from(fieldset.querySelectorAll(`input[type="${type}"]`)).filter((el) => visible(el) && !el.disabled);
+                if (!inputs.length) return;
+                const legend = (fieldset.querySelector('legend')?.textContent || '').trim();
+                const required = fieldset.getAttribute('aria-required') === 'true' || inputs.some((el) => el.required || el.getAttribute('aria-required') === 'true');
+                const options = inputs.map((el, index) => {
+                  counter += 1;
+                  el.setAttribute('data-jobhunter-field-index', String(counter));
+                  return {
+                    selector: `input[data-jobhunter-field-index="${counter}"]`,
+                    value: (el.getAttribute('value') || '').trim(),
+                    label: labelTextFor(el),
+                    checked: !!el.checked,
+                    index,
+                  };
+                });
+                const checkedLabels = options.filter((option) => option.checked).map((option) => option.label || option.value);
+                fields.push({
+                  selector: options[0]?.selector || '',
+                  field_name: inputs[0]?.getAttribute('name') || fieldset.getAttribute('id') || legend,
+                  field_type: type === 'radio' ? 'radio-group' : 'checkbox-group',
+                  question_text: legend,
+                  required,
+                  current_value: checkedLabels.join(', '),
+                  options,
                 });
               };
 
@@ -163,12 +213,19 @@ class GreenhouseAdapter:
                   pushField(el, 'select-one');
                   continue;
                 }
+                if (type === 'radio') continue;
                 if (type === 'checkbox') {
+                  if (el.closest('fieldset')) continue;
                   pushField(el, 'checkbox');
                   continue;
                 }
-                if (!['', 'text', 'email', 'tel'].includes(type)) continue;
+                if (!['', 'text', 'email', 'tel', 'number'].includes(type)) continue;
                 pushField(el, 'text');
+              }
+
+              for (const fieldset of Array.from(document.querySelectorAll('fieldset'))) {
+                pushChoiceGroup(fieldset, 'radio');
+                pushChoiceGroup(fieldset, 'checkbox');
               }
 
               return fields;
@@ -225,6 +282,26 @@ class GreenhouseAdapter:
             desired = value.strip().lower() in {"1", "true", "yes", "on"}
             if bool(field.get("checked")) != desired:
                 page.click(selector)
+        elif field_type in {"radio-group", "checkbox-group"}:
+            normalized = value.strip().lower()
+            options = list(field.get("options") or [])
+            for option in options:
+                option_label = str(option.get("label") or option.get("value") or "").strip()
+                if option_label.lower() == normalized:
+                    page.locator(str(option.get("selector") or "")).check(force=True)
+                    page.wait_for_timeout(300)
+                    return
+            for option in options:
+                option_label = str(option.get("label") or option.get("value") or "").strip().lower()
+                if normalized in {"true", "1", "yes", "on"} and option_label == "yes":
+                    page.locator(str(option.get("selector") or "")).check(force=True)
+                    page.wait_for_timeout(300)
+                    return
+                if normalized in {"false", "0", "no", "off"} and option_label == "no":
+                    page.locator(str(option.get("selector") or "")).check(force=True)
+                    page.wait_for_timeout(300)
+                    return
+            raise RuntimeError(f"Unsupported choice-group value '{value}' for {field.get('field_name') or field.get('question_text')}")
         else:
             page.fill(selector, value)
 

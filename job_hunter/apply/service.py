@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from job_hunter.apply.adapters.greenhouse import GreenhouseAdapter
 from job_hunter.apply.adapters.icims import ICIMSAdapter
@@ -55,7 +56,7 @@ class ApplicationService:
         session = self.browser_manager.open(adapter_name="linkedin" if str(job["source"]) == "linkedin" else "greenhouse")
         try:
             page = session.new_page()
-            initial_target_url = str(job["url"] or "").strip()
+            initial_target_url = self._initial_target_url(job)
             page.goto(initial_target_url, wait_until="domcontentloaded")
             adapter_name, adapter, target_url = self._resolve_adapter(job, page, initial_target_url)
 
@@ -344,7 +345,7 @@ class ApplicationService:
         )
 
     def _resolve_adapter(self, job, page, target_url: str):
-        if str(job["source"]) == "linkedin":
+        if str(job["source"]) == "linkedin" and self._is_linkedin_url(target_url):
             if self.linkedin_adapter.is_easy_apply_available(page):
                 return "linkedin", self.linkedin_adapter, target_url
             external_url = ""
@@ -369,6 +370,32 @@ class ApplicationService:
         if self.icims_adapter.is_icims_target(target_url, page=page):
             return "icims", self.icims_adapter, target_url
         raise RuntimeError(f"Unsupported apply target for job source={job['source']} url={target_url}")
+
+    def _initial_target_url(self, job) -> str:
+        source_metadata = self._job_source_metadata(job)
+        external_url = str(source_metadata.get("external_apply_url") or "").strip()
+        if external_url:
+            return external_url
+        return str(job["url"] or "").strip()
+
+    def _job_source_metadata(self, job) -> dict[str, object]:
+        raw = job["source_metadata"] if "source_metadata" in job.keys() else None
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return {}
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                return {}
+            return payload if isinstance(payload, dict) else {}
+        return {}
+
+    def _is_linkedin_url(self, url: str) -> bool:
+        parsed = urlparse(url.strip())
+        return "linkedin.com" in parsed.netloc.lower()
 
     def _adapter_for_name(self, adapter_name: str):
         if adapter_name == "linkedin":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 
 from job_hunter.apply.resolver import AnswerResolver, ResolutionError
 from job_hunter.apply.types import Blocker, StepSnapshot, SubmitResult
@@ -71,9 +72,12 @@ class LinkedInEasyApplyAdapter:
         detector = getattr(page, "detect_easy_apply", None)
         if callable(detector):
             return bool(detector())
-        content = page.content().lower()
-        if "easy apply" in content or "solicitud sencilla" in content:
-            return True
+        try:
+            content = page.content().lower()
+            if "easy apply" in content or "solicitud sencilla" in content:
+                return True
+        except Exception:
+            pass
         try:
             button = self._easy_apply_button(page)
             return button.count() > 0
@@ -83,8 +87,108 @@ class LinkedInEasyApplyAdapter:
     def extract_external_apply_url(self, page) -> str:
         extractor = getattr(page, "extract_external_apply_url", None)
         if callable(extractor):
-            return str(extractor() or "").strip()
+            url = self._normalize_external_apply_url(str(extractor() or "").strip())
+            if url:
+                return url
+        if not hasattr(page, "locator"):
+            return ""
+        try:
+            href = page.evaluate(
+                """
+                () => {
+                  const candidates = Array.from(document.querySelectorAll('a[href], button, [role="button"]'));
+                  const match = candidates.find((candidate) => {
+                    const text = (candidate.innerText || candidate.getAttribute('aria-label') || '').trim().toLowerCase();
+                    return text === 'apply' || text === 'solicitar' || text === 'apply now';
+                  });
+                  if (!match) return '';
+                  if (match.href) return match.href;
+                  const anchor = match.closest('a[href]');
+                  return anchor ? anchor.href : '';
+                }
+                """
+            )
+            normalized = self._normalize_external_apply_url(str(href or "").strip())
+            if normalized:
+                return normalized
+        except Exception:
+            pass
+        try:
+            hrefs = page.locator("a[href]").evaluate_all("els => els.map(el => el.href).filter(Boolean)")
+        except Exception:
+            return ""
+        for href in hrefs:
+            normalized = self._normalize_external_apply_url(str(href or "").strip())
+            if normalized:
+                return normalized
+        clicked_url = self._extract_external_apply_url_from_button_click(page)
+        if clicked_url:
+            return clicked_url
         return ""
+
+    def _extract_external_apply_url_from_button_click(self, page) -> str:
+        if not hasattr(page, "locator"):
+            return ""
+        button = self._external_apply_button(page)
+        if button is None:
+            return ""
+
+        previous_url = str(getattr(page, "url", "") or "").strip()
+        try:
+            context = getattr(page, "context", None)
+            existing_pages = list(getattr(context, "pages", [])) if context is not None else []
+            button.click()
+            wait = getattr(page, "wait_for_timeout", None)
+            if callable(wait):
+                wait(2000)
+            current_url = self._normalize_external_apply_url(str(getattr(page, "url", "") or "").strip())
+            if current_url:
+                return current_url
+            if context is not None:
+                for candidate_page in getattr(context, "pages", []):
+                    if candidate_page in existing_pages:
+                        continue
+                    candidate_url = self._normalize_external_apply_url(str(getattr(candidate_page, "url", "") or "").strip())
+                    if candidate_url:
+                        return candidate_url
+            current_raw_url = str(getattr(page, "url", "") or "").strip()
+            if current_raw_url and current_raw_url != previous_url:
+                return self._normalize_external_apply_url(current_raw_url)
+        except Exception:
+            return ""
+        return ""
+
+    def _external_apply_button(self, page):
+        selectors = [
+            ('button', 'Apply'),
+            ('button', 'Apply now'),
+            ('a', 'Apply'),
+            ('a', 'Apply now'),
+            ('[role="button"]', 'Apply'),
+            ('[role="button"]', 'Apply now'),
+        ]
+        for selector, label in selectors:
+            try:
+                candidate = page.locator(selector).filter(has_text=label).first
+                if candidate.count() > 0:
+                    return candidate
+            except Exception:
+                continue
+        return None
+
+    def _normalize_external_apply_url(self, url: str) -> str:
+        candidate = url.strip()
+        if not candidate:
+            return ""
+        parsed = urlparse(candidate)
+        if "linkedin.com" in parsed.netloc and parsed.path.startswith("/safety/go"):
+            wrapped = parse_qs(parsed.query).get("url", [""])[0].strip()
+            if wrapped:
+                candidate = unquote(wrapped)
+                parsed = urlparse(candidate)
+        if "linkedin.com" in parsed.netloc:
+            return ""
+        return candidate
 
     def submit(self, *, page, resolver: AnswerResolver, context) -> SubmitResult:
         if not self.is_easy_apply_available(page):
