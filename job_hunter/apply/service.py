@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from job_hunter.apply.adapters.greenhouse import GreenhouseAdapter
+from job_hunter.apply.adapters.icims import ICIMSAdapter
 from job_hunter.apply.adapters.linkedin import LinkedInEasyApplyAdapter
 from job_hunter.apply.browser import BrowserManager
 from job_hunter.apply.email_codes import GmailVerificationCodeClient
@@ -27,6 +28,7 @@ class ApplicationService:
         browser_manager: BrowserManager | None = None,
         linkedin_adapter: LinkedInEasyApplyAdapter | None = None,
         greenhouse_adapter: GreenhouseAdapter | None = None,
+        icims_adapter: ICIMSAdapter | None = None,
         email_code_client: GmailVerificationCodeClient | None = None,
     ) -> None:
         self.settings = settings
@@ -35,6 +37,7 @@ class ApplicationService:
         self.browser_manager = browser_manager or BrowserManager(settings)
         self.linkedin_adapter = linkedin_adapter or LinkedInEasyApplyAdapter()
         self.greenhouse_adapter = greenhouse_adapter or GreenhouseAdapter()
+        self.icims_adapter = icims_adapter or ICIMSAdapter()
         self.email_code_client = email_code_client
 
     def submit_job(self, *, job_id: int, profile_name: str, force: bool = False) -> ApplicationRunRecord:
@@ -121,6 +124,104 @@ class ApplicationService:
         if str(row["status"]) not in {"blocked", "failed"}:
             return self._run_record(application_run_id)
         return self.submit_job(job_id=int(row["job_id"]), profile_name=str(row["profile_name"]), force=True)
+
+    def resume_with_manual_gate(
+        self,
+        *,
+        application_run_id: int,
+        notify: callable | None = None,
+        wait_for_user: callable | None = None,
+    ) -> ApplicationRunRecord:
+        row = self.store.get_application_run(application_run_id)
+        if row is None:
+            raise RuntimeError(f"Application id {application_run_id} not found.")
+        job_id = int(row["job_id"])
+        profile_name = str(row["profile_name"])
+        adapter_name = str(row["adapter_name"] or "").strip()
+        if not adapter_name:
+            raise RuntimeError(f"Application id {application_run_id} does not have a stored adapter name.")
+        job = self.store.get_job_for_application(job_id)
+        if job is None:
+            raise RuntimeError(f"Job id {job_id} not found.")
+
+        profile, answers = load_application_inputs(self.settings.tailoring_profile_root, profile_name)
+        resolver = AnswerResolver(profile=profile, answers=answers)
+        tailoring_artifact = self._ensure_tailoring_artifact(job_id=job_id, profile_name=profile_name, force=True)
+        context = self._build_adapter_context(profile, tailoring_artifact["output_dir"])
+        adapter = self._adapter_for_name(adapter_name)
+        manual_url = str(row["current_url"] or row["target_url"] or job["url"] or "").strip()
+        if not manual_url:
+            raise RuntimeError(f"Application id {application_run_id} does not have a stored target URL.")
+
+        session = self.browser_manager.open(adapter_name=adapter_name)
+        try:
+            page = session.new_page()
+            page.goto(manual_url, wait_until="domcontentloaded")
+            if notify is not None:
+                notify(self._manual_checkpoint_message(row))
+            if wait_for_user is not None:
+                wait_for_user()
+
+            run_id = self.store.create_application_run(
+                job_id=job_id,
+                profile_name=profile_name,
+                tailoring_artifact_id=int(tailoring_artifact["id"]),
+                adapter_name=adapter_name,
+                source=str(job["source"]),
+                target_url=manual_url,
+                current_url=getattr(page, "url", manual_url),
+                status="applying",
+                output_dir=str(self._output_dir(profile_name, "pending")),
+            )
+            output_dir = self._output_dir(profile_name, str(run_id))
+            output_dir.mkdir(parents=True, exist_ok=True)
+            self.store.update_application_run(
+                run_id,
+                tailoring_artifact_id=int(tailoring_artifact["id"]),
+                target_url=manual_url,
+                current_url=getattr(page, "url", manual_url),
+                increment_attempt_count=True,
+                output_dir=str(output_dir),
+            )
+            submit_started_at = datetime.now(timezone.utc)
+            result = adapter.submit(page=page, resolver=resolver, context=context)
+            result = self._maybe_complete_email_verification(
+                adapter_name=adapter_name,
+                adapter=adapter,
+                page=page,
+                result=result,
+                recipient_email=profile.identity.email,
+                submit_started_at=submit_started_at,
+            )
+            self._persist_result(run_id=run_id, result=result, output_dir=output_dir, page=page)
+            self._maybe_notify(job=job, run_id=run_id, result=result)
+            return self._run_record(run_id)
+        finally:
+            session.close()
+
+    def _manual_checkpoint_message(self, row) -> str:
+        blocked_reason = str(row["blocked_reason"] or "").strip()
+        blocked_payload = self._decode_json_object(row["blocked_payload"])
+        details = blocked_payload.get("details") if isinstance(blocked_payload, dict) else {}
+        if blocked_reason == "manual_checkpoint_required" and isinstance(details, dict):
+            checkpoint = str(details.get("checkpoint") or "").strip()
+            if checkpoint == "professional_experience_dropdowns":
+                return (
+                    "Manual checkpoint opened in the browser. Fill the Professional Experience dropdown fields "
+                    "(Country, State/Province, date dropdowns, and May We Contact as needed) on the current "
+                    "candidate profile page, leave the page open there, then return here and press Enter."
+                )
+            if checkpoint == "job_specific_questions_gpa":
+                return (
+                    "Manual checkpoint opened in the browser. Select the undergraduate GPA answer on the "
+                    "Job Specific Questions page, submit that page manually if needed, leave the resulting page open, "
+                    "then return here and press Enter."
+                )
+        return (
+            "Manual gate continuation opened in the browser. "
+            "Complete any captcha, login, or consent steps, navigate to the application form, "
+            "then return here and press Enter."
+        )
 
     def submit_batch(
         self,
@@ -246,7 +347,18 @@ class ApplicationService:
         if str(job["source"]) == "linkedin":
             if self.linkedin_adapter.is_easy_apply_available(page):
                 return "linkedin", self.linkedin_adapter, target_url
-            external_url = self.linkedin_adapter.extract_external_apply_url(page)
+            external_url = ""
+            for _ in range(3):
+                external_url = self.linkedin_adapter.extract_external_apply_url(page)
+                if external_url:
+                    break
+                wait = getattr(page, "wait_for_timeout", None)
+                if callable(wait):
+                    wait(1500)
+            if not external_url:
+                previous_target = self.store.find_latest_application_target(job_id=int(job["id"]))
+                if previous_target is not None:
+                    external_url = str(previous_target["target_url"] or "").strip()
             if external_url:
                 page.goto(external_url, wait_until="domcontentloaded")
                 target_url = external_url
@@ -254,7 +366,18 @@ class ApplicationService:
                 raise RuntimeError("LinkedIn job did not expose Easy Apply or a supported external apply link.")
         if self.greenhouse_adapter.is_greenhouse_target(target_url, page=page):
             return "greenhouse", self.greenhouse_adapter, target_url
+        if self.icims_adapter.is_icims_target(target_url, page=page):
+            return "icims", self.icims_adapter, target_url
         raise RuntimeError(f"Unsupported apply target for job source={job['source']} url={target_url}")
+
+    def _adapter_for_name(self, adapter_name: str):
+        if adapter_name == "linkedin":
+            return self.linkedin_adapter
+        if adapter_name == "greenhouse":
+            return self.greenhouse_adapter
+        if adapter_name == "icims":
+            return self.icims_adapter
+        raise RuntimeError(f"Unsupported adapter name: {adapter_name}")
 
     def _persist_result(self, *, run_id: int, result: SubmitResult, output_dir: Path, page) -> None:
         self.store.update_application_run(
@@ -287,6 +410,11 @@ class ApplicationService:
                 json.dumps(result.blocker.to_dict(), indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
+            screenshot_path = output_dir / "blocked.png"
+            try:
+                page.screenshot(path=str(screenshot_path), full_page=True)
+            except Exception:
+                pass
             try:
                 (output_dir / "page.html").write_text(page.content(), encoding="utf-8")
             except Exception:
