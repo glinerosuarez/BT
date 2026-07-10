@@ -151,6 +151,37 @@ class JobStore:
                 FOREIGN KEY(run_log_id) REFERENCES run_logs(id)
             );
 
+            CREATE TABLE IF NOT EXISTS source_query_run_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_log_id INTEGER NOT NULL,
+                source_name TEXT NOT NULL,
+                query_key TEXT NOT NULL,
+                fetched_count INTEGER NOT NULL,
+                normalized_count INTEGER NOT NULL DEFAULT 0,
+                rejected_missing_core_fields_count INTEGER NOT NULL DEFAULT 0,
+                rejected_age_count INTEGER NOT NULL,
+                after_stage_1a_count INTEGER NOT NULL DEFAULT 0,
+                rejected_internship_count INTEGER NOT NULL,
+                rejected_us_scope_count INTEGER NOT NULL,
+                rejected_title_blacklist_count INTEGER NOT NULL DEFAULT 0,
+                rejected_data_role_count INTEGER NOT NULL DEFAULT 0,
+                after_stage_1b_count INTEGER NOT NULL DEFAULT 0,
+                rejected_policy_gate_count INTEGER NOT NULL DEFAULT 0,
+                after_stage_1c_count INTEGER NOT NULL DEFAULT 0,
+                rejected_eligibility_count INTEGER NOT NULL,
+                rejected_relevance_count INTEGER NOT NULL,
+                rejected_source_quality_count INTEGER NOT NULL DEFAULT 0,
+                recovered_source_quality_count INTEGER NOT NULL DEFAULT 0,
+                persisted_count INTEGER NOT NULL,
+                notified_count INTEGER NOT NULL,
+                duplicate_count INTEGER NOT NULL,
+                error_count INTEGER NOT NULL,
+                dead_token_count INTEGER NOT NULL DEFAULT 0,
+                feed_error_count INTEGER NOT NULL DEFAULT 0,
+                security_verification_blocked_count INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(run_log_id) REFERENCES run_logs(id)
+            );
+
             CREATE TABLE IF NOT EXISTS source_item_health (
                 source_name TEXT NOT NULL,
                 item_value TEXT NOT NULL,
@@ -284,6 +315,19 @@ class JobStore:
         self._ensure_column("source_run_logs", "security_verification_blocked_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "rejected_source_quality_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "recovered_source_quality_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "normalized_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "rejected_missing_core_fields_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "after_stage_1a_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "rejected_title_blacklist_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "rejected_data_role_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "after_stage_1b_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "rejected_policy_gate_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "after_stage_1c_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "dead_token_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "feed_error_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "security_verification_blocked_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "rejected_source_quality_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "recovered_source_quality_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_item_health", "consecutive_successes", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_item_health", "total_failures", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_item_health", "total_successes", "INTEGER NOT NULL DEFAULT 0")
@@ -721,6 +765,52 @@ class JobStore:
                     stats.security_verification_blocked_count,
                 ),
             )
+        for source_name, query_stats in outcome.source_query_stats.items():
+            for query_key, stats in query_stats.items():
+                self._conn.execute(
+                    """
+                    INSERT INTO source_query_run_logs (
+                        run_log_id, source_name, query_key, fetched_count, normalized_count,
+                        rejected_missing_core_fields_count, rejected_age_count,
+                        after_stage_1a_count,
+                        rejected_internship_count, rejected_us_scope_count, rejected_title_blacklist_count,
+                        rejected_data_role_count, after_stage_1b_count, rejected_policy_gate_count,
+                        after_stage_1c_count,
+                        rejected_eligibility_count, rejected_relevance_count, rejected_source_quality_count,
+                        recovered_source_quality_count,
+                        persisted_count, notified_count, duplicate_count, error_count,
+                        dead_token_count, feed_error_count, security_verification_blocked_count
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_log_id,
+                        source_name,
+                        query_key,
+                        stats.fetched_count,
+                        stats.normalized_count,
+                        stats.rejected_missing_core_fields_count,
+                        stats.rejected_age_count,
+                        stats.after_stage_1a_count,
+                        stats.rejected_internship_count,
+                        stats.rejected_us_scope_count,
+                        stats.rejected_title_blacklist_count,
+                        stats.rejected_data_role_count,
+                        stats.after_stage_1b_count,
+                        stats.rejected_policy_gate_count,
+                        stats.after_stage_1c_count,
+                        stats.rejected_eligibility_count,
+                        stats.rejected_relevance_count,
+                        stats.rejected_source_quality_count,
+                        stats.recovered_source_quality_count,
+                        stats.persisted_count,
+                        stats.notified_count,
+                        stats.duplicate_count,
+                        stats.error_count,
+                        stats.dead_token_count,
+                        stats.feed_error_count,
+                        stats.security_verification_blocked_count,
+                    ),
+                )
         self._conn.commit()
 
     def record_source_item_results(self, source_name: str, item_results: list[dict[str, str]]) -> None:
@@ -1687,7 +1777,7 @@ class JobStore:
             """
             SELECT id, source, company, title, location, posted_at, url, description,
                    profile_match_score, profile_match_label, profile_match_reason_codes,
-                   job_text_version, job_text_snapshot
+                   job_text_version, job_text_snapshot, source_metadata
             FROM jobs
             WHERE id = ?
             LIMIT 1
@@ -1851,6 +1941,21 @@ class JobStore:
             LIMIT 1
             """,
             (application_run_id,),
+        ).fetchone()
+
+    def find_latest_application_target(self, *, job_id: int) -> sqlite3.Row | None:
+        return self._conn.execute(
+            """
+            SELECT adapter_name, target_url, current_url, status, updated_at
+            FROM application_runs
+            WHERE job_id = ?
+              AND target_url IS NOT NULL
+              AND TRIM(target_url) <> ''
+              AND adapter_name <> 'linkedin'
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (job_id,),
         ).fetchone()
 
     def list_application_runs(self, *, status: str | None = None, limit: int = 20) -> list[sqlite3.Row]:

@@ -32,6 +32,32 @@ DETAIL_TEXT_SCRIPT = """
 }
 """
 
+EXTERNAL_APPLY_URL_SCRIPT = """
+() => {
+  const normalize = (value) => {
+    const raw = (value || '').trim();
+    if (!raw) return '';
+    try {
+      const url = new URL(raw, window.location.href);
+      return url.href || '';
+    } catch (_) {
+      return raw;
+    }
+  };
+  const candidates = Array.from(document.querySelectorAll('a[href], button, [role="button"]'));
+  const match = candidates.find((candidate) => {
+    const text = (candidate.innerText || candidate.getAttribute('aria-label') || '').trim().toLowerCase();
+    return text === 'apply' || text === 'apply now' || text === 'solicitar';
+  });
+  if (match) {
+    if (match.href) return normalize(match.href);
+    const anchor = match.closest('a[href]');
+    if (anchor && anchor.href) return normalize(anchor.href);
+  }
+  return '';
+}
+"""
+
 EXPAND_MORE_SCRIPT = """
 () => {
   let clicked = 0;
@@ -320,6 +346,7 @@ class LinkedInSource(SourceConnector):
                 title,
             )
             detail_text = ""
+            external_apply_url = ""
             job_url = ""
             locator = page.locator('[data-view-name="job-search-job-card"]').nth(card_index - 1)
             locator_url = self._extract_card_job_url(locator)
@@ -359,12 +386,13 @@ class LinkedInSource(SourceConnector):
                             job_url = _canonical_linkedin_job_url(str(selected_links[0].get("href") or ""))
                     if job_url:
                         card["url"] = job_url
-                        detail_text = self._fetch_detail_text_from_job_url(page.context, job_url)
+                        detail_text, external_apply_url = self._fetch_detail_text_from_job_url(page.context, job_url)
             parsed = _build_row(
                 card=card,
                 detail_text=detail_text,
                 search_url=search_url,
                 detail_fetch_attempted=self.fetch_details,
+                external_apply_url=external_apply_url,
             )
             if parsed is not None:
                 rows.append(parsed)
@@ -429,26 +457,34 @@ class LinkedInSource(SourceConnector):
             "url": _canonical_linkedin_job_url(job_url),
             "card_text": "",
         }
-        return _build_row(card=card, detail_text=detail_text, search_url=job_url, detail_fetch_attempted=True)
+        external_apply_url = _extract_external_apply_url_from_page(page)
+        return _build_row(
+            card=card,
+            detail_text=detail_text,
+            search_url=job_url,
+            detail_fetch_attempted=True,
+            external_apply_url=external_apply_url,
+        )
 
-    def _fetch_detail_text_from_job_url(self, context, job_url: str) -> str:
+    def _fetch_detail_text_from_job_url(self, context, job_url: str) -> tuple[str, str]:
         detail_page = context.new_page()
         detail_page.set_default_timeout(self.page_timeout_seconds * 1000)
         detail_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
         try:
             self._goto_linkedin_page(detail_page, job_url)
             if _page_requires_login(detail_page.url):
-                return ""
+                return "", ""
             expanded = int(detail_page.evaluate(EXPAND_MORE_SCRIPT) or 0)
             if expanded:
                 detail_page.wait_for_timeout(750)
             detail_text = str(detail_page.evaluate(DETAIL_TEXT_SCRIPT) or "")
             if not detail_text.strip():
                 detail_text = str(detail_page.locator("body").inner_text() or "")
-            return detail_text
+            external_apply_url = _extract_external_apply_url_from_page(detail_page)
+            return detail_text, external_apply_url
         except PlaywrightTimeoutError:
             LOG.warning("linkedin_direct_detail_timeout url=%s", job_url)
-            return ""
+            return "", ""
         finally:
             detail_page.close()
 
@@ -654,6 +690,7 @@ def _build_row(
     detail_text: str,
     search_url: str,
     detail_fetch_attempted: bool,
+    external_apply_url: str = "",
 ) -> dict | None:
     detail = _parse_detail_text(detail_text)
     if bool(detail.get("is_reposted")) or bool(card.get("is_reposted")):
@@ -691,6 +728,8 @@ def _build_row(
         "resolved_job_url": job_url,
         "accepting_applications": bool(detail.get("accepting_applications", True)),
     }
+    if external_apply_url:
+        source_metadata["external_apply_url"] = external_apply_url
     return {
         "source": "linkedin",
         "source_detail": search_url,
@@ -705,6 +744,32 @@ def _build_row(
         "compensation_type": _classify_compensation(card_text=str(card.get("card_text") or ""), detail_text=detail_text),
         "skills": [],
     }
+
+
+def _extract_external_apply_url_from_page(page) -> str:
+    try:
+        href = str(page.evaluate(EXTERNAL_APPLY_URL_SCRIPT) or "").strip()
+    except Exception:
+        href = ""
+    if not href:
+        return ""
+    return _normalize_external_apply_url(href)
+
+
+def _normalize_external_apply_url(url: str) -> str:
+    value = url.strip()
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    if "linkedin.com" in parsed.netloc and parsed.path.startswith("/safety/go"):
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        wrapped = str(query.get("url") or "").strip()
+        if wrapped:
+            value = wrapped
+            parsed = urlparse(value)
+    if "linkedin.com" in parsed.netloc:
+        return ""
+    return value
 
 
 def _linkedin_job_id(url: str) -> str:

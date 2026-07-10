@@ -48,8 +48,6 @@ def make_settings(db_path: str, data_dir: Path) -> Settings:
         policy_reject_patterns=[
             r"\\bph\\.?d\\.?\\b",
             r"\\bdoctoral\\b",
-            r"\\beconomics team\\b",
-            r"\\boperations research\\b",
         ],
         min_data_signal_count=2,
         greenhouse_token_file=str(data_dir / "greenhouse_tokens.txt"),

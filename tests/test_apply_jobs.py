@@ -69,6 +69,9 @@ class FakePage:
     def content(self) -> str:
         return "easy apply" if self._easy_apply else "external apply"
 
+    def evaluate(self, script: str):
+        return None
+
     def extract_fields(self):
         return self._fields
 
@@ -371,6 +374,57 @@ class ApplyJobsTests(unittest.TestCase):
         with self.assertRaises(ResolutionError):
             resolver.resolve(question_text="What is your favorite database?")
 
+    def test_answer_resolver_classifies_supported_intents(self) -> None:
+        resolver = self._resolver()
+        self.assertEqual(
+            resolver.classify_intent(question_text="Please provide your consent for the storage, processing, and use of your data for employment.*"),
+            "consent_required",
+        )
+        self.assertEqual(
+            resolver.classify_intent(question_text="What is your current location?"),
+            "current_location",
+        )
+        self.assertEqual(
+            resolver.classify_intent(question_text="Are you currently authorized to work in the United States?"),
+            "work_auth_us",
+        )
+
+    def test_answer_resolver_exposes_capability_matrix_rows(self) -> None:
+        resolver = self._resolver()
+        capability = resolver.capability_for_field(
+            portal="linkedin",
+            question_text="Please provide your consent for the storage, processing, and use of your data for employment.*",
+            field_type="checkbox-group",
+        )
+        self.assertIsNotNone(capability)
+        self.assertEqual(capability.submit_policy, "safe_autofill_if_single_option")
+
+        capability = resolver.capability_for_field(
+            portal="greenhouse",
+            question_text="Are you currently authorized to work in the United States?",
+            field_type="radio-group",
+        )
+        self.assertIsNotNone(capability)
+        self.assertEqual(capability.resolver_mode, "structured_boolean_yes_no")
+
+    def test_answer_resolver_resolves_via_capability_matrix(self) -> None:
+        resolver = self._resolver()
+        resolution = resolver.resolve_for_portal(
+            portal="linkedin",
+            question_text="Please provide your consent for the storage, processing, and use of your data for employment.*",
+            field_type="checkbox-group",
+        )
+        self.assertEqual(resolution.answer, "Yes")
+        self.assertIn("capability:linkedin:consent_required", resolution.source)
+
+        resolution = resolver.resolve_for_portal(
+            portal="greenhouse",
+            question_text="Are you currently authorized to work in the United States?",
+            field_type="radio-group",
+        )
+        self.assertEqual(resolution.answer, "Yes")
+        self.assertIn("capability:greenhouse:work_auth_us", resolution.source)
+
     def test_answer_resolver_computes_education_fields(self) -> None:
         profile, answers = load_application_inputs(str(self.profile_root), "default")
         resolver = AnswerResolver(profile=profile, answers=answers)
@@ -400,6 +454,10 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(
             resolver.resolve(question_text="End date month*", field_name="end-month--0").answer,
             "May",
+        )
+        self.assertEqual(
+            resolver.resolve(question_text="What is your current location?").answer,
+            "New York, NY",
         )
 
     def test_answer_resolver_computes_professional_experience_fields(self) -> None:
@@ -551,6 +609,33 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(result.status, "submitted")
         self.assertTrue(page.submitted)
         self.assertIn("resume", page.values)
+
+    def test_linkedin_adapter_handles_required_consent_checkbox_group(self) -> None:
+        adapter = LinkedInEasyApplyAdapter()
+        page = FakePage(
+            url="https://www.linkedin.com/jobs/view/1",
+            fields=[
+                {
+                    "field_name": "consent",
+                    "question_text": "Please provide your consent for the storage, processing, and use of your data for employment.*",
+                    "field_type": "checkbox-group",
+                    "required": True,
+                    "current_value": "",
+                    "options": [
+                        {
+                            "selector": "#consent-retain",
+                            "text": "Traackr has my consent to retain my data for the purpose of considering me for employment.",
+                        }
+                    ],
+                }
+            ],
+            confirmation={"message": "Application submitted"},
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(page.values["consent"], "Yes")
 
     def test_linkedin_adapter_blocks_on_unknown_required_question(self) -> None:
         adapter = LinkedInEasyApplyAdapter()

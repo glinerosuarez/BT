@@ -7,18 +7,40 @@ from job_hunter.models import JobRecord
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _BULLET_LINE_RE = re.compile(r"^(?:[-*•]|\d+[.)])\s+(.*\S)$")
-_HEADING_RE = re.compile(r"^(requirements?|qualifications?|responsibilities|what you'll do|what you will do|about the role)$", re.IGNORECASE)
+_HEADING_RE = re.compile(
+    r"^(requirements?|qualifications?|responsibilities|what you'll do|what you will do|about the role|"
+    r"job description|role description|key responsibilities|required skills and qualifications|"
+    r"preferred qualifications|internship details|about us)$",
+    re.IGNORECASE,
+)
 _WHITESPACE_RE = re.compile(r"\s+")
+_INLINE_SECTION_HEADINGS: tuple[str, ...] = (
+    "Job description",
+    "About Us:",
+    "Role Description",
+    "Key Responsibilities",
+    "Required Skills and Qualifications",
+    "Preferred Qualifications",
+    "Internship Details",
+    "Requirements",
+    "Qualifications",
+    "Responsibilities",
+    "What you'll do",
+    "What you will do",
+)
+_INLINE_SECTION_HEADINGS_SORTED: tuple[str, ...] = tuple(sorted(_INLINE_SECTION_HEADINGS, key=len, reverse=True))
 
 _FLAG_PATTERNS: dict[str, re.Pattern[str]] = {
     "mentions_phd": re.compile(r"\b(ph\.?d\.?|doctorate|doctoral)\b", re.IGNORECASE),
     "mentions_masters": re.compile(r"\b(master'?s|masters)\b", re.IGNORECASE),
     "mentions_economics": re.compile(r"\b(economics?|econometric)\b", re.IGNORECASE),
     "mentions_operations_research": re.compile(r"\boperations research\b", re.IGNORECASE),
+    "mentions_quant": re.compile(r"\bquant(itative)?\b", re.IGNORECASE),
     "mentions_research": re.compile(r"\bresearch\b", re.IGNORECASE),
     "mentions_causal_inference": re.compile(r"\bcausal inference\b", re.IGNORECASE),
     "mentions_llm": re.compile(r"\b(llm|large language model|large language models)\b", re.IGNORECASE),
     "mentions_production_ml": re.compile(r"\bproduction ml\b|\bml systems\b|\bmodel deployment\b|\bdeployed models?\b", re.IGNORECASE),
+    "mentions_trading": re.compile(r"\b(trading|market making|options theory|alpha generation)\b", re.IGNORECASE),
 }
 
 _BUILDER_SIGNAL_PATTERNS: dict[str, re.Pattern[str]] = {
@@ -97,7 +119,7 @@ class ShadowProfileScorer:
 
 
 def build_job_text_v1(job: JobRecord) -> str:
-    description_lines = _strip_boilerplate_lines(job.description)
+    description_lines = _strip_boilerplate_lines(_normalize_description_lines(job.description))
     description_blob = "\n".join(description_lines)
     summary_sentences = _extract_summary_sentences(description_blob, limit=3)
     qualification_bullets = _extract_section_bullets(
@@ -150,14 +172,17 @@ def _score_shadow_rules(job: JobRecord, job_text: str, flags: list[str]) -> tupl
         score -= 0.35
         reasons.append("flag_phd")
     if "mentions_research" in flags:
-        score -= 0.15
+        score -= 0.20
         reasons.append("flag_research")
     if _has_research_heavy_signals(blob):
-        score -= 0.2
+        score -= 0.25
         reasons.append("research_heavy_signal")
     if "mentions_economics" in flags or "mentions_operations_research" in flags:
-        score -= 0.15
+        score -= 0.20
         reasons.append("flag_domain_mismatch")
+    if _has_quant_research_signals(title=title, blob=blob, flags=set(flags)):
+        score -= 0.25
+        reasons.append("flag_quant_research")
     if "mentions_llm" in flags or "mentions_production_ml" in flags:
         score += 0.1
         reasons.append("flag_ml_systems")
@@ -184,12 +209,40 @@ def _has_research_heavy_signals(blob: str) -> bool:
     return any(pattern.search(blob) for pattern in _RESEARCH_HEAVY_PATTERNS.values())
 
 
+def _has_quant_research_signals(*, title: str, blob: str, flags: set[str]) -> bool:
+    title_has_quant_research = "quantitative research" in title or "quant research" in title
+    flag_has_quant_research = "mentions_quant" in flags and "mentions_research" in flags
+    trading_context = "mentions_trading" in flags
+    return title_has_quant_research or (flag_has_quant_research and trading_context)
+
+
 def _strip_boilerplate_lines(text: str) -> list[str]:
-    lines = [line.rstrip() for line in (text or "").splitlines()]
+    if isinstance(text, list):
+        lines = [str(line).rstrip() for line in text]
+    else:
+        lines = [line.rstrip() for line in (text or "").splitlines()]
     kept: list[str] = []
+    has_section_anchor = any(
+        line.strip().lower() == "job description"
+        or line.strip().lower().startswith(
+            ("about us", "role description", "key responsibilities", "requirements", "qualifications")
+        )
+        for line in lines
+    )
+    started_job_body = False
     for line in lines:
         candidate = line
         lowered = candidate.strip().lower()
+        if not started_job_body:
+            if lowered == "job description":
+                started_job_body = True
+                continue
+            if lowered.startswith(("about us", "role description", "key responsibilities", "requirements", "qualifications")):
+                started_job_body = True
+            elif not has_section_anchor:
+                started_job_body = True
+            else:
+                continue
         should_break = False
         for marker in _BOILERPLATE_MARKERS:
             idx = lowered.find(marker)
@@ -254,13 +307,56 @@ def _extract_section_bullets(lines: list[str], heading_keywords: tuple[str, ...]
         if any(keyword in lowered for keyword in heading_keywords) and len(lowered) < 80:
             in_section = True
             continue
-        if in_section and _HEADING_RE.match(line):
+        if in_section and (_HEADING_RE.match(line) or _looks_like_heading_fragment(line)):
             break
         match = _BULLET_LINE_RE.match(line)
         if in_section and match:
             bullets.append(f"- {_WHITESPACE_RE.sub(' ', match.group(1)).strip()}")
             if len(bullets) >= limit:
                 break
-        elif in_section and bullets and not match:
+            continue
+        if in_section and _HEADING_RE.match(line):
             break
+        if in_section and not match:
+            for sentence in _split_section_sentences(line):
+                bullets.append(f"- {sentence}")
+                if len(bullets) >= limit:
+                    break
+            if len(bullets) >= limit:
+                break
     return bullets
+
+
+def _normalize_description_lines(text: str) -> list[str]:
+    normalized = (text or "").replace("∙", "\n").replace("•", "\n- ")
+    for heading in _INLINE_SECTION_HEADINGS_SORTED:
+        escaped = re.escape(heading.rstrip(":"))
+        normalized = re.sub(rf"(?<!\n)\s+({escaped}:?)\b", r"\n\1", normalized)
+        normalized = re.sub(rf"^({escaped}:?)\s+", r"\1\n", normalized, flags=re.MULTILINE)
+    normalized = re.sub(r"\bAt a glance\b", "\nAt a glance", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bSave Share Apply\b", "\nSave Share Apply", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\n{2,}", "\n", normalized)
+    return [line.strip() for line in normalized.splitlines() if line.strip()]
+
+
+def _split_section_sentences(line: str) -> list[str]:
+    cleaned = _WHITESPACE_RE.sub(" ", line).strip(" -")
+    if not cleaned:
+        return []
+    sentences = [_WHITESPACE_RE.sub(" ", part).strip(" .") for part in _SENTENCE_SPLIT_RE.split(cleaned) if part.strip()]
+    if len(sentences) <= 1:
+        return [cleaned]
+    return [sentence for sentence in sentences if len(sentence) >= 12]
+
+
+def _looks_like_heading_fragment(line: str) -> bool:
+    lowered = line.strip().lower().rstrip(":")
+    if not lowered:
+        return False
+    for heading in _INLINE_SECTION_HEADINGS:
+        target = heading.lower().rstrip(":")
+        if lowered == target:
+            return False
+        if target.startswith(lowered):
+            return True
+    return False

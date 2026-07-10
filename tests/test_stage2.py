@@ -47,13 +47,15 @@ class Stage2Tests(unittest.TestCase):
 
     def test_extract_job_flags(self) -> None:
         flags = extract_job_flags(
-            "Masters degree preferred. Production ML systems with LLM deployment and causal inference research."
+            "Masters degree preferred. Production ML systems with LLM deployment and causal inference research in quantitative trading."
         )
         self.assertIn("mentions_masters", flags)
         self.assertIn("mentions_production_ml", flags)
         self.assertIn("mentions_llm", flags)
         self.assertIn("mentions_causal_inference", flags)
         self.assertIn("mentions_research", flags)
+        self.assertIn("mentions_quant", flags)
+        self.assertIn("mentions_trading", flags)
 
     def test_shadow_profile_scorer_returns_shadow_fields(self) -> None:
         job = JobRecord(
@@ -136,6 +138,28 @@ class Stage2Tests(unittest.TestCase):
         self.assertLess(result.profile_match_score, 0.45)
         self.assertIn("research_heavy_signal", result.profile_match_reason_codes)
 
+    def test_shadow_profile_scorer_penalizes_quant_research_roles(self) -> None:
+        job = JobRecord(
+            source="fake",
+            external_id="5b",
+            url="https://example.com/job-5b",
+            title="Quantitative Research Intern (BS/MS)",
+            company="IMC Trading",
+            location="Chicago, IL",
+            is_internship=True,
+            posted_at="2026-07-01",
+            description=(
+                "Develop your research skills with support from a mentor. "
+                "Enhance your understanding of options theory and market making. "
+                "Experience in Python is highly desired."
+            ),
+            compensation_type="paid",
+            ingested_at="2026-07-02T00:00:00+00:00",
+        )
+        result = ShadowProfileScorer().score(job)
+        self.assertEqual(result.profile_match_label, "reject")
+        self.assertIn("flag_quant_research", result.profile_match_reason_codes)
+
     def test_job_text_summary_prefers_job_specific_sentences_over_brand_copy(self) -> None:
         job = JobRecord(
             source="fake",
@@ -182,6 +206,38 @@ class Stage2Tests(unittest.TestCase):
         self.assertIn("Build ETL pipelines and support AWS data systems", text)
         self.assertNotIn("More Save Apply", text)
         self.assertNotIn("You match all qualifications", text)
+
+    def test_job_text_extracts_inline_handshake_backend_sections(self) -> None:
+        job = JobRecord(
+            source="handshake",
+            external_id="8",
+            url="https://example.com/job-8",
+            title="Backend Developer Intern",
+            company="GBCS Group",
+            location="Remote",
+            is_internship=True,
+            posted_at="2026-07-01",
+            description=(
+                "Posted 6 hours ago Save Share Apply At a glance Remote Job description "
+                "Role Description As a Backend Developer Intern at SkyIT, you will contribute to robust server-side components and APIs. "
+                "Key Responsibilities Develop, optimize, and maintain backend services and APIs using Django REST Framework (Python) and Express (JavaScript). "
+                "Deploy, monitor, and manage backend applications on Microsoft Azure cloud platform. "
+                "Required Skills and Qualifications Strong portfolio showcasing backend development with Django REST Framework (Python) and possibly Express (JavaScript). "
+                "Working knowledge of Docker containerization and RESTful and GraphQL API design."
+            ),
+            compensation_type="paid",
+            ingested_at="2026-07-02T00:00:00+00:00",
+        )
+        text = build_job_text_v1(job)
+        self.assertIn("SUMMARY:", text)
+        self.assertIn("Backend Developer Intern at SkyIT", text)
+        self.assertIn("QUALIFICATIONS:", text)
+        self.assertIn("Django REST Framework", text)
+        self.assertIn("RESTful and GraphQL API design", text)
+        self.assertIn("RESPONSIBILITIES:", text)
+        self.assertIn("backend services and APIs using Django REST Framework", text)
+        self.assertIn("backend applications on Microsoft Azure cloud platform", text)
+        self.assertNotIn("Posted 6 hours ago", text)
 
 
 if __name__ == "__main__":

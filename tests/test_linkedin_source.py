@@ -421,6 +421,34 @@ Posted 8 hours ago
         assert row is not None
         self.assertFalse(bool(row["source_metadata"]["accepting_applications"]))
 
+    def test_build_row_persists_external_apply_url(self) -> None:
+        card = _parse_card_text(
+            """Software Engineer Intern
+Example
+Austin, TX
+Posted 8 hours ago
+""",
+            fallback_url="https://www.linkedin.com/jobs/view/1234567890/?trackingId=abc",
+        )
+        row = _build_row(
+            card=card,
+            detail_text="""Software Engineer Intern
+Example
+Austin, TX
+Posted 8 hours ago
+About the job
+Build backend systems and APIs with Python.
+""",
+            search_url="https://www.linkedin.com/jobs/search/?keywords=software+engineer+intern",
+            detail_fetch_attempted=True,
+            external_apply_url="https://careers.example.com/jobs/123",
+        )
+        assert row is not None
+        self.assertEqual(
+            row["source_metadata"]["external_apply_url"],
+            "https://careers.example.com/jobs/123",
+        )
+
     def test_build_row_skips_reposted_card(self) -> None:
         card = _parse_card_text(
             CARD_TEXT,

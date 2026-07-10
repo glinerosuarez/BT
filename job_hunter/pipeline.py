@@ -112,6 +112,10 @@ NEGATED_SPONSORSHIP_REGEXES = {
         r"\bfuture sponsorship for work authorization unavailable\b",
         flags=re.IGNORECASE,
     ),
+    "sponsorship_not_available": re.compile(
+        r"\b(visa\s+)?sponsorship\s+is\s+not\s+available\b|\b(visa\s+)?sponsorship\s+unavailable\b",
+        flags=re.IGNORECASE,
+    ),
 }
 BUILTIN_POLICY_REJECT_REGEXES = {
     "undergraduate_only": re.compile(

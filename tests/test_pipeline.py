@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from job_hunter.config import Settings
+from job_hunter.config import DEFAULT_POLICY_REJECT_PATTERNS, Settings
 from job_hunter.models import JobRecord
 from job_hunter.pipeline import (
     _classify_compensation,
@@ -69,8 +69,6 @@ def make_settings(db_path: str) -> Settings:
         policy_reject_patterns=[
             r"\bph\.?d\.?\b",
             r"\bdoctoral\b",
-            r"\beconomics team\b",
-            r"\boperations research\b",
         ],
         min_data_signal_count=2,
         greenhouse_token_file=None,
@@ -122,6 +120,10 @@ class FakeNotifier:
 
 
 class PipelineUnitTests(unittest.TestCase):
+    def test_default_policy_filters_no_longer_blacklist_operations_research_or_economics_team(self) -> None:
+        self.assertNotIn(r"\beconomics team\b", DEFAULT_POLICY_REJECT_PATTERNS)
+        self.assertNotIn(r"\boperations research\b", DEFAULT_POLICY_REJECT_PATTERNS)
+
     def test_compensation_classification(self) -> None:
         self.assertEqual(_classify_compensation("Data Engineering Intern", "Unpaid · Internship Remote"), "unpaid")
         self.assertEqual(_classify_compensation("Data Science Internship", "$18-50/hr · Internship"), "paid")
@@ -218,6 +220,28 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertEqual(confidence, 0.0)
         self.assertIn("us_work_authorized_only", negative)
         self.assertIn("future_sponsorship_work_auth_unavailable", negative)
+        self.assertEqual(positive, [])
+
+    def test_eligibility_rejects_sponsorship_is_not_available_wording(self) -> None:
+        job = JobRecord(
+            source="linkedin",
+            external_id="4b",
+            url="https://example.com/4b",
+            title="Student Intern",
+            company="Duravant",
+            location="Downers Grove, IL",
+            is_internship=True,
+            posted_at="2026-07-02",
+            description=(
+                "Currently pursuing a degree in Statistics, Data Science, Analytics, Economics, or a related field. "
+                "Sponsorship is not available for this position."
+            ),
+            ingested_at="2026-07-07T00:00:00+00:00",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("sponsorship_not_available", negative)
         self.assertEqual(positive, [])
 
     def test_internship_and_us_scope_filters(self) -> None:

@@ -93,8 +93,6 @@ DEFAULT_NON_DATA_TITLE_PATTERNS = [
 DEFAULT_POLICY_REJECT_PATTERNS = [
     r"\bph\.?d\.?\b",
     r"\bdoctoral\b",
-    r"\beconomics team\b",
-    r"\boperations research\b",
 ]
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
 DEFAULT_GREENHOUSE_TOKEN_FILE = str(DEFAULT_DATA_DIR / "greenhouse_tokens.txt")

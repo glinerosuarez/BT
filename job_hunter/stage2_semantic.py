@@ -78,6 +78,15 @@ DEFAULT_SEMANTIC_PROFILES: tuple[SemanticProfile, ...] = (
         polarity="positive",
     ),
     SemanticProfile(
+        profile_id="backend_engineering",
+        text=(
+            "Ideal internship centered on backend engineering: backend services, server-side systems, APIs, "
+            "REST, GraphQL, Django, Express, databases, cloud deployment, Docker, scalable infrastructure, "
+            "reliability, and production software systems."
+        ),
+        polarity="positive",
+    ),
+    SemanticProfile(
         profile_id="ml_engineering",
         text=(
             "Ideal internship centered on machine learning engineering: applied ML, model deployment, "
@@ -111,6 +120,16 @@ DEFAULT_SEMANTIC_PROFILES: tuple[SemanticProfile, ...] = (
             "SEO, page performance, newsletters, content workflows, React, Next.js, Vue, JavaScript, TypeScript, "
             "and general product engineering without primary focus on data engineering, analytics engineering, "
             "production ML, ETL pipelines, or ML systems."
+        ),
+        polarity="negative",
+    ),
+    SemanticProfile(
+        profile_id="quant_research_trading",
+        text=(
+            "Low-fit internship centered on quantitative research, trading, market making, options theory, "
+            "alpha generation, stat arb, pricing models, econometrics, and finance research. "
+            "These roles emphasize quant research and trading intuition rather than building data pipelines, "
+            "backend systems, production ML, or applied data engineering systems."
         ),
         polarity="negative",
     ),
@@ -214,6 +233,16 @@ _NEGATIVE_PROFILE_LEXICAL_PATTERNS: dict[str, tuple[str, ...]] = {
         r"\bjavascript\b",
         r"\btypescript\b",
         r"\bproduct features?\b",
+    ),
+    "quant_research_trading": (
+        r"\bquantitative research\b",
+        r"\bquant research\b",
+        r"\bmarket making\b",
+        r"\boptions theory\b",
+        r"\balpha generation\b",
+        r"\bstat(?:istical)? arb\b",
+        r"\beconometrics?\b",
+        r"\btrading intuition\b",
     ),
 }
 
@@ -414,13 +443,19 @@ def _research_heaviness_adjustment(job_text: str) -> tuple[float, list[str]]:
     has_degree_track_title_signal = False
 
     if "mentions_research" in flags:
-        penalty += 0.05
+        penalty += 0.08
         reasons.append("semantic_penalty_mentions_research")
         has_research_signal = True
     if _has_research_heavy_signals(blob):
         penalty += 0.20
         reasons.append("semantic_penalty_research_heavy_signal")
         has_research_signal = True
+    if "mentions_quant" in flags:
+        penalty += 0.08
+        reasons.append("semantic_penalty_quant_signal")
+    if "mentions_trading" in flags:
+        penalty += 0.10
+        reasons.append("semantic_penalty_trading_signal")
     if "mentions_masters" in flags:
         penalty += 0.02
         reasons.append("semantic_penalty_masters_signal")
@@ -441,6 +476,10 @@ def _research_heaviness_adjustment(job_text: str) -> tuple[float, list[str]]:
         penalty += 0.20
         reasons.append("semantic_penalty_research_background")
         has_research_signal = True
+    if "quantitative research" in title_blob or "quant research" in title_blob:
+        penalty += 0.18
+        reasons.append("semantic_penalty_quant_research_title")
+        has_research_signal = True
     if "working towards a master's degree" in blob or "masters statistics major" in blob:
         penalty += 0.02
         reasons.append("semantic_penalty_degree_preference_mismatch")
@@ -456,6 +495,9 @@ def _research_heaviness_adjustment(job_text: str) -> tuple[float, list[str]]:
     if has_research_signal and has_degree_track_signal and has_publication_signal:
         penalty += 0.06
         reasons.append("semantic_penalty_research_degree_publication_stack")
+    if ("mentions_quant" in flags and "mentions_research" in flags) or "quantitative research" in title_blob:
+        penalty += 0.10
+        reasons.append("semantic_penalty_quant_research_stack")
 
     return min(penalty, 0.6), reasons
 
