@@ -43,6 +43,26 @@ _COMPANY_SECTION_MARKERS = (
     "our values",
     "culture",
 )
+_SKILL_CATEGORY_PREFIXES = (
+    "programming:",
+    "ml / ai:",
+    "data / platform:",
+    "infrastructure / tools:",
+    "specializations:",
+    "core:",
+    "cloud & infrastructure:",
+    "data platforms:",
+    "tools:",
+    "ml & ai:",
+)
+_EDUCATION_DETAIL_PREFIXES = (
+    "master of science",
+    "bachelor of science",
+    "coursework:",
+    "clubs and associations:",
+)
+_PDF_RIGHT_TEXT_MARKER = "[[RIGHT_TEXT]]"
+_SECTION_BREAK_GAP = 14
 
 
 class TailoringService:
@@ -308,6 +328,9 @@ def _render_markdown_pdf(markdown_text: str, output_path: Path, *, title: str) -
         after_gap = int(style["after_gap"])
         continuation_indent = int(style.get("continuation_indent", indent))
         right_text = str(style.get("right_text") or "").strip()
+        next_nonempty_line = _next_nonempty_processed_line(processed_lines, start_index=index + 1)
+        if next_nonempty_line and _is_section_heading(next_nonempty_line):
+            after_gap = max(after_gap, _SECTION_BREAK_GAP)
         x = margin_x + indent
 
         doc.setFont(font_name, font_size)
@@ -393,12 +416,43 @@ def _preprocess_markdown_for_pdf(markdown_text: str) -> list[str]:
     normalized = _HTML_BREAK_RE.sub("\n", markdown_text)
     raw_lines = normalized.splitlines()
     lines: list[str] = []
-    for raw_line in raw_lines:
+    index = 0
+    current_section = ""
+    while index < len(raw_lines):
+        raw_line = raw_lines[index]
         line = raw_line.rstrip()
+        if _MARKDOWN_HEADING_RE.match(line):
+            current_section = _strip_inline_markdown(_HTML_TAG_RE.sub("", line)).strip().lstrip("#").strip().lower()
         if not line.strip():
+            if lines:
+                previous_text = _strip_inline_markdown(_HTML_TAG_RE.sub("", lines[-1])).strip().lower()
+                next_nonempty_index = index + 1
+                while next_nonempty_index < len(raw_lines) and not raw_lines[next_nonempty_index].strip():
+                    next_nonempty_index += 1
+                next_nonempty_line = raw_lines[next_nonempty_index] if next_nonempty_index < len(raw_lines) else ""
+                if (
+                    previous_text.startswith(_SKILL_CATEGORY_PREFIXES)
+                    or current_section == "education"
+                    or _MARKDOWN_HEADING_RE.match(next_nonempty_line)
+                ):
+                    index += 1
+                    continue
             lines.append("")
+            index += 1
             continue
+        if _strip_inline_markdown(_HTML_TAG_RE.sub("", line)).strip().lower().startswith("technologies:"):
+            next_index = index + 1
+            while next_index < len(raw_lines) and not raw_lines[next_index].strip():
+                next_index += 1
+            if next_index < len(raw_lines):
+                next_line = raw_lines[next_index].rstrip()
+                next_stripped = _strip_inline_markdown(_HTML_TAG_RE.sub("", next_line)).strip()
+                if next_stripped.startswith("(") and next_stripped.endswith(")"):
+                    lines.append(f"{line} {_PDF_RIGHT_TEXT_MARKER} {next_stripped}")
+                    index = next_index + 1
+                    continue
         lines.append(line)
+        index += 1
     return lines
 
 
@@ -414,6 +468,11 @@ def _strip_inline_markdown(text: str) -> str:
 
 def _classify_pdf_line(line: str, *, line_index: int, total_lines: int) -> dict[str, object]:
     raw = line.rstrip()
+    right_text = ""
+    if _PDF_RIGHT_TEXT_MARKER in raw:
+        raw, right_text = raw.split(_PDF_RIGHT_TEXT_MARKER, 1)
+        raw = raw.rstrip()
+        right_text = _WHITESPACE_RE.sub(" ", _strip_inline_markdown(_HTML_TAG_RE.sub("", right_text))).strip()
     stripped = _strip_inline_markdown(_HTML_TAG_RE.sub("", raw).replace("<br>", " ").replace("<br/>", " "))
     stripped = _WHITESPACE_RE.sub(" ", stripped).strip()
     heading_text = stripped.lstrip("#").strip() if _MARKDOWN_HEADING_RE.match(raw) else stripped
@@ -436,7 +495,7 @@ def _classify_pdf_line(line: str, *, line_index: int, total_lines: int) -> dict[
             "indent": 0,
             "continuation_indent": 0,
             "line_gap": 28,
-            "after_gap": 16,
+            "after_gap": 8,
         }
 
     if _MARKDOWN_HEADING_RE.match(raw):
@@ -485,19 +544,31 @@ def _classify_pdf_line(line: str, *, line_index: int, total_lines: int) -> dict[
             "font_size": 8,
             "indent": 12,
             "continuation_indent": 12,
-            "line_gap": 10,
+            "line_gap": 8,
             "after_gap": 0,
         }
 
     if stripped.lower().startswith("technologies:"):
         return {
             "text": stripped,
+            "right_text": right_text,
             "font_name": "Helvetica-Oblique",
             "font_size": 8,
             "indent": 12,
             "continuation_indent": 12,
-            "line_gap": 10,
-            "after_gap": 1,
+            "line_gap": 8,
+            "after_gap": 0,
+        }
+
+    if stripped.lower().startswith(_SKILL_CATEGORY_PREFIXES):
+        return {
+            "text": stripped,
+            "font_name": "Helvetica",
+            "font_size": 9,
+            "indent": 0,
+            "continuation_indent": 0,
+            "line_gap": 9,
+            "after_gap": 0,
         }
 
     if _DATE_RANGE_RE.search(stripped):
@@ -510,6 +581,17 @@ def _classify_pdf_line(line: str, *, line_index: int, total_lines: int) -> dict[
             "indent": 0,
             "continuation_indent": 0,
             "line_gap": 12,
+            "after_gap": 0,
+        }
+
+    if stripped.lower().startswith(_EDUCATION_DETAIL_PREFIXES):
+        return {
+            "text": stripped,
+            "font_name": "Helvetica",
+            "font_size": 10,
+            "indent": 0,
+            "continuation_indent": 0,
+            "line_gap": 10,
             "after_gap": 0,
         }
 
@@ -549,6 +631,18 @@ def _normalize_contact_line(text: str) -> str:
     if len(values) <= 1:
         return text
     return " | ".join(values)
+
+
+def _next_nonempty_processed_line(lines: list[str], *, start_index: int) -> str:
+    for candidate in lines[start_index:]:
+        if candidate.strip():
+            return candidate
+    return ""
+
+
+def _is_section_heading(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("## ")
 
 
 def _wrap_text_to_width(text: str, *, max_width: float, canvas_doc, font_name: str, font_size: float) -> list[str]:
