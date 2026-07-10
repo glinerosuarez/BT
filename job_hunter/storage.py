@@ -493,7 +493,12 @@ class JobStore:
         row = self._conn.execute(
             """
             SELECT description, url, source_detail, source_metadata, source_quality_status, source_quality_reason_codes,
-                   source_quality_prev_status, source_quality_recovered_at, job_text_snapshot
+                   source_quality_prev_status, source_quality_recovered_at, job_text_snapshot,
+                   profile_match_score, profile_match_label, profile_match_reason_codes,
+                   profile_version, scorer_version, job_text_version,
+                   semantic_match_score, semantic_match_label, semantic_match_reason_codes,
+                   semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
+                   semantic_profile_id, semantic_model_name, semantic_scorer_version, semantic_text_hash
             FROM jobs
             WHERE dedupe_key = ?
             LIMIT 1
@@ -550,6 +555,22 @@ class JobStore:
         job_text_snapshot = existing_job_text_snapshot
         description_replaced = description != existing_description
         snapshot_has_summary_beta = SUMMARY_BETA_MARKER in existing_job_text_snapshot.lower()
+        existing_profile_match_score = float(row["profile_match_score"] or 0.0)
+        existing_profile_match_label = str(row["profile_match_label"] or "")
+        existing_profile_match_reason_codes = str(row["profile_match_reason_codes"] or "")
+        existing_profile_version = str(row["profile_version"] or "")
+        existing_scorer_version = str(row["scorer_version"] or "")
+        existing_job_text_version = str(row["job_text_version"] or "")
+        existing_semantic_match_score = float(row["semantic_match_score"] or 0.0)
+        existing_semantic_match_label = str(row["semantic_match_label"] or "")
+        existing_semantic_match_reason_codes = str(row["semantic_match_reason_codes"] or "")
+        existing_semantic_base_score = float(row["semantic_base_score"] or 0.0)
+        existing_semantic_research_heaviness_score = float(row["semantic_research_heaviness_score"] or 0.0)
+        existing_semantic_adjustment_reason_codes = str(row["semantic_adjustment_reason_codes"] or "")
+        existing_semantic_profile_id = str(row["semantic_profile_id"] or "")
+        existing_semantic_model_name = str(row["semantic_model_name"] or "")
+        existing_semantic_scorer_version = str(row["semantic_scorer_version"] or "")
+        existing_semantic_text_hash = str(row["semantic_text_hash"] or "")
         if job.job_text_snapshot:
             job_text_snapshot = job.job_text_snapshot
         elif description_replaced or snapshot_has_summary_beta:
@@ -572,6 +593,44 @@ class JobStore:
                 ingested_at=job.ingested_at,
             )
             job_text_snapshot = build_job_text_v1(refreshed_job)
+
+        if _has_profile_shadow_update(job):
+            profile_match_score = job.profile_match_score
+            profile_match_label = job.profile_match_label
+            profile_match_reason_codes = json.dumps(job.profile_match_reason_codes)
+            profile_version = job.profile_version
+            scorer_version = job.scorer_version
+            job_text_version = job.job_text_version
+        else:
+            profile_match_score = existing_profile_match_score
+            profile_match_label = existing_profile_match_label
+            profile_match_reason_codes = existing_profile_match_reason_codes
+            profile_version = existing_profile_version
+            scorer_version = existing_scorer_version
+            job_text_version = existing_job_text_version
+
+        if _has_semantic_shadow_update(job):
+            semantic_match_score = job.semantic_match_score
+            semantic_match_label = job.semantic_match_label
+            semantic_match_reason_codes = json.dumps(job.semantic_match_reason_codes)
+            semantic_base_score = job.semantic_base_score
+            semantic_research_heaviness_score = job.semantic_research_heaviness_score
+            semantic_adjustment_reason_codes = json.dumps(job.semantic_adjustment_reason_codes)
+            semantic_profile_id = job.semantic_profile_id
+            semantic_model_name = job.semantic_model_name
+            semantic_scorer_version = job.semantic_scorer_version
+            semantic_text_hash = job.semantic_text_hash
+        else:
+            semantic_match_score = existing_semantic_match_score
+            semantic_match_label = existing_semantic_match_label
+            semantic_match_reason_codes = existing_semantic_match_reason_codes
+            semantic_base_score = existing_semantic_base_score
+            semantic_research_heaviness_score = existing_semantic_research_heaviness_score
+            semantic_adjustment_reason_codes = existing_semantic_adjustment_reason_codes
+            semantic_profile_id = existing_semantic_profile_id
+            semantic_model_name = existing_semantic_model_name
+            semantic_scorer_version = existing_semantic_scorer_version
+            semantic_text_hash = existing_semantic_text_hash
 
         self._conn.execute(
             """
@@ -640,23 +699,23 @@ class JobStore:
                 json.dumps(job.role_relevance_reason_codes),
                 job.policy_gate_status,
                 json.dumps(job.policy_gate_reason_codes),
-                job.profile_match_score,
-                job.profile_match_label,
-                json.dumps(job.profile_match_reason_codes),
-                job.profile_version,
-                job.scorer_version,
-                job.job_text_version,
+                profile_match_score,
+                profile_match_label,
+                profile_match_reason_codes,
+                profile_version,
+                scorer_version,
+                job_text_version,
                 job_text_snapshot,
-                job.semantic_match_score,
-                job.semantic_match_label,
-                json.dumps(job.semantic_match_reason_codes),
-                job.semantic_base_score,
-                job.semantic_research_heaviness_score,
-                json.dumps(job.semantic_adjustment_reason_codes),
-                job.semantic_profile_id,
-                job.semantic_model_name,
-                job.semantic_scorer_version,
-                job.semantic_text_hash,
+                semantic_match_score,
+                semantic_match_label,
+                semantic_match_reason_codes,
+                semantic_base_score,
+                semantic_research_heaviness_score,
+                semantic_adjustment_reason_codes,
+                semantic_profile_id,
+                semantic_model_name,
+                semantic_scorer_version,
+                semantic_text_hash,
                 job.age_days,
                 int(job.age_unknown),
                 source_detail,
@@ -1394,6 +1453,7 @@ class JobStore:
         row = self._conn.execute(
             """
             SELECT id, source, company, title, location, posted_at, url, compensation_type,
+                   description,
                    relevance_score, eligibility_status, eligibility_confidence,
                    source_quality_status, source_quality_reason_codes, source_quality_prev_status,
                    source_quality_recovered_at, source_metadata,
@@ -1520,6 +1580,44 @@ class JobStore:
                 semantic_model_name,
                 semantic_scorer_version,
                 semantic_text_hash,
+                job_id,
+            ),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def update_profile_shadow(
+        self,
+        job_id: int,
+        *,
+        profile_match_score: float,
+        profile_match_label: str,
+        profile_match_reason_codes: list[str],
+        profile_version: str,
+        scorer_version: str,
+        job_text_version: str,
+        job_text_snapshot: str,
+    ) -> bool:
+        cursor = self._conn.execute(
+            """
+            UPDATE jobs
+            SET profile_match_score = ?,
+                profile_match_label = ?,
+                profile_match_reason_codes = ?,
+                profile_version = ?,
+                scorer_version = ?,
+                job_text_version = ?,
+                job_text_snapshot = ?
+            WHERE id = ?
+            """,
+            (
+                profile_match_score,
+                profile_match_label,
+                json.dumps(profile_match_reason_codes),
+                profile_version,
+                scorer_version,
+                job_text_version,
+                job_text_snapshot,
                 job_id,
             ),
         )
@@ -2077,6 +2175,26 @@ def _source_quality_recovered(previous_status: str, current_status: str) -> bool
     if previous not in SOURCE_QUALITY_QUARANTINE_STATUSES:
         return False
     return current == "detail_complete"
+
+
+def _has_profile_shadow_update(job: JobRecord) -> bool:
+    return bool(
+        job.profile_match_label.strip()
+        or job.profile_version.strip()
+        or job.scorer_version.strip()
+        or job.job_text_version.strip()
+        or job.job_text_snapshot.strip()
+    )
+
+
+def _has_semantic_shadow_update(job: JobRecord) -> bool:
+    return bool(
+        job.semantic_match_label.strip()
+        or job.semantic_profile_id.strip()
+        or job.semantic_model_name.strip()
+        or job.semantic_scorer_version.strip()
+        or job.semantic_text_hash.strip()
+    )
 
 
 def _has_handshake_page_chrome(value: str) -> bool:

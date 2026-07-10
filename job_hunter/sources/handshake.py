@@ -638,7 +638,7 @@ def _build_source_metadata(
     normalized_description = str(detail.get("description") or "").strip()
     detail_title = str(detail.get("title") or "").strip()
     detail_title_polluted = _looks_like_polluted_title(detail_title)
-    effective_title_matches_card = _normalize_title_token(effective_title) == _normalize_title_token(card["title"])
+    effective_title_matches_card = _titles_match(effective_title, card["title"])
     title_matches = effective_title_matches_card
     contains_job_description = "job description" in cleaned_detail.lower()
     contains_at_a_glance = "at a glance" in cleaned_detail.lower()
@@ -691,7 +691,16 @@ def _build_source_metadata(
 
 
 def _normalize_title_token(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+    return re.sub(r"[^a-z0-9]+", " ", _strip_title_label_prefix(value).lower()).strip()
+
+
+def _strip_title_label_prefix(value: str) -> str:
+    stripped = value.strip()
+    return re.sub(r"^(job\s+title|title)\s*:\s*", "", stripped, flags=re.IGNORECASE).strip()
+
+
+def _titles_match(first: str, second: str) -> bool:
+    return _normalize_title_token(first) == _normalize_title_token(second)
 
 
 def _looks_like_summary_beta_pollution(value: str) -> bool:
@@ -761,7 +770,7 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
     if posted_idx is not None:
         posted_at = _relative_age_to_iso(lines[posted_idx]) or ""
         if posted_idx >= 1 and not title:
-            title = lines[posted_idx - 1]
+            title = _strip_title_label_prefix(lines[posted_idx - 1])
         company = _extract_company_near_posted(lines, posted_idx) or company
     elif lines:
         company = lines[0]
@@ -776,7 +785,7 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
 
     refined_title = _extract_job_description_title(lines)
     if _should_prefer_refined_title(refined_title, title):
-        title = refined_title
+        title = _strip_title_label_prefix(refined_title)
 
     return {
         "title": title,

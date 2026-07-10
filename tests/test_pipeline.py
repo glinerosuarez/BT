@@ -810,6 +810,98 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertNotIn("Summary Beta", snapshot_row["job_text_snapshot"])
         self.assertIn("Build ETL pipelines and data workflows for analytics", snapshot_row["job_text_snapshot"])
 
+    def test_duplicate_refresh_preserves_existing_shadow_scores_when_incoming_refresh_is_unscored(self) -> None:
+        scored_job = JobRecord(
+            source="handshake",
+            external_id="job-5d",
+            url="https://app.joinhandshake.com/jobs/11168432",
+            title="Data Engineering & ETL Automation Intern",
+            company="GreenPoint Global",
+            location="Remote, based in United States",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Build ETL pipelines and automate data workflows.",
+            compensation_type="unpaid",
+            ingested_at=recent_posted_at(),
+            relevance_score=4.2,
+            eligibility_confidence=0.95,
+            eligibility_status="sponsorship_friendly",
+            relevance_hits=["python", "etl"],
+            role_relevance_label="pass",
+            role_relevance_reason_codes=["data_role_gate_pass"],
+            policy_gate_status="pass",
+            policy_gate_reason_codes=[],
+            profile_match_score=0.95,
+            profile_match_label="pass",
+            profile_match_reason_codes=["builder_signal_alignment"],
+            profile_version="default_v1",
+            scorer_version="shadow_rules_v1",
+            job_text_version="job_text_v1",
+            job_text_snapshot="TITLE: Data Engineering & ETL Automation Intern",
+            semantic_match_score=0.67,
+            semantic_match_label="pass",
+            semantic_match_reason_codes=["semantic_similarity_pass"],
+            semantic_base_score=0.7,
+            semantic_research_heaviness_score=0.05,
+            semantic_adjustment_reason_codes=[],
+            semantic_profile_id="data_engineering",
+            semantic_model_name="fake-semantic-model",
+            semantic_scorer_version="semantic_shadow_v1",
+            semantic_text_hash="hash-1",
+            age_days=1.0,
+            age_unknown=False,
+            source_detail="https://app.joinhandshake.com/job-search/11120409?query=data+engineer+intern&page=1",
+            source_metadata={"detail_quality_status": "detail_mismatch"},
+            source_quality_status="detail_mismatch",
+            source_quality_reason_codes=["handshake_detail_mismatch"],
+        )
+        dedupe_key = _dedupe_key(scored_job)
+        inserted = self.store.insert_job(scored_job, dedupe_key)
+        self.assertTrue(inserted)
+
+        refresh_job = JobRecord(
+            source="handshake",
+            external_id="job-5d",
+            url="https://app.joinhandshake.com/jobs/11168432",
+            title="Data Engineering & ETL Automation Intern",
+            company="GreenPoint Global",
+            location="Remote, based in United States",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Build ETL pipelines and automate data workflows.",
+            compensation_type="unpaid",
+            ingested_at=recent_posted_at(),
+            relevance_score=4.2,
+            eligibility_confidence=0.95,
+            eligibility_status="sponsorship_friendly",
+            relevance_hits=["python", "etl"],
+            role_relevance_label="pass",
+            role_relevance_reason_codes=["data_role_gate_pass"],
+            policy_gate_status="pass",
+            policy_gate_reason_codes=[],
+            age_days=1.0,
+            age_unknown=False,
+            source_detail="https://app.joinhandshake.com/job-search/11120409?query=analytics+engineer&page=1",
+            source_metadata={"detail_quality_status": "detail_complete"},
+            source_quality_status="detail_complete",
+            source_quality_reason_codes=["handshake_detail_complete"],
+        )
+        refresh_meta = self.store.update_existing_job(refresh_job, dedupe_key)
+        self.assertTrue(refresh_meta["source_quality_recovered"])
+
+        row = self.store.get_stage2_job(1)
+        self.assertIsNotNone(row)
+        self.assertAlmostEqual(float(row["profile_match_score"]), 0.95)
+        self.assertEqual(row["profile_match_label"], "pass")
+        self.assertEqual(row["profile_version"], "default_v1")
+        self.assertEqual(row["scorer_version"], "shadow_rules_v1")
+        self.assertAlmostEqual(float(row["semantic_match_score"]), 0.67)
+        self.assertEqual(row["semantic_match_label"], "pass")
+        self.assertEqual(row["semantic_profile_id"], "data_engineering")
+        self.assertEqual(row["semantic_scorer_version"], "semantic_shadow_v1")
+        self.assertEqual(row["source_quality_status"], "detail_complete")
+        self.assertEqual(row["source_quality_prev_status"], "detail_mismatch")
+
     def test_persisted_jobs_include_stage2_shadow_fields(self) -> None:
         class FakeSemanticResult:
             semantic_base_score = 0.88

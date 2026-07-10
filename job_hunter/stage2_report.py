@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from job_hunter.config import load_settings
+from job_hunter.models import JobRecord
 from job_hunter.storage import JobStore, ensure_parent_dir
 
 
@@ -38,6 +39,17 @@ def main() -> int:
     semantic_backfill_parser.add_argument("--device", default="cpu")
     semantic_backfill_parser.add_argument("--allow-network", action="store_true")
     semantic_backfill_parser.add_argument("--format", choices=("text", "json"), default="text")
+
+    profile_backfill_parser = subparsers.add_parser(
+        "profile-backfill",
+        help="Backfill deterministic Stage 2 shadow scores for persisted job_text_v1 rows",
+    )
+    profile_backfill_parser.add_argument("--limit", type=int, default=200)
+    profile_backfill_parser.add_argument("--label", choices=("pass", "review", "reject"))
+    profile_backfill_parser.add_argument("--source")
+    profile_backfill_parser.add_argument("--labeled-only", action="store_true")
+    profile_backfill_parser.add_argument("--missing-only", action="store_true")
+    profile_backfill_parser.add_argument("--format", choices=("text", "json"), default="text")
 
     disagreement_parser = subparsers.add_parser(
         "disagreement-report",
@@ -142,6 +154,24 @@ def main() -> int:
                 print(json.dumps(payload, indent=2, sort_keys=True))
             else:
                 print(_render_semantic_backfill_text(payload))
+            return 0
+
+        if args.command == "profile-backfill":
+            rows = store.list_stage2_job_text_rows(
+                limit=args.limit,
+                label=args.label,
+                source=args.source,
+                labeled_only=args.labeled_only,
+            )
+            payload = _run_profile_backfill(
+                store,
+                rows,
+                missing_only=args.missing_only,
+            )
+            if args.format == "json":
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(_render_profile_backfill_text(payload))
             return 0
 
         if args.command == "disagreement-report":
@@ -301,6 +331,12 @@ def _load_semantic_shadow_scorer():
     return SemanticShadowScorer
 
 
+def _load_profile_shadow_scorer():
+    from job_hunter.stage2 import ShadowProfileScorer
+
+    return ShadowProfileScorer
+
+
 def _run_embedding_diagnostics(
     rows,
     *,
@@ -421,6 +457,68 @@ def _run_semantic_backfill(
         "requested_device": backend.requested_device,
         "model_name": backend.model_name,
         "local_files_only": backend.local_files_only,
+        "rows": updated_rows,
+    }
+
+
+def _run_profile_backfill(
+    store: JobStore,
+    rows,
+    *,
+    missing_only: bool,
+) -> dict[str, object]:
+    scorer_cls = _load_profile_shadow_scorer()
+    scorer = scorer_cls()
+
+    updated_rows: list[dict[str, object]] = []
+    skipped_count = 0
+    for row in rows:
+        full_row = store.get_stage2_job(int(row["id"]))
+        if full_row is None:
+            continue
+        if missing_only and str(full_row["profile_match_label"] or "").strip():
+            skipped_count += 1
+            continue
+        job = JobRecord(
+            source=str(full_row["source"] or ""),
+            external_id="",
+            url=str(full_row["url"] or ""),
+            title=str(full_row["title"] or ""),
+            company=str(full_row["company"] or ""),
+            location=str(full_row["location"] or ""),
+            is_internship=True,
+            posted_at=str(full_row["posted_at"] or ""),
+            description=str(full_row["description"] or ""),
+            compensation_type=str(full_row["compensation_type"] or "unknown"),
+            ingested_at="",
+        )
+        result = scorer.score(job)
+        store.update_profile_shadow(
+            int(full_row["id"]),
+            profile_match_score=result.profile_match_score,
+            profile_match_label=result.profile_match_label,
+            profile_match_reason_codes=result.profile_match_reason_codes,
+            profile_version=result.profile_version,
+            scorer_version=result.scorer_version,
+            job_text_version=result.job_text_version,
+            job_text_snapshot=result.job_text_snapshot,
+        )
+        updated_rows.append(
+            {
+                "id": int(full_row["id"]),
+                "source": str(full_row["source"] or ""),
+                "title": str(full_row["title"] or ""),
+                "profile_match_label": result.profile_match_label,
+                "profile_match_score": result.profile_match_score,
+                "profile_version": result.profile_version,
+                "scorer_version": result.scorer_version,
+            }
+        )
+
+    return {
+        "updated_count": len(updated_rows),
+        "skipped_count": skipped_count,
+        "missing_only": missing_only,
         "rows": updated_rows,
     }
 
@@ -591,6 +689,28 @@ def _render_semantic_backfill_text(payload: dict[str, object]) -> str:
             f"semantic={row['semantic_match_label']} score={row['semantic_match_score']:.2f} "
             f"base={row['semantic_base_score']:.2f} penalty={row['semantic_research_heaviness_score']:.2f} "
             f"profile={row['semantic_profile_id']}"
+        )
+    return "\n".join(chunks)
+
+
+def _render_profile_backfill_text(payload: dict[str, object]) -> str:
+    chunks = [
+        f"updated_count={payload['updated_count']}",
+        f"skipped_count={payload['skipped_count']}",
+        f"missing_only={payload['missing_only']}",
+    ]
+    rows = payload["rows"]
+    if not rows:
+        chunks.append("")
+        chunks.append("rows: none")
+        return "\n".join(chunks)
+    chunks.append("")
+    chunks.append("rows:")
+    for row in rows:
+        chunks.append(
+            f"[{row['id']}] {row['title']} source={row['source']} "
+            f"profile={row['profile_match_label']} score={row['profile_match_score']:.2f} "
+            f"profile_version={row['profile_version']} scorer={row['scorer_version']}"
         )
     return "\n".join(chunks)
 

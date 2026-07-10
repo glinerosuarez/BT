@@ -20,6 +20,7 @@ from job_hunter.sources.handshake import (
     _relative_age_to_iso,
     _resolve_job_url,
     _select_best_card_url,
+    _strip_title_label_prefix,
 )
 
 
@@ -175,6 +176,18 @@ Internship
 Open to candidates with OPT/CPT
 Job description
 The communications intern will assist in gaining coverage of CREW's fight for an ethical and transparent government.
+"""
+
+TITLE_PREFIX_DETAIL_TEXT = """GreenPoint Global
+Internet & Software
+Data Engineering & ETL Automation Intern
+Posted 1 week ago∙Apply by July 30, 2026 at 1:59 AM
+At a glance
+Remote, based in United States
+Internship
+Job description
+Job Title: Data Engineering & ETL Automation Intern
+Company: GreenPoint Global
 """
 
 
@@ -518,6 +531,30 @@ class HandshakeSourceTests(unittest.TestCase):
         self.assertNotIn("Summary Beta", parsed["description"])
         self.assertNotIn("This role as a Data Engineer Intern aligns closely", parsed["description"])
         self.assertIn("The communications intern will assist", parsed["description"])
+
+    def test_strip_title_label_prefix_removes_job_title_prefix(self) -> None:
+        self.assertEqual(
+            _strip_title_label_prefix("Job Title: Data Engineering & ETL Automation Intern"),
+            "Data Engineering & ETL Automation Intern",
+        )
+
+    def test_parse_detail_text_strips_job_title_prefix(self) -> None:
+        parsed = _parse_detail_text(TITLE_PREFIX_DETAIL_TEXT)
+        self.assertEqual(parsed["title"], "Data Engineering & ETL Automation Intern")
+
+    def test_build_row_treats_job_title_prefix_as_complete_detail(self) -> None:
+        row = _build_row(
+            "GreenPoint Global\nData Engineering & ETL Automation Intern\nUnpaid · Internship · Jun 28—Dec 27\nRemote\n1wk ago\n",
+            TITLE_PREFIX_DETAIL_TEXT,
+            "https://app.joinhandshake.com/job-search/example",
+            "https://app.joinhandshake.com/jobs/11168432",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["title"], "Data Engineering & ETL Automation Intern")
+        self.assertEqual(row["source_metadata"]["detail_quality_status"], "detail_complete")
+        self.assertTrue(row["source_metadata"]["detail_title_matches_card"])
 
     def test_dedupe_rows_keeps_first_external_id(self) -> None:
         rows = [
