@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from job_hunter.apply.adapters.greenhouse import GreenhouseAdapter
+from job_hunter.apply.adapters.handshake import HandshakeAdapter
+from job_hunter.apply.adapters.handshake_fellow import HandshakeFellowAdapter
 from job_hunter.apply.adapters.icims import ICIMSAdapter
 from job_hunter.apply.adapters.linkedin import LinkedInEasyApplyAdapter
 from job_hunter.apply.email_codes import extract_verification_code
@@ -69,7 +71,7 @@ class FakePage:
     def content(self) -> str:
         return "easy apply" if self._easy_apply else "external apply"
 
-    def evaluate(self, script: str):
+    def evaluate(self, script: str, *args):
         return None
 
     def extract_fields(self):
@@ -176,8 +178,10 @@ class FakeSession:
 class FakeBrowserManager:
     def __init__(self, page: FakePage) -> None:
         self.page = page
+        self.open_calls: list[str] = []
 
     def open(self, *, adapter_name: str):
+        self.open_calls.append(adapter_name)
         return FakeSession(self.page)
 
 
@@ -687,6 +691,47 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(result.status, "submitted")
         self.assertEqual(result.confirmation_payload["application_id"], "gh-123")
 
+    def test_handshake_adapter_uploads_documents_and_confirms(self) -> None:
+        adapter = HandshakeAdapter()
+        page = FakePage(
+            url="https://app.joinhandshake.com/jobs/111",
+            confirmation={"application_id": "hs-123"},
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(result.confirmation_payload["application_id"], "hs-123")
+        self.assertEqual(page.values["file:attach_your_resume_input"], self._adapter_context().resume_pdf_path)
+        self.assertEqual(page.values["file:attach_your_cover_letter_input"], self._adapter_context().cover_letter_pdf_path)
+        self.assertTrue(page.submitted)
+
+    def test_handshake_adapter_recognizes_native_post_submit_job_page(self) -> None:
+        adapter = HandshakeAdapter()
+
+        class HandshakeSubmittedPage(FakePage):
+            def content(self) -> str:
+                return (
+                    "Applied on July 10, 2026 "
+                    "Withdraw application "
+                    "Application submitted!"
+                )
+
+        page = HandshakeSubmittedPage(
+            url="https://app.joinhandshake.com/jobs/111",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(result.confirmation_payload["source"], "handshake")
+
     def test_greenhouse_adapter_handles_required_choice_groups(self) -> None:
         adapter = GreenhouseAdapter()
         page = FakePage(
@@ -1049,6 +1094,522 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(shown["adapter_name"], "icims")
         self.assertEqual(shown["target_url"], external_url)
         self.assertEqual(page.url, external_url)
+
+    def test_service_routes_handshake_external_apply_to_greenhouse_adapter(self) -> None:
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship, posted_at,
+                description, compensation_type, work_auth_signals, sponsorship_signals, skills, ingested_at,
+                relevance_score, eligibility_confidence, eligibility_status, relevance_hits, profile_match_score,
+                profile_match_label, source_metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "handshake-gh",
+                "handshake",
+                "hs-1",
+                "https://app.joinhandshake.com/jobs/111",
+                "Data Intern",
+                "Handshake Co",
+                "Remote",
+                1,
+                "2026-07-10",
+                "desc",
+                "unknown",
+                "[]",
+                "[]",
+                "[]",
+                "2026-07-10T00:00:00+00:00",
+                0.0,
+                0.0,
+                "eligible",
+                "[]",
+                0.9,
+                "pass",
+                json.dumps({"external_apply_url": "https://job-boards.greenhouse.io/acme/jobs/1"}),
+            ),
+        )
+        self.store._conn.commit()
+        handshake_job_id = int(self.store._conn.execute("SELECT id FROM jobs WHERE dedupe_key = 'handshake-gh'").fetchone()[0])
+
+        page = FakePage(
+            url="https://app.joinhandshake.com/jobs/111",
+            easy_apply=False,
+            greenhouse=True,
+            confirmation={"message": "Application submitted"},
+        )
+        service = self._service(page)
+
+        run = service.submit_job(job_id=handshake_job_id, profile_name="default", force=True)
+        shown = service.show_run(run.application_run_id)
+
+        self.assertEqual(run.status, "submitted")
+        self.assertEqual(shown["adapter_name"], "greenhouse")
+
+    def test_service_routes_native_handshake_to_adapter(self) -> None:
+        self.store.insert_job(
+            JobRecord(
+                source="handshake",
+                external_id="hs-native",
+                url="https://app.joinhandshake.com/jobs/555",
+                title="Data Fellowship",
+                company="Handshake Co",
+                location="Remote",
+                is_internship=True,
+                posted_at="2026-06-30T00:00:00+00:00",
+                description="Apply in Handshake.",
+                ingested_at="2026-06-30T01:00:00+00:00",
+                profile_match_score=0.9,
+                profile_match_label="pass",
+                job_text_version="job_text_v1",
+                job_text_snapshot="TITLE: Data Fellowship",
+            ),
+            "handshake-native",
+        )
+        handshake_job_id = int(self.store._conn.execute("SELECT id FROM jobs WHERE dedupe_key = 'handshake-native'").fetchone()[0])
+
+        page = FakePage(
+            url="https://app.joinhandshake.com/jobs/555",
+            confirmation={"application_id": "hs-native-123"},
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+        service = self._service(page)
+
+        run = service.submit_job(job_id=handshake_job_id, profile_name="default", force=True)
+        shown = service.show_run(run.application_run_id)
+
+        self.assertEqual(run.status, "submitted")
+        self.assertEqual(shown["adapter_name"], "handshake")
+
+    def test_service_ignores_previous_handshake_internal_target_when_resolving_native_flow(self) -> None:
+        self.store.insert_job(
+            JobRecord(
+                source="handshake",
+                external_id="hs-native-stale",
+                url="https://app.joinhandshake.com/jobs/556",
+                title="Data Fellowship",
+                company="Handshake Co",
+                location="Remote",
+                is_internship=True,
+                posted_at="2026-06-30T00:00:00+00:00",
+                description="Apply in Handshake.",
+                ingested_at="2026-06-30T01:00:00+00:00",
+                profile_match_score=0.9,
+                profile_match_label="pass",
+                job_text_version="job_text_v1",
+                job_text_snapshot="TITLE: Data Fellowship",
+            ),
+            "handshake-native-stale-target",
+        )
+        handshake_job_id = int(self.store._conn.execute("SELECT id FROM jobs WHERE dedupe_key = 'handshake-native-stale-target'").fetchone()[0])
+        self.store.create_application_run(
+            job_id=handshake_job_id,
+            profile_name="default",
+            tailoring_artifact_id=1,
+            adapter_name="handshake_fellow",
+            source="handshake",
+            target_url="https://ai.joinhandshake.com/fellow/dashboard",
+            current_url="https://ai.joinhandshake.com/fellow/dashboard",
+            status="blocked",
+            output_dir=str(self.output_root / "applications" / "default" / "pending"),
+            blocked_reason="handshake_fellow_dashboard_only",
+        )
+
+        page = FakePage(
+            url="https://app.joinhandshake.com/jobs/556",
+            confirmation={"application_id": "hs-native-556"},
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+        service = self._service(page)
+
+        run = service.submit_job(job_id=handshake_job_id, profile_name="default", force=True)
+        shown = service.show_run(run.application_run_id)
+
+        self.assertEqual(run.status, "submitted")
+        self.assertEqual(shown["adapter_name"], "handshake")
+        self.assertEqual(shown["target_url"], "https://app.joinhandshake.com/jobs/556")
+
+    def test_service_keeps_native_handshake_flow_even_when_page_exposes_fellow_link(self) -> None:
+        self.store.insert_job(
+            JobRecord(
+                source="handshake",
+                external_id="hs-native-fellow-link",
+                url="https://app.joinhandshake.com/jobs/557",
+                title="Data Fellowship",
+                company="Handshake Co",
+                location="Remote",
+                is_internship=True,
+                posted_at="2026-06-30T00:00:00+00:00",
+                description="Apply in Handshake.",
+                ingested_at="2026-06-30T01:00:00+00:00",
+                profile_match_score=0.9,
+                profile_match_label="pass",
+                job_text_version="job_text_v1",
+                job_text_snapshot="TITLE: Data Fellowship",
+            ),
+            "handshake-native-fellow-link",
+        )
+        handshake_job_id = int(self.store._conn.execute("SELECT id FROM jobs WHERE dedupe_key = 'handshake-native-fellow-link'").fetchone()[0])
+
+        class NativeHandshakePageWithFellowLink(FakePage):
+            def evaluate(self, script: str, *args):
+                if "document.querySelectorAll('a[href]')" in script:
+                    return "https://ai.joinhandshake.com/fellow/dashboard"
+                return super().evaluate(script, *args)
+
+        page = NativeHandshakePageWithFellowLink(
+            url="https://app.joinhandshake.com/jobs/557",
+            confirmation={"application_id": "hs-native-557"},
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+        service = self._service(page)
+
+        run = service.submit_job(job_id=handshake_job_id, profile_name="default", force=True)
+        shown = service.show_run(run.application_run_id)
+
+        self.assertEqual(run.status, "submitted")
+        self.assertEqual(shown["adapter_name"], "handshake")
+        self.assertEqual(shown["target_url"], "https://app.joinhandshake.com/jobs/557")
+
+    def test_service_persists_blocked_run_for_unsupported_handshake_target(self) -> None:
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship, posted_at,
+                description, compensation_type, work_auth_signals, sponsorship_signals, skills, ingested_at,
+                relevance_score, eligibility_confidence, eligibility_status, relevance_hits, profile_match_score,
+                profile_match_label, source_metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "handshake-unsupported",
+                "handshake",
+                "hs-2",
+                "https://app.joinhandshake.com/jobs/222",
+                "Data Intern",
+                "Handshake Co",
+                "Remote",
+                1,
+                "2026-07-10",
+                "desc",
+                "unknown",
+                "[]",
+                "[]",
+                "[]",
+                "2026-07-10T00:00:00+00:00",
+                0.0,
+                0.0,
+                "eligible",
+                "[]",
+                0.9,
+                "pass",
+                json.dumps({}),
+            ),
+        )
+        self.store._conn.commit()
+        handshake_job_id = int(self.store._conn.execute("SELECT id FROM jobs WHERE dedupe_key = 'handshake-unsupported'").fetchone()[0])
+
+        page = FakePage(
+            url="https://app.joinhandshake.com/jobs/222",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+        service = self._service(page)
+
+        run = service.submit_job(job_id=handshake_job_id, profile_name="default", force=True)
+        shown = service.show_run(run.application_run_id)
+
+        self.assertEqual(run.status, "blocked")
+        self.assertEqual(shown["adapter_name"], "unsupported")
+        self.assertEqual(shown["status"], "blocked")
+        self.assertEqual(shown["blocked_reason"], "handshake_native_unsupported")
+
+    def test_service_classifies_handshake_fellow_as_specialized_unsupported_target(self) -> None:
+        service = self._service(FakePage(url="https://app.joinhandshake.com/jobs/1", easy_apply=False, greenhouse=False, icims=False))
+
+        blocker_reason, details = service._classify_unsupported_target(
+            source="handshake",
+            target_url="https://ai.joinhandshake.com/fellow-home",
+            current_url="https://ai.joinhandshake.com/fellow/dashboard",
+        )
+
+        self.assertEqual(blocker_reason, "handshake_fellow_unsupported")
+        self.assertEqual(details["portal_family"], "handshake_fellow")
+
+    def test_handshake_fellow_adapter_blocks_on_dashboard_only_page(self) -> None:
+        adapter = HandshakeFellowAdapter()
+        page = FakePage(
+            url="https://ai.joinhandshake.com/fellow/dashboard",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.adapter_name, "handshake_fellow")
+        self.assertEqual(result.blocker.reason, "handshake_fellow_dashboard_only")
+
+    def test_handshake_fellow_adapter_blocks_with_manual_checkpoint_for_application_context(self) -> None:
+        adapter = HandshakeFellowAdapter()
+
+        class ApplicationPage(FakePage):
+            def content(self) -> str:
+                return "Review your application before submission"
+
+        page = ApplicationPage(
+            url="https://ai.joinhandshake.com/fellow/application/review",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "manual_checkpoint_required")
+        self.assertEqual(result.blocker.details["checkpoint"], "handshake_fellow_apply")
+
+    def test_handshake_fellow_adapter_requires_confirmation_path_for_submission(self) -> None:
+        adapter = HandshakeFellowAdapter()
+
+        class ConfirmationLikePage(FakePage):
+            def content(self) -> str:
+                return "Application submitted"
+
+        page = ConfirmationLikePage(
+            url="https://ai.joinhandshake.com/fellow/dashboard",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "handshake_fellow_dashboard_only")
+
+    def test_handshake_fellow_adapter_ignores_script_only_submission_strings(self) -> None:
+        adapter = HandshakeFellowAdapter()
+
+        class DashboardScriptPage(FakePage):
+            def content(self) -> str:
+                return """
+                <html>
+                  <body>
+                    <h1>Awaiting a project match</h1>
+                    <script>
+                      window.__STATE__ = {"submissionCountByFormId": {}, "activeProjectName": null};
+                    </script>
+                  </body>
+                </html>
+                """
+
+        page = DashboardScriptPage(
+            url="https://ai.joinhandshake.com/fellow/dashboard",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "handshake_fellow_dashboard_only")
+
+    def test_handshake_fellow_adapter_treats_dashboard_copy_as_non_application_context(self) -> None:
+        adapter = HandshakeFellowAdapter()
+
+        class DashboardCopyPage(FakePage):
+            def content(self) -> str:
+                return """
+                <html>
+                  <head><title>Projects | Handshake AI</title></head>
+                  <body>
+                    <h1>Awaiting a project match</h1>
+                    <p>We'll let you know when a project matches your profile.</p>
+                    <button>Update your profile</button>
+                  </body>
+                </html>
+                """
+
+        page = DashboardCopyPage(
+            url="https://ai.joinhandshake.com/fellow/dashboard",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "handshake_fellow_dashboard_only")
+
+    def test_service_uses_handshake_browser_profile_for_handshake_jobs(self) -> None:
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship, posted_at,
+                description, compensation_type, work_auth_signals, sponsorship_signals, skills, ingested_at,
+                relevance_score, eligibility_confidence, eligibility_status, relevance_hits, profile_match_score,
+                profile_match_label, source_metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "handshake-profile-route",
+                "handshake",
+                "hs-3",
+                "https://app.joinhandshake.com/jobs/333",
+                "Data Intern",
+                "Handshake Co",
+                "Remote",
+                1,
+                "2026-07-10",
+                "desc",
+                "unknown",
+                "[]",
+                "[]",
+                "[]",
+                "2026-07-10T00:00:00+00:00",
+                0.0,
+                0.0,
+                "eligible",
+                "[]",
+                0.9,
+                "pass",
+                json.dumps({}),
+            ),
+        )
+        self.store._conn.commit()
+        handshake_job_id = int(self.store._conn.execute("SELECT id FROM jobs WHERE dedupe_key = 'handshake-profile-route'").fetchone()[0])
+
+        page = FakePage(
+            url="https://app.joinhandshake.com/jobs/333",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+        browser_manager = FakeBrowserManager(page)
+        service = ApplicationService(
+            settings=self.settings,
+            store=self.store,
+            tailoring_service=self.tailoring_service,
+            browser_manager=browser_manager,
+        )
+
+        run = service.submit_job(job_id=handshake_job_id, profile_name="default", force=True)
+
+        self.assertEqual(run.status, "blocked")
+        self.assertEqual(browser_manager.open_calls[-1], "handshake")
+
+    def test_service_routes_handshake_fellow_target_to_adapter(self) -> None:
+        self.store._conn.execute(
+            """
+            INSERT INTO jobs (
+                dedupe_key, source, external_id, url, title, company, location, is_internship, posted_at,
+                description, compensation_type, work_auth_signals, sponsorship_signals, skills, ingested_at,
+                relevance_score, eligibility_confidence, eligibility_status, relevance_hits, profile_match_score,
+                profile_match_label, source_metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "handshake-fellow-route",
+                "handshake",
+                "hs-4",
+                "https://app.joinhandshake.com/jobs/444",
+                "Data Intern",
+                "Handshake Co",
+                "Remote",
+                1,
+                "2026-07-10",
+                "desc",
+                "unknown",
+                "[]",
+                "[]",
+                "[]",
+                "2026-07-10T00:00:00+00:00",
+                0.0,
+                0.0,
+                "eligible",
+                "[]",
+                0.9,
+                "pass",
+                json.dumps({"external_apply_url": "https://ai.joinhandshake.com/fellow-home"}),
+            ),
+        )
+        self.store._conn.commit()
+        handshake_job_id = int(self.store._conn.execute("SELECT id FROM jobs WHERE dedupe_key = 'handshake-fellow-route'").fetchone()[0])
+
+        page = FakePage(
+            url="https://ai.joinhandshake.com/fellow/dashboard",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+        service = self._service(page)
+
+        run = service.submit_job(job_id=handshake_job_id, profile_name="default", force=True)
+        shown = service.show_run(run.application_run_id)
+
+        self.assertEqual(run.status, "blocked")
+        self.assertEqual(shown["adapter_name"], "handshake_fellow")
+        self.assertEqual(shown["blocked_reason"], "handshake_fellow_dashboard_only")
+
+    def test_resume_with_manual_gate_uses_handshake_fellow_message(self) -> None:
+        class SubmittedHandshakeFellowAdapter(HandshakeFellowAdapter):
+            def submit(self, *, page, resolver, context):
+                return SubmitResult(
+                    status="submitted",
+                    current_url=page.url,
+                    confirmation_payload={"message": "submitted after handshake fellow checkpoint"},
+                    adapter_name=self.adapter_name,
+                )
+
+        page = FakePage(
+            url="https://ai.joinhandshake.com/fellow/dashboard",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+            confirmation={"message": "Application submitted"},
+        )
+        service = self._service(page)
+        run_id = service.store.create_application_run(
+            job_id=1,
+            profile_name="default",
+            tailoring_artifact_id=1,
+            adapter_name="handshake_fellow",
+            source="handshake",
+            target_url=page.url,
+            current_url=page.url,
+            status="blocked",
+            output_dir=str(self.output_root / "applications" / "default" / "pending"),
+            blocked_reason="manual_checkpoint_required",
+            blocked_payload={
+                "reason": "manual_checkpoint_required",
+                "details": {"checkpoint": "handshake_fellow_apply"},
+            },
+        )
+        service.browser_manager = FakeBrowserManager(page)
+        service.handshake_fellow_adapter = SubmittedHandshakeFellowAdapter()
+        manual_gate_messages: list[str] = []
+
+        resumed = service.resume_with_manual_gate(
+            application_run_id=run_id,
+            notify=manual_gate_messages.append,
+            wait_for_user=lambda: None,
+        )
+
+        self.assertEqual(resumed.status, "submitted")
+        self.assertIn("Handshake Fellow application steps", manual_gate_messages[0])
 
     def test_resume_with_manual_gate_prefers_stored_current_url(self) -> None:
         class SubmittedICIMSAdapter(ICIMSAdapter):

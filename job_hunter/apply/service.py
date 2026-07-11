@@ -6,6 +6,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from job_hunter.apply.adapters.greenhouse import GreenhouseAdapter
+from job_hunter.apply.adapters.handshake import HandshakeAdapter
+from job_hunter.apply.adapters.handshake_fellow import HandshakeFellowAdapter
 from job_hunter.apply.adapters.icims import ICIMSAdapter
 from job_hunter.apply.adapters.linkedin import LinkedInEasyApplyAdapter
 from job_hunter.apply.browser import BrowserManager
@@ -19,6 +21,24 @@ from job_hunter.storage import JobStore
 from job_hunter.tailoring import AnthropicTailoringProvider, TailoringService
 
 
+class UnsupportedApplyTargetError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        source: str,
+        target_url: str,
+        current_url: str,
+        blocker_reason: str = "unsupported_portal",
+        details: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(f"Unsupported apply target for job source={source} url={target_url}")
+        self.source = source
+        self.target_url = target_url
+        self.current_url = current_url
+        self.blocker_reason = blocker_reason
+        self.details = details or {}
+
+
 class ApplicationService:
     def __init__(
         self,
@@ -29,6 +49,8 @@ class ApplicationService:
         browser_manager: BrowserManager | None = None,
         linkedin_adapter: LinkedInEasyApplyAdapter | None = None,
         greenhouse_adapter: GreenhouseAdapter | None = None,
+        handshake_adapter: HandshakeAdapter | None = None,
+        handshake_fellow_adapter: HandshakeFellowAdapter | None = None,
         icims_adapter: ICIMSAdapter | None = None,
         email_code_client: GmailVerificationCodeClient | None = None,
     ) -> None:
@@ -38,6 +60,8 @@ class ApplicationService:
         self.browser_manager = browser_manager or BrowserManager(settings)
         self.linkedin_adapter = linkedin_adapter or LinkedInEasyApplyAdapter()
         self.greenhouse_adapter = greenhouse_adapter or GreenhouseAdapter()
+        self.handshake_adapter = handshake_adapter or HandshakeAdapter()
+        self.handshake_fellow_adapter = handshake_fellow_adapter or HandshakeFellowAdapter()
         self.icims_adapter = icims_adapter or ICIMSAdapter()
         self.email_code_client = email_code_client
 
@@ -53,12 +77,54 @@ class ApplicationService:
         tailoring_artifact = self._ensure_tailoring_artifact(job_id=job_id, profile_name=profile_name, force=force)
         context = self._build_adapter_context(profile, tailoring_artifact["output_dir"])
 
-        session = self.browser_manager.open(adapter_name="linkedin" if str(job["source"]) == "linkedin" else "greenhouse")
+        session = self.browser_manager.open(adapter_name=self._session_adapter_name_for_source(str(job["source"] or "")))
         try:
             page = session.new_page()
             initial_target_url = self._initial_target_url(job)
             page.goto(initial_target_url, wait_until="domcontentloaded")
-            adapter_name, adapter, target_url = self._resolve_adapter(job, page, initial_target_url)
+            try:
+                adapter_name, adapter, target_url = self._resolve_adapter(job, page, initial_target_url)
+            except UnsupportedApplyTargetError as exc:
+                run_id = self.store.create_application_run(
+                    job_id=job_id,
+                    profile_name=profile_name,
+                    tailoring_artifact_id=int(tailoring_artifact["id"]),
+                    adapter_name="unsupported",
+                    source=str(job["source"]),
+                    target_url=exc.target_url,
+                    current_url=exc.current_url,
+                    status="applying",
+                    output_dir=str(self._output_dir(profile_name, "pending")),
+                )
+                output_dir = self._output_dir(profile_name, str(run_id))
+                output_dir.mkdir(parents=True, exist_ok=True)
+                self.store.update_application_run(
+                    run_id,
+                    tailoring_artifact_id=int(tailoring_artifact["id"]),
+                    target_url=exc.target_url,
+                    current_url=exc.current_url,
+                    increment_attempt_count=True,
+                    output_dir=str(output_dir),
+                )
+                result = SubmitResult(
+                    status="blocked",
+                    current_url=exc.current_url,
+                    blocker=Blocker(
+                        reason=exc.blocker_reason,
+                        question_text="Application target",
+                        field_name="target_url",
+                        field_type="url",
+                        details={
+                            "source": exc.source,
+                            "target_url": exc.target_url,
+                            **exc.details,
+                        },
+                    ),
+                    adapter_name="unsupported",
+                    target_url=exc.target_url,
+                )
+                self._persist_result(run_id=run_id, result=result, output_dir=output_dir, page=page)
+                return self._run_record(run_id)
 
             duplicate = self.store.find_application_run(
                 job_id=job_id,
@@ -218,6 +284,12 @@ class ApplicationService:
                     "Job Specific Questions page, submit that page manually if needed, leave the resulting page open, "
                     "then return here and press Enter."
                 )
+            if checkpoint == "handshake_fellow_apply":
+                return (
+                    "Manual checkpoint opened in the browser. Complete the Handshake Fellow application steps, "
+                    "stop on the final submission confirmation page or the last review screen, leave that page open, "
+                    "then return here and press Enter."
+                )
         return (
             "Manual gate continuation opened in the browser. "
             "Complete any captcha, login, or consent steps, navigate to the application form, "
@@ -345,7 +417,8 @@ class ApplicationService:
         )
 
     def _resolve_adapter(self, job, page, target_url: str):
-        if str(job["source"]) == "linkedin" and self._is_linkedin_url(target_url):
+        source = str(job["source"] or "")
+        if source == "linkedin" and self._is_linkedin_url(target_url):
             if self.linkedin_adapter.is_easy_apply_available(page):
                 return "linkedin", self.linkedin_adapter, target_url
             external_url = ""
@@ -365,11 +438,38 @@ class ApplicationService:
                 target_url = external_url
             else:
                 raise RuntimeError("LinkedIn job did not expose Easy Apply or a supported external apply link.")
+        elif source == "handshake":
+            self._prepare_handshake_page(page)
+            current_url = str(getattr(page, "url", target_url) or target_url)
+            if self.handshake_adapter.is_handshake_target(current_url, page=page):
+                return "handshake", self.handshake_adapter, current_url
+            allow_click_discovery = not self.handshake_adapter.is_handshake_target(target_url, page=page)
+            external_url = self._discover_external_apply_url(job, page, target_url, allow_click=allow_click_discovery)
+            if external_url:
+                page.goto(external_url, wait_until="domcontentloaded")
+                target_url = external_url
         if self.greenhouse_adapter.is_greenhouse_target(target_url, page=page):
             return "greenhouse", self.greenhouse_adapter, target_url
         if self.icims_adapter.is_icims_target(target_url, page=page):
             return "icims", self.icims_adapter, target_url
-        raise RuntimeError(f"Unsupported apply target for job source={job['source']} url={target_url}")
+        if self.handshake_adapter.is_handshake_target(target_url, page=page):
+            current_url = str(getattr(page, "url", target_url) or target_url)
+            return "handshake", self.handshake_adapter, current_url
+        if self.handshake_fellow_adapter.is_handshake_fellow_target(target_url, page=page):
+            current_url = str(getattr(page, "url", target_url) or target_url)
+            return "handshake_fellow", self.handshake_fellow_adapter, current_url
+        blocker_reason, details = self._classify_unsupported_target(
+            source=source,
+            target_url=target_url,
+            current_url=str(getattr(page, "url", target_url) or target_url),
+        )
+        raise UnsupportedApplyTargetError(
+            source=source,
+            target_url=target_url,
+            current_url=str(getattr(page, "url", target_url) or target_url),
+            blocker_reason=blocker_reason,
+            details=details,
+        )
 
     def _initial_target_url(self, job) -> str:
         source_metadata = self._job_source_metadata(job)
@@ -397,11 +497,138 @@ class ApplicationService:
         parsed = urlparse(url.strip())
         return "linkedin.com" in parsed.netloc.lower()
 
+    def _session_adapter_name_for_source(self, source: str) -> str:
+        if source == "linkedin":
+            return "linkedin"
+        if source == "handshake":
+            return "handshake"
+        return "greenhouse"
+
+    def _discover_external_apply_url(self, job, page, target_url: str, *, allow_click: bool = True) -> str:
+        source_metadata = self._job_source_metadata(job)
+        external_url = str(source_metadata.get("external_apply_url") or "").strip()
+        if external_url:
+            return external_url
+        previous_target = self.store.find_latest_application_target(job_id=int(job["id"]))
+        if previous_target is not None:
+            candidate = str(previous_target["target_url"] or "").strip()
+            if candidate and candidate != target_url and not self._is_handshake_url(candidate):
+                return candidate
+        extractor = getattr(page, "extract_external_apply_url", None)
+        if callable(extractor):
+            candidate = str(extractor() or "").strip()
+            if candidate and candidate != target_url:
+                return candidate
+        if allow_click:
+            clicked_url = self._discover_external_apply_url_from_click(page, target_url)
+            if clicked_url:
+                return clicked_url
+        if not hasattr(page, "evaluate"):
+            return ""
+        candidate = page.evaluate(
+            """
+            ({ currentUrl }) => {
+              const currentHost = (() => {
+                try { return new URL(currentUrl).host.toLowerCase(); } catch (error) { return ''; }
+              })();
+              const links = Array.from(document.querySelectorAll('a[href]'));
+              for (const link of links) {
+                const href = (link.href || '').trim();
+                if (!href) continue;
+                try {
+                  const url = new URL(href, window.location.href);
+                  if (!/^https?:$/i.test(url.protocol)) continue;
+                  if (url.host.toLowerCase() === currentHost) continue;
+                  return url.toString();
+                } catch (error) {
+                  continue;
+                }
+              }
+              return '';
+            }
+            """,
+            {"currentUrl": str(getattr(page, "url", target_url) or target_url)},
+        )
+        return str(candidate or "").strip()
+
+    def _prepare_handshake_page(self, page) -> None:
+        wait = getattr(page, "wait_for_timeout", None)
+        if callable(wait):
+            wait(3000)
+            wait(2000)
+
+    def _discover_external_apply_url_from_click(self, page, target_url: str) -> str:
+        if not hasattr(page, "locator"):
+            return ""
+        try:
+            context = getattr(page, "context", None)
+            existing_pages = list(getattr(context, "pages", [])) if context is not None else []
+            selectors = [
+                ('button', 'Apply'),
+                ('button', 'Apply now'),
+                ('a', 'Apply'),
+                ('a', 'Apply now'),
+                ('[role="button"]', 'Apply'),
+                ('[role="button"]', 'Apply now'),
+            ]
+            for selector, label in selectors:
+                try:
+                    candidate = page.locator(selector).filter(has_text=label).first
+                    if candidate.count() == 0:
+                        continue
+                    candidate.click()
+                    wait = getattr(page, "wait_for_timeout", None)
+                    if callable(wait):
+                        wait(2000)
+                    current_url = str(getattr(page, "url", "") or "").strip()
+                    if current_url and current_url != target_url and not self._is_handshake_url(current_url):
+                        return current_url
+                    if context is not None:
+                        for popup in getattr(context, "pages", []):
+                            if popup in existing_pages:
+                                continue
+                            popup_url = str(getattr(popup, "url", "") or "").strip()
+                            if popup_url and not self._is_handshake_url(popup_url):
+                                return popup_url
+                except Exception:
+                    continue
+        except Exception:
+            return ""
+        return ""
+
+    def _is_handshake_url(self, url: str) -> bool:
+        parsed = urlparse(url.strip())
+        return "joinhandshake.com" in parsed.netloc.lower()
+
+    def _classify_unsupported_target(self, *, source: str, target_url: str, current_url: str) -> tuple[str, dict[str, object]]:
+        parsed_target = urlparse(target_url.strip())
+        parsed_current = urlparse(current_url.strip())
+        target_host = parsed_target.netloc.lower()
+        current_host = parsed_current.netloc.lower()
+        details: dict[str, object] = {
+            "resolved_from_source": source,
+            "target_host": target_host,
+            "current_host": current_host,
+        }
+        if source == "handshake":
+            if "ai.joinhandshake.com" in current_host or "ai.joinhandshake.com" in target_host:
+                if "/fellow" in parsed_current.path or "/fellow" in parsed_target.path:
+                    details["portal_family"] = "handshake_fellow"
+                    return "handshake_fellow_unsupported", details
+            if "joinhandshake.com" in current_host or "joinhandshake.com" in target_host:
+                details["portal_family"] = "handshake_native"
+                return "handshake_native_unsupported", details
+        return "unsupported_portal", details
+
     def _adapter_for_name(self, adapter_name: str):
         if adapter_name == "linkedin":
             return self.linkedin_adapter
         if adapter_name == "greenhouse":
             return self.greenhouse_adapter
+        if adapter_name == "handshake":
+            return self.handshake_adapter
+        if adapter_name == "handshake_fellow":
+            return self.handshake_fellow_adapter
         if adapter_name == "icims":
             return self.icims_adapter
         raise RuntimeError(f"Unsupported adapter name: {adapter_name}")
