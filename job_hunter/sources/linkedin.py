@@ -831,7 +831,8 @@ def _looks_like_age_line(value: str) -> bool:
 
 
 def _is_reposted_age_line(value: str) -> bool:
-    return "reposted" in value.lower()
+    lowered = value.lower()
+    return "reposted" in lowered or "compartido" in lowered
 
 
 def _relative_age_to_iso(value: str) -> str | None:

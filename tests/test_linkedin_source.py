@@ -505,6 +505,23 @@ Posted 3 hours ago
         )
         self.assertIsNone(row)
 
+    def test_build_row_skips_spanish_reposted_card(self) -> None:
+        card = _parse_card_text(
+            """Data Engineer Intern (E-commerce) - 2026 Summer (BS/MS)
+TikTok
+San José, CA
+Compartido hace 12 horas
+""",
+            fallback_url="https://www.linkedin.com/jobs/view/4281120423",
+        )
+        row = _build_row(
+            card=card,
+            detail_text="",
+            search_url="https://www.linkedin.com/jobs/search/?keywords=data+platform+intern",
+            detail_fetch_attempted=False,
+        )
+        self.assertIsNone(row)
+
     def test_relative_age_to_iso(self) -> None:
         self.assertIsNotNone(_relative_age_to_iso("Reposted 2 days ago"))
         self.assertIsNotNone(_relative_age_to_iso("Posted 3 hours ago"))
