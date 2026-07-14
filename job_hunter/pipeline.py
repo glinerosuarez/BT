@@ -266,6 +266,12 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
         elapsed = time.monotonic() - source_started
 
         fetch_meta = source.get_fetch_meta() if hasattr(source, "get_fetch_meta") else {}
+        configured_query_keys = fetch_meta.get("configured_query_keys", [])
+        if isinstance(configured_query_keys, list):
+            for query_key in configured_query_keys:
+                normalized_query_key = _normalize_query_key(str(query_key or ""))
+                if normalized_query_key:
+                    _query_stats_bucket(outcome, source.name, normalized_query_key)
         source_stats.dead_token_count += int(fetch_meta.get("dead_token_count", 0))
         source_stats.feed_error_count += int(fetch_meta.get("feed_error_count", 0))
         source_stats.security_verification_blocked_count += int(fetch_meta.get("security_verification_blocked_count", 0))

@@ -77,16 +77,24 @@ EXPAND_MORE_SCRIPT = """
 JOB_CANDIDATES_SCRIPT = """
 () => {
   const rows = [];
-  const cards = Array.from(document.querySelectorAll('[data-view-name="job-search-job-card"]'));
-  for (const card of cards) {
+  const cards = Array.from(document.querySelectorAll('div[role="button"]'));
+  const agePattern = /(reposted|posted|publicado|compartido|hace\\s+\\d+\\s*(hora|horas|día|días|semana|semanas|mes|meses)|\\d+\\s*(hour|hours|day|days|week|weeks|month|months)\\s+ago)/i;
+  cards.forEach((card, rawIndex) => {
     const text = (card.innerText || '').trim();
-    if (!text) continue;
+    if (!text) return;
+    const rect = card.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    if (rect.left > window.innerWidth * 0.45) return;
+    if (!agePattern.test(text)) return;
+    const lineCount = text.split('\\n').map((line) => line.trim()).filter(Boolean).length;
+    if (lineCount < 4) return;
     const anchor = card.querySelector('a[href*="/jobs/view/"]');
     rows.push({
       card_text: text,
       card_url: anchor ? (anchor.href || '') : '',
+      raw_index: rawIndex,
     });
-  }
+  });
   return rows;
 }
 """
@@ -241,6 +249,7 @@ class LinkedInSource(SourceConnector):
         self.page_timeout_seconds = max(page_timeout_seconds, 5)
         self.max_posting_age_days = max(max_posting_age_days, 1)
         self.fetch_details = fetch_details
+        self._fetch_meta: dict[str, object] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
         _ = timeout_seconds
@@ -250,6 +259,8 @@ class LinkedInSource(SourceConnector):
         with sync_playwright() as playwright:
             results: list[dict] = []
             search_urls, job_urls = _partition_linkedin_urls(self.search_urls)
+            configured_query_keys = [_normalize_search_url(url) for url in search_urls]
+            self._fetch_meta = {"configured_query_keys": configured_query_keys}
             total_search_urls = len(search_urls)
             for index, search_url in enumerate(search_urls, start=1):
                 normalized_search_url = _normalize_search_url(search_url)
@@ -293,6 +304,9 @@ class LinkedInSource(SourceConnector):
                 finally:
                     context.close()
             return _dedupe_rows(results)
+
+    def get_fetch_meta(self) -> dict[str, object]:
+        return dict(self._fetch_meta)
 
     def _launch_context(self, playwright, profile_path: Path):
         context = playwright.chromium.launch_persistent_context(
@@ -348,7 +362,8 @@ class LinkedInSource(SourceConnector):
             detail_text = ""
             external_apply_url = ""
             job_url = ""
-            locator = page.locator('[data-view-name="job-search-job-card"]').nth(card_index - 1)
+            raw_index = int(candidate.get("raw_index") or 0)
+            locator = page.locator('div[role="button"]').nth(raw_index)
             locator_url = self._extract_card_job_url(locator)
             if locator_url:
                 card["url"] = locator_url
@@ -696,9 +711,9 @@ def _build_row(
     if bool(detail.get("is_reposted")) or bool(card.get("is_reposted")):
         return None
     detail_title = str(detail.get("title") or "").strip()
-    detail_company = str(detail.get("company") or "").strip()
+    detail_company = _clean_company(str(detail.get("company") or "").strip())
     card_title = str(card.get("title") or "").strip()
-    card_company = str(card.get("company") or "").strip()
+    card_company = _clean_company(str(card.get("company") or "").strip())
     use_detail_title = _is_valid_title(detail_title)
     if use_detail_title and not _looks_like_role_title(detail_title) and _looks_like_role_title(card_title):
         use_detail_title = False
@@ -716,7 +731,7 @@ def _build_row(
     description = str(detail.get("description") or "").strip() or str(card.get("card_text") or "").strip()
     job_url = _canonical_linkedin_job_url(str(card.get("url") or "").strip())
 
-    if not title or not job_url:
+    if not title or not company or not job_url:
         return None
 
     job_id = _linkedin_job_id(job_url)
@@ -893,9 +908,22 @@ def _clean_location(value: str) -> str:
 
 
 def _clean_company(value: str) -> str:
-    cleaned = value.strip()
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    while cleaned and _starts_with_noise_prefix(cleaned.lower()):
+        parts = cleaned.split(" ", 4)
+        if len(parts) <= 1:
+            return ""
+        for prefix in LEADING_NOISE_PREFIXES:
+            lowered = cleaned.lower()
+            if _matches_noise_prefix(lowered, prefix):
+                cleaned = cleaned[len(prefix) :].lstrip(" :-|")
+                break
+        else:
+            break
     if re.search(r"[A-Za-z]", cleaned):
         cleaned = re.sub(r"(?<=\D)\s+\d+$", "", cleaned).strip()
+    if cleaned.lower() in GENERIC_NOISE_LINES or _starts_with_noise_prefix(cleaned.lower()):
+        return ""
     return cleaned
 
 

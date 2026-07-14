@@ -193,6 +193,14 @@ About the job
 We are looking for a Data Ops - Intern to help customers explore healthcare data.
 """
 
+POLLUTED_COMPANY_DETAIL_TEXT = """Machine Learning Scientist Intern
+Skip to main content LinkedIn
+Mountain View, CA
+Posted 3 hours ago
+About the job
+We are looking for a machine learning intern to build production models.
+"""
+
 
 class LinkedInSourceTests(unittest.TestCase):
     def test_partition_linkedin_urls_separates_search_and_job_urls(self) -> None:
@@ -420,6 +428,24 @@ Posted 8 hours ago
         )
         assert row is not None
         self.assertFalse(bool(row["source_metadata"]["accepting_applications"]))
+
+    def test_build_row_drops_polluted_company_and_falls_back_to_card_company(self) -> None:
+        card = _parse_card_text(
+            """Machine Learning Scientist Intern
+LinkedIn
+Mountain View, CA
+Posted 3 hours ago
+""",
+            fallback_url="https://www.linkedin.com/jobs/view/1234567890/?trackingId=abc",
+        )
+        row = _build_row(
+            card=card,
+            detail_text=POLLUTED_COMPANY_DETAIL_TEXT,
+            search_url="https://www.linkedin.com/jobs/search/?keywords=machine+learning",
+            detail_fetch_attempted=True,
+        )
+        assert row is not None
+        self.assertEqual(row["company"], "LinkedIn")
 
     def test_build_row_persists_external_apply_url(self) -> None:
         card = _parse_card_text(

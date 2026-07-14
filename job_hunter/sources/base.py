@@ -13,7 +13,7 @@ class SourceConnector:
     def fetch(self, timeout_seconds: int) -> list[dict]:
         raise NotImplementedError
 
-    def get_fetch_meta(self) -> dict[str, int]:
+    def get_fetch_meta(self) -> dict[str, object]:
         return {}
 
 
