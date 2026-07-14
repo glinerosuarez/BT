@@ -1,0 +1,150 @@
+{
+    "question_overrides": [
+        {
+            "match_type": "exact",
+            "pattern": "are you willing to complete a background check?",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "hear about us",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "how did you hear about",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "regex",
+            "pattern": "pronouns?",
+            "answer": "He, him, his"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "bound by any agreements with a current or former employer",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "this is your moment to wow us! note: answering this question fully is the most important part of our interview process. first example",
+            "answer": "Built an agentic document extraction pipeline that ingests ESG data from more than 1,000 company reports using a LangChain orchestrator, fine-tuned vision-language models, OCR models, and PyTorch workflows. Designed the evaluation approach with custom datasets, Phoenix instrumentation, and OpenTelemetry traces to compare system versions rigorously. Improved extraction precision from 50% in the initial zero-shot system to 80% in the production RAG-based pipeline."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "this is your moment to wow us! note: answering this question fully is the most important part of our interview process. second example",
+            "answer": "Reduced average pipeline runtime by 50% while supporting Baker Hughes by optimizing Spark workloads, removing bottlenecks, and streamlining configuration across production data pipelines. The improvement materially increased system reliability and cut SLA breaches by 75%. This work required analyzing failure patterns in complex distributed jobs and turning that analysis into measurable production improvements."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "second example:",
+            "answer": "Reduced average pipeline runtime by 50% while supporting Baker Hughes by optimizing Spark workloads, removing bottlenecks, and streamlining configuration across production data pipelines. The improvement materially increased system reliability and cut SLA breaches by 75%. This work required analyzing failure patterns in complex distributed jobs and turning that analysis into measurable production improvements."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "this is your moment to wow us! note: answering this question fully is the most important part of our interview process. third example",
+            "answer": "Led the migration of high-volume data pipelines from AWS Athena to Delta Lake on Apache Spark and Databricks for Uptake, delivering a 10x reduction in query latency and about $100,000 in annualized savings. In the same environment, I built and maintained ETL pipelines processing more than 10 GB of IoT telemetry daily from over 20,000 vehicles. I also implemented data quality controls to prevent erroneous records from reaching production ML and analytics workloads."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "third example:",
+            "answer": "Led the migration of high-volume data pipelines from AWS Athena to Delta Lake on Apache Spark and Databricks for Uptake, delivering a 10x reduction in query latency and about $100,000 in annualized savings. In the same environment, I built and maintained ETL pipelines processing more than 10 GB of IoT telemetry daily from over 20,000 vehicles. I also implemented data quality controls to prevent erroneous records from reaching production ML and analytics workloads."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "do you have prior internship or co-op experience",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "what year will you graduate",
+            "answer": "2027"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "are you currently authorized to work in the united states",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "will you, at any point, require employer sponsorship to work in the united states",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "i understand that this position requires me to work on-site",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "at this time we do not offer relocation assistance to interns",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "what intern season are you interested in",
+            "answer": "Fall 2026"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "ideal start date in office",
+            "answer": "2026-09-01"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "how did you hear about us",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "please specify",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "are you seeking course credit for this internship",
+            "answer": "No, I am not seeking course credit for this internship."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "background check",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "comfortable working in a remote setting",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "what is a piece of software or tech gadget you couldn't live without",
+            "answer": "pdb. I really appreciate how easy it makes debugging software compared with many other languages and ecosystems, where inspecting state and stepping through execution is often more cumbersome."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "will you require visa sponsorship",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "are you proficient in sql",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "are you proficient in python",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "are you proficient in pyspark",
+            "answer": "Yes"
+        }
+    ],
+    "field_defaults": {
+        "veteran_status": false,
+        "gender": "Male",
+        "race_ethnicity": "Hispanic or Latino",
+        "disability_status": false
+    }
+}

@@ -464,6 +464,29 @@ class ApplyJobsTests(unittest.TestCase):
             "New York, NY",
         )
 
+    def test_answer_resolver_does_not_map_course_credit_prompt_to_school_name(self) -> None:
+        profile, answers = load_application_inputs(str(self.profile_root), "default")
+        answers.question_overrides.append(
+            type(answers.question_overrides[0])(
+                match_type="contains",
+                pattern="are you seeking course credit for this internship",
+                answer="No, I am not seeking course credit for this internship.",
+            )
+        )
+        resolver = AnswerResolver(profile=profile, answers=answers)
+
+        resolution = resolver.resolve(
+            question_text=(
+                "Are you seeking course credit for this internship, and if so, please list any "
+                "requirements your school has in terms of hours, supervision, projects, etc.*"
+            ),
+            field_name="question_17156310008",
+            field_type="text",
+        )
+
+        self.assertEqual(resolution.answer, "No, I am not seeking course credit for this internship.")
+        self.assertEqual(resolution.source, "override:contains")
+
     def test_answer_resolver_computes_professional_experience_fields(self) -> None:
         resolver = self._resolver()
         self.assertEqual(

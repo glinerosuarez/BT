@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import re
 
-from .types import AnswerResolution, ApplicationAnswers, ApplicationProfile, Blocker
+from .types import AnswerResolution, ApplicationAnswers, ApplicationProfile, Blocker, FieldCapability
 
 
 class ResolutionError(RuntimeError):
@@ -28,7 +28,7 @@ _QUESTION_FIELD_MAP: list[tuple[tuple[str, ...], str]] = [
     (("linkedin",), "identity.linkedin_url"),
     (("github",), "identity.github_url"),
     (("portfolio", "website"), "identity.portfolio_url"),
-    (("school", "university"), "education.school"),
+    (("university", "college", "institution"), "education.school"),
     (("degree",), "education.degree"),
     (("major", "field of study"), "education.major"),
     (("graduation", "graduate date"), "education.graduation_date"),
@@ -40,6 +40,63 @@ _QUESTION_FIELD_MAP: list[tuple[tuple[str, ...], str]] = [
     (("remote",), "preferences.remote_ok"),
     (("relocation",), "preferences.relocation_ok"),
 ]
+
+_INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
+    ("consent_required", ("provide your consent", "has my consent")),
+    ("current_location", ("current location", "where are you based", "city/state of residence")),
+    ("work_auth_us", ("legally authorized to work in the united states", "authorized to work in the united states")),
+    (
+        "future_sponsorship_us",
+        (
+            "require employer sponsorship to work in the united states",
+            "require sponsorship to work in the united states",
+            "require medpace inc. to commence",
+        ),
+    ),
+    ("on_site_acknowledgement", ("requires me to work on-site", "requires me to work on site")),
+    ("education_end_month", ("end date month",)),
+    ("education_end_year", ("end date year", "what year will you graduate")),
+    ("identity_linkedin_url", ("linkedin profile",)),
+    ("identity_additional_link", ("additional link",)),
+]
+
+_FIELD_CAPABILITIES: tuple[FieldCapability, ...] = (
+    FieldCapability(
+        portal="linkedin",
+        widget_types=("checkbox-group",),
+        intents=("consent_required",),
+        resolver_mode="computed_yes",
+        submit_policy="safe_autofill_if_single_option",
+    ),
+    FieldCapability(
+        portal="linkedin",
+        widget_types=("text",),
+        intents=("current_location", "identity_linkedin_url"),
+        resolver_mode="structured_or_computed",
+        submit_policy="safe_autofill",
+    ),
+    FieldCapability(
+        portal="greenhouse",
+        widget_types=("radio-group", "select-one"),
+        intents=("work_auth_us", "future_sponsorship_us", "on_site_acknowledgement"),
+        resolver_mode="structured_boolean_yes_no",
+        submit_policy="safe_autofill",
+    ),
+    FieldCapability(
+        portal="greenhouse",
+        widget_types=("text",),
+        intents=("identity_linkedin_url", "identity_additional_link", "current_location"),
+        resolver_mode="structured_or_computed",
+        submit_policy="safe_autofill",
+    ),
+    FieldCapability(
+        portal="greenhouse",
+        widget_types=("select-one", "text"),
+        intents=("education_end_month", "education_end_year"),
+        resolver_mode="structured_or_computed",
+        submit_policy="safe_autofill",
+    ),
+)
 
 
 class AnswerResolver:
@@ -82,15 +139,76 @@ class AnswerResolver:
             )
         )
 
+    def classify_intent(self, *, question_text: str, field_name: str = "") -> str | None:
+        normalized_question = " ".join(question_text.lower().split())
+        normalized_field_name = field_name.strip().lower()
+        for intent, patterns in _INTENT_PATTERNS:
+            if any(pattern in normalized_question or pattern == normalized_field_name for pattern in patterns):
+                return intent
+        return None
+
+    def resolve_for_portal(
+        self,
+        *,
+        portal: str,
+        question_text: str,
+        field_name: str = "",
+        field_type: str = "",
+    ) -> AnswerResolution:
+        intent = self.classify_intent(question_text=question_text, field_name=field_name)
+        capability = self._capability_for(portal=portal, field_type=field_type, intent=intent)
+        if capability is not None and intent is not None:
+            resolution = self._resolve_intent_value(intent=intent, question_text=question_text, field_name=field_name, field_type=field_type)
+            if resolution is not None:
+                return AnswerResolution(
+                    answer=resolution.answer,
+                    source=f"capability:{portal}:{intent}:{capability.submit_policy}",
+                    matched_rule=capability.resolver_mode,
+                )
+        return self.resolve(question_text=question_text, field_name=field_name, field_type=field_type)
+
+    def capability_for_field(self, *, portal: str, question_text: str, field_name: str = "", field_type: str = "") -> FieldCapability | None:
+        intent = self.classify_intent(question_text=question_text, field_name=field_name)
+        return self._capability_for(portal=portal, field_type=field_type, intent=intent)
+
     def _structured_key_for(self, *, question: str, field_name: str) -> str:
         if field_name and field_name in self._structured:
             return field_name
+        if field_name.startswith("school"):
+            return "education.school"
+        if question.rstrip("*").strip() == "school":
+            return "education.school"
         for patterns, key in _QUESTION_FIELD_MAP:
             if any(pattern in question or pattern == field_name for pattern in patterns):
                 return key
         return ""
 
-    def _computed_answer(self, *, question: str, field_name: str, field_type: str) -> AnswerResolution | None:
+    def _capability_for(self, *, portal: str, field_type: str, intent: str | None) -> FieldCapability | None:
+        if intent is None:
+            return None
+        normalized_widget = field_type.strip().lower()
+        for capability in _FIELD_CAPABILITIES:
+            if capability.portal != portal:
+                continue
+            if normalized_widget not in capability.widget_types:
+                continue
+            if intent not in capability.intents:
+                continue
+            return capability
+        return None
+
+    def _resolve_intent_value(
+        self,
+        *,
+        intent: str,
+        question_text: str,
+        field_name: str,
+        field_type: str,
+    ) -> AnswerResolution | None:
+        question = " ".join(question_text.lower().split())
+        return self._computed_answer(question=question, field_name=field_name.strip().lower(), field_type=field_type.strip().lower(), forced_intent=intent)
+
+    def _computed_answer(self, *, question: str, field_name: str, field_type: str, forced_intent: str | None = None) -> AnswerResolution | None:
         normalized_field_name = field_name.lower()
 
         if "first name" in question or field_name.endswith("first_name") or field_name == "first_name":
@@ -108,7 +226,18 @@ class AnswerResolver:
             if degree:
                 return AnswerResolution(answer=degree, source="computed:education.degree")
 
-        if "legally authorized to work in the united states" in question:
+        if forced_intent == "consent_required" or "provide your consent" in question or "has my consent" in question:
+            return AnswerResolution(answer="Yes", source="computed:consent_acknowledgement")
+
+        if forced_intent == "current_location" or "current location" in question:
+            city = self._structured.get("identity.city", "").strip()
+            region = self._structured.get("identity.region", "").strip()
+            if city and region:
+                return AnswerResolution(answer=f"{city}, {region}", source="computed:identity.location")
+            if city:
+                return AnswerResolution(answer=city, source="computed:identity.location")
+
+        if forced_intent == "work_auth_us" or "legally authorized to work in the united states" in question:
             authorized = self._structured.get("work_authorization.us_work_authorized", "").strip().lower()
             if authorized in {"true", "yes", "1"}:
                 return AnswerResolution(answer="Yes", source="computed:work_authorization.us_work_authorized")
@@ -122,14 +251,14 @@ class AnswerResolver:
             if authorized in {"false", "no", "0"}:
                 return AnswerResolution(answer="No", source="computed:work_authorization.us_work_authorized")
 
-        if "require employer sponsorship to work in the united states" in question:
+        if forced_intent == "future_sponsorship_us" or "require employer sponsorship to work in the united states" in question:
             sponsorship = self._structured.get("work_authorization.requires_future_sponsorship", "").strip().lower()
             if sponsorship in {"true", "yes", "1"}:
                 return AnswerResolution(answer="Yes", source="computed:work_authorization.requires_future_sponsorship")
             if sponsorship in {"false", "no", "0"}:
                 return AnswerResolution(answer="No", source="computed:work_authorization.requires_future_sponsorship")
 
-        if "requires me to work on-site" in question or "requires me to work on site" in question:
+        if forced_intent == "on_site_acknowledgement" or "requires me to work on-site" in question or "requires me to work on site" in question:
             return AnswerResolution(answer="Yes", source="computed:preferences.on_site_acknowledgement")
 
         if "are you over 18" in question:
@@ -221,7 +350,7 @@ class AnswerResolver:
             if major:
                 return AnswerResolution(answer=major, source="computed:education.major")
 
-        if "end date month" in question or field_name.startswith("end-month"):
+        if forced_intent == "education_end_month" or "end date month" in question or field_name.startswith("end-month"):
             month = _graduation_month_name(self._structured.get("education.graduation_date", ""))
             if month:
                 return AnswerResolution(answer=month, source="computed:education.end_month")
@@ -234,7 +363,7 @@ class AnswerResolver:
             if year:
                 return AnswerResolution(answer=year, source="computed:education.start_year")
 
-        if "end date year" in question or field_name.startswith("end-year"):
+        if forced_intent == "education_end_year" or "end date year" in question or field_name.startswith("end-year"):
             year = _graduation_year(self._structured.get("education.graduation_date", ""))
             if year:
                 return AnswerResolution(answer=year, source="computed:education.end_year")
@@ -244,12 +373,12 @@ class AnswerResolver:
             if year:
                 return AnswerResolution(answer=year, source="computed:education.end_year")
 
-        if "linkedin profile" in question:
+        if forced_intent == "identity_linkedin_url" or "linkedin profile" in question:
             value = self._structured.get("identity.linkedin_url", "").strip()
             if value:
                 return AnswerResolution(answer=value, source="computed:identity.linkedin_url")
 
-        if "additional link" in question:
+        if forced_intent == "identity_additional_link" or "additional link" in question:
             for key in ("identity.github_url", "identity.portfolio_url"):
                 value = self._structured.get(key, "").strip()
                 if value:
