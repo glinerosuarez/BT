@@ -19,6 +19,15 @@ SEMANTIC_SCORER_VERSION = "semantic_shadow_v1"
 NEGATIVE_PROFILE_PENALTY_SCALE = 0.35
 BUILDER_SPARSE_PENALTY_ONE_BUCKET = 0.06
 BUILDER_SPARSE_PENALTY_ZERO_BUCKETS = 0.12
+POSITIVE_PROFILE_ALIGNMENT_THRESHOLD = 0.62
+NO_POSITIVE_MATCH_PROFILE_ID = "no_positive_match"
+RESEARCH_PROFILE_IDS = frozenset({"academic_research", "quant_research_trading"})
+ACADEMIC_RESEARCH_PROFILE_THRESHOLD = 0.58
+QUANT_RESEARCH_PROFILE_THRESHOLD = 0.55
+ACADEMIC_RESEARCH_PROFILE_PENALTY_SCALE = 0.40
+QUANT_RESEARCH_PROFILE_PENALTY_SCALE = 0.45
+QUANT_RESEARCH_TITLE_PENALTY = 0.22
+ANALYST_PROGRAM_TITLE_PENALTY = 0.16
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +87,15 @@ DEFAULT_SEMANTIC_PROFILES: tuple[SemanticProfile, ...] = (
         polarity="positive",
     ),
     SemanticProfile(
+        profile_id="data_science",
+        text=(
+            "Ideal internship centered on data science: data science, experimentation, hypothesis testing, "
+            "statistical analysis, predictive modeling, model evaluation, analytics, dashboards, A/B testing, "
+            "Python, SQL, notebooks, feature analysis, and applied business or product insights with data."
+        ),
+        polarity="positive",
+    ),
+    SemanticProfile(
         profile_id="backend_engineering",
         text=(
             "Ideal internship centered on backend engineering: backend services, server-side systems, APIs, "
@@ -94,6 +112,16 @@ DEFAULT_SEMANTIC_PROFILES: tuple[SemanticProfile, ...] = (
             "Python, production systems, and builder-oriented AI work."
         ),
         polarity="positive",
+    ),
+    SemanticProfile(
+        profile_id="academic_research",
+        text=(
+            "Low-fit internship centered on academic or research-heavy work: research scientist roles, "
+            "original research, novel methods, publications, papers, research agenda, experimental design, "
+            "PhD-oriented work, and academically driven machine learning research rather than builder-oriented "
+            "software systems, applied ML delivery, or production engineering."
+        ),
+        polarity="negative",
     ),
     SemanticProfile(
         profile_id="business_analyst_consulting",
@@ -197,6 +225,16 @@ _GENERALIST_ANALYTICAL_PATTERNS: tuple[str, ...] = (
 )
 
 _NEGATIVE_PROFILE_LEXICAL_PATTERNS: dict[str, tuple[str, ...]] = {
+    "academic_research": (
+        r"\bresearch scientist\b",
+        r"\boriginal research\b",
+        r"\bresearch background\b",
+        r"\bpublications?\b",
+        r"\bresearch agenda\b",
+        r"\bnovel (?:methods?|algorithms?)\b",
+        r"\bph\.?d\.?\b",
+        r"\bdoctoral\b",
+    ),
     "business_analyst_consulting": (
         r"\bbusiness analyst\b",
         r"\bclient meetings?\b",
@@ -265,6 +303,12 @@ class SemanticShadowScorer:
         self._profile_matrix: np.ndarray | None = None
         self._positive_profile_indices = [idx for idx, profile in enumerate(self.profiles) if profile.polarity == "positive"]
         self._negative_profile_indices = [idx for idx, profile in enumerate(self.profiles) if profile.polarity == "negative"]
+        self._research_negative_profile_indices = [
+            idx for idx, profile in enumerate(self.profiles) if profile.polarity == "negative" and profile.profile_id in RESEARCH_PROFILE_IDS
+        ]
+        self._generic_negative_profile_indices = [
+            idx for idx, profile in enumerate(self.profiles) if profile.polarity == "negative" and profile.profile_id not in RESEARCH_PROFILE_IDS
+        ]
 
     def score(self, job: JobRecord) -> SemanticStage2Result:
         job_text = build_job_text_v1(job)
@@ -294,10 +338,15 @@ class SemanticShadowScorer:
         negative_penalty, negative_reason_codes = _negative_profile_adjustment(
             similarity_scores,
             self.profiles,
-            self._negative_profile_indices,
+            self._generic_negative_profile_indices,
             job_text,
         )
-        research_heaviness_score, adjustment_reason_codes = _research_heaviness_adjustment(job_text)
+        research_heaviness_score, adjustment_reason_codes = _research_heaviness_adjustment(
+            similarity_scores,
+            self.profiles,
+            self._research_negative_profile_indices,
+            job_text,
+        )
         builder_evidence_penalty, builder_adjustment_reason_codes = _builder_evidence_adjustment(
             job_text,
             pre_adjustment_score=max(0.0, min(base_score - negative_penalty - research_heaviness_score, 1.0)),
@@ -307,7 +356,14 @@ class SemanticShadowScorer:
             min(base_score - negative_penalty - research_heaviness_score - builder_evidence_penalty, 1.0),
         )
         label = _semantic_label(adjusted_score)
-        reasons = _semantic_reason_codes(adjusted_score, best_profile.profile_id)
+        semantic_profile_id = _resolve_semantic_profile_id(
+            best_profile.profile_id,
+            base_score=base_score,
+            adjusted_score=adjusted_score,
+            negative_penalty=negative_penalty,
+            builder_evidence_penalty=builder_evidence_penalty,
+        )
+        reasons = _semantic_reason_codes(adjusted_score, semantic_profile_id)
         reasons.extend(negative_reason_codes)
         reasons.extend(adjustment_reason_codes)
         reasons.extend(builder_adjustment_reason_codes)
@@ -318,7 +374,7 @@ class SemanticShadowScorer:
             semantic_base_score=base_score,
             semantic_research_heaviness_score=research_heaviness_score,
             semantic_adjustment_reason_codes=sorted(set(adjustment_reason_codes)),
-            semantic_profile_id=best_profile.profile_id,
+            semantic_profile_id=semantic_profile_id,
             semantic_model_name=self.backend.model_name,
             semantic_scorer_version=self.scorer_version,
             semantic_text_hash=text_hash,
@@ -345,7 +401,10 @@ def _semantic_label(score: float) -> str:
 
 
 def _semantic_reason_codes(score: float, profile_id: str) -> list[str]:
-    reasons = [f"semantic_profile_{profile_id}"]
+    if profile_id == NO_POSITIVE_MATCH_PROFILE_ID:
+        reasons = ["semantic_no_positive_profile_match"]
+    else:
+        reasons = [f"semantic_profile_{profile_id}"]
     if score >= 0.70:
         reasons.append("semantic_similarity_high")
     elif score >= 0.62:
@@ -355,6 +414,23 @@ def _semantic_reason_codes(score: float, profile_id: str) -> list[str]:
     else:
         reasons.append("semantic_similarity_low")
     return reasons
+
+
+def _resolve_semantic_profile_id(
+    profile_id: str,
+    *,
+    base_score: float,
+    adjusted_score: float,
+    negative_penalty: float,
+    builder_evidence_penalty: float,
+) -> str:
+    if adjusted_score >= 0.52:
+        return profile_id
+    if base_score < POSITIVE_PROFILE_ALIGNMENT_THRESHOLD:
+        return NO_POSITIVE_MATCH_PROFILE_ID
+    if negative_penalty > 0.0 and builder_evidence_penalty > 0.0:
+        return NO_POSITIVE_MATCH_PROFILE_ID
+    return profile_id
 
 
 def _best_profile_match(similarity_scores: np.ndarray, indices: list[int]) -> tuple[int, float]:
@@ -428,7 +504,12 @@ def _has_negative_profile_lexical_support(job_text: str, profile_id: str) -> boo
     return any(re.search(pattern, blob, flags=re.IGNORECASE) for pattern in patterns)
 
 
-def _research_heaviness_adjustment(job_text: str) -> tuple[float, list[str]]:
+def _research_heaviness_adjustment(
+    similarity_scores: np.ndarray,
+    profiles: tuple[SemanticProfile, ...],
+    research_negative_indices: list[int],
+    job_text: str,
+) -> tuple[float, list[str]]:
     blob = job_text.lower()
     flags = set(extract_job_flags(job_text))
     flags.update(_extract_snapshot_flags(job_text))
@@ -437,69 +518,101 @@ def _research_heaviness_adjustment(job_text: str) -> tuple[float, list[str]]:
     title_line = next((line for line in job_text.splitlines() if line.startswith("TITLE: ")), "")
     title_blob = title_line.lower()
 
-    has_research_signal = False
-    has_degree_track_signal = False
-    has_publication_signal = False
-    has_degree_track_title_signal = False
+    profile_penalty, profile_reasons = _research_profile_penalty(
+        similarity_scores,
+        profiles,
+        research_negative_indices,
+        job_text,
+    )
+    penalty += profile_penalty
+    reasons.extend(profile_reasons)
 
-    if "mentions_research" in flags:
-        penalty += 0.08
-        reasons.append("semantic_penalty_mentions_research")
-        has_research_signal = True
-    if _has_research_heavy_signals(blob):
-        penalty += 0.20
-        reasons.append("semantic_penalty_research_heavy_signal")
-        has_research_signal = True
-    if "mentions_quant" in flags:
-        penalty += 0.08
-        reasons.append("semantic_penalty_quant_signal")
-    if "mentions_trading" in flags:
-        penalty += 0.10
-        reasons.append("semantic_penalty_trading_signal")
-    if "mentions_masters" in flags:
-        penalty += 0.02
-        reasons.append("semantic_penalty_masters_signal")
-        has_degree_track_signal = True
     if "mentions_phd" in flags:
         penalty += 0.30
         reasons.append("semantic_penalty_phd_signal")
-        has_degree_track_signal = True
     if "mentions_causal_inference" in flags:
         penalty += 0.10
         reasons.append("semantic_penalty_causal_inference")
 
-    if "publications" in blob or "publication" in blob:
-        penalty += 0.25
-        reasons.append("semantic_penalty_publications_signal")
-        has_publication_signal = True
-    if "research background" in blob:
-        penalty += 0.20
-        reasons.append("semantic_penalty_research_background")
-        has_research_signal = True
-    if "quantitative research" in title_blob or "quant research" in title_blob:
-        penalty += 0.18
-        reasons.append("semantic_penalty_quant_research_title")
-        has_research_signal = True
-    if "working towards a master's degree" in blob or "masters statistics major" in blob:
+    if "mentions_masters" in flags and ("research scientist" in title_blob or _has_research_heavy_signals(blob)):
         penalty += 0.02
-        reasons.append("semantic_penalty_degree_preference_mismatch")
-        has_degree_track_signal = True
-    if "title: master's" in title_blob or "title: phd" in title_blob:
-        penalty += 0.08
-        reasons.append("semantic_penalty_degree_track_title")
-        has_degree_track_signal = True
-        has_degree_track_title_signal = True
-    if has_research_signal and has_degree_track_title_signal:
-        penalty += 0.10
-        reasons.append("semantic_penalty_research_degree_title_stack")
-    if has_research_signal and has_degree_track_signal and has_publication_signal:
-        penalty += 0.06
-        reasons.append("semantic_penalty_research_degree_publication_stack")
-    if ("mentions_quant" in flags and "mentions_research" in flags) or "quantitative research" in title_blob:
-        penalty += 0.10
-        reasons.append("semantic_penalty_quant_research_stack")
+        reasons.append("semantic_penalty_masters_signal")
+    if "publications" in blob or "publication" in blob:
+        penalty += 0.18
+        reasons.append("semantic_penalty_publications_signal")
+    if "research background" in blob:
+        penalty += 0.12
+        reasons.append("semantic_penalty_research_background")
+    if (
+        "quantitative researcher" in title_blob
+        or "quant research" in title_blob
+        or "quantitative research" in title_blob
+    ):
+        penalty += QUANT_RESEARCH_TITLE_PENALTY
+        reasons.append("semantic_penalty_quant_research_title")
+    if _has_analyst_program_title_signal(title_blob):
+        penalty += ANALYST_PROGRAM_TITLE_PENALTY
+        reasons.append("semantic_penalty_analyst_program_title")
+    if "research scientist" in title_blob:
+        penalty += 0.18
+        reasons.append("semantic_penalty_research_scientist_title")
 
     return min(penalty, 0.6), reasons
+
+
+def _research_profile_penalty(
+    similarity_scores: np.ndarray,
+    profiles: tuple[SemanticProfile, ...],
+    research_negative_indices: list[int],
+    job_text: str,
+) -> tuple[float, list[str]]:
+    if not research_negative_indices:
+        return 0.0, []
+
+    penalties: list[tuple[float, str]] = []
+    for idx in research_negative_indices:
+        profile = profiles[idx]
+        if not _has_negative_profile_lexical_support(job_text, profile.profile_id):
+            continue
+        score = float(similarity_scores[idx])
+        if profile.profile_id == "academic_research" and score >= ACADEMIC_RESEARCH_PROFILE_THRESHOLD:
+            penalties.append(
+                (
+                    max(0.0, score - ACADEMIC_RESEARCH_PROFILE_THRESHOLD) * ACADEMIC_RESEARCH_PROFILE_PENALTY_SCALE,
+                    "academic_research",
+                )
+            )
+        if profile.profile_id == "quant_research_trading" and score >= QUANT_RESEARCH_PROFILE_THRESHOLD:
+            penalties.append(
+                (
+                    max(0.0, score - QUANT_RESEARCH_PROFILE_THRESHOLD) * QUANT_RESEARCH_PROFILE_PENALTY_SCALE,
+                    "quant_research_trading",
+                )
+            )
+
+    if not penalties:
+        return 0.0, []
+
+    total_penalty = 0.0
+    reasons: list[str] = []
+    for amount, profile_id in penalties:
+        if amount <= 0.0:
+            continue
+        total_penalty += amount
+        reasons.append(f"semantic_research_profile_{profile_id}")
+        reasons.append(f"semantic_penalty_{profile_id}_profile")
+    return total_penalty, reasons
+
+
+def _has_analyst_program_title_signal(title_blob: str) -> bool:
+    return any(
+        pattern.search(title_blob)
+        for pattern in (
+            re.compile(r"\bsummer analyst program\b", re.IGNORECASE),
+            re.compile(r"\bquantitative\b.*\banalyst\b", re.IGNORECASE),
+            re.compile(r"\banalyst\b.*\bprogram\b", re.IGNORECASE),
+        )
+    )
 
 
 def _extract_snapshot_flags(job_text: str) -> set[str]:

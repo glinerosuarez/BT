@@ -8,6 +8,8 @@ from job_hunter.config import load_settings
 from job_hunter.models import JobRecord
 from job_hunter.storage import JobStore, ensure_parent_dir
 
+NO_POSITIVE_MATCH_PROFILE_ID = "no_positive_match"
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Inspect Stage 2 shadow-mode outputs")
@@ -18,6 +20,7 @@ def main() -> int:
     list_parser.add_argument("--label", choices=("pass", "review", "reject"))
     list_parser.add_argument("--source")
     list_parser.add_argument("--format", choices=("text", "json"), default="text")
+    list_parser.add_argument("--include-no-positive-match", action="store_true")
 
     show_parser = subparsers.add_parser("show", help="Show one job's Stage 2 shadow output in detail")
     show_parser.add_argument("--job-id", type=int, required=True)
@@ -59,6 +62,7 @@ def main() -> int:
     disagreement_parser.add_argument("--source")
     disagreement_parser.add_argument("--labeled-only", action="store_true")
     disagreement_parser.add_argument("--format", choices=("text", "json"), default="text")
+    disagreement_parser.add_argument("--include-no-positive-match", action="store_true")
 
     diagnostics_parser = subparsers.add_parser(
         "embedding-diagnostics",
@@ -83,6 +87,10 @@ def main() -> int:
         if args.command == "list":
             rows = store.list_stage2_jobs(limit=args.limit, label=args.label, source=args.source)
             payload = [_serialize_list_row(row) for row in rows]
+            payload = _filter_no_positive_match_rows(
+                payload,
+                include_no_positive_match=args.include_no_positive_match,
+            )
             if args.format == "json":
                 print(json.dumps(payload, indent=2, sort_keys=True))
             else:
@@ -180,6 +188,12 @@ def main() -> int:
                 source=args.source,
                 labeled_only=args.labeled_only,
             )
+            if not args.include_no_positive_match:
+                rows = [
+                    row
+                    for row in rows
+                    if str(row["semantic_profile_id"] or "") != NO_POSITIVE_MATCH_PROFILE_ID
+                ]
             payload = _build_disagreement_report(rows)
             if args.format == "json":
                 print(json.dumps(payload, indent=2, sort_keys=True))
@@ -267,6 +281,16 @@ def _serialize_show_row(row) -> dict[str, object]:
         "manual_fit_label": str(row["manual_fit_label"] or ""),
         "manual_fit_reason_codes": _decode_json_array(row["manual_fit_reason_codes"]),
     }
+
+
+def _filter_no_positive_match_rows(
+    rows: list[dict[str, object]],
+    *,
+    include_no_positive_match: bool,
+) -> list[dict[str, object]]:
+    if include_no_positive_match:
+        return rows
+    return [row for row in rows if str(row.get("semantic_profile_id") or "") != NO_POSITIVE_MATCH_PROFILE_ID]
 
 
 def _serialize_comparison_row(row) -> dict[str, object]:
