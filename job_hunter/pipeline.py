@@ -118,12 +118,20 @@ NEGATED_SPONSORSHIP_REGEXES = {
     ),
 }
 BUILTIN_POLICY_REJECT_REGEXES = {
+    "undergraduate_title": re.compile(
+        r"\bundergraduate\s+intern(ship)?\b",
+        flags=re.IGNORECASE,
+    ),
     "undergraduate_only": re.compile(
         r"\b((undergraduate students?|undergraduates?)\s+only|only\s+(open to\s+)?undergraduate students?)\b",
         flags=re.IGNORECASE,
     ),
     "undergraduate_enrollment_required": re.compile(
         r"\b(currently enrolled (as|in) an? undergraduate student|must be currently enrolled in an undergraduate (program|degree))\b",
+        flags=re.IGNORECASE,
+    ),
+    "undergraduate_coursework_required": re.compile(
+        r"\b(at least\s+three\s+years\s+of\s+college\s+coursework|three\s+years\s+of\s+college\s+coursework)\b",
         flags=re.IGNORECASE,
     ),
     "graduate_students_not_eligible": re.compile(

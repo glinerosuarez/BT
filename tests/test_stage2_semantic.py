@@ -25,23 +25,40 @@ class FakeEmbeddingBackend:
         for text in texts:
             lowered = text.lower()
             if "ideal internship centered on data engineering" in lowered:
-                vectors.append([1.0, 0.0, 0.0, 0.0])
+                vectors.append([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            elif "ideal internship centered on data science" in lowered:
+                vectors.append([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             elif "ideal internship centered on backend engineering" in lowered:
-                vectors.append([0.0, 1.0, 0.0, 0.0])
+                vectors.append([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
             elif "ideal internship centered on machine learning engineering" in lowered:
-                vectors.append([0.0, 0.0, 1.0, 0.0])
+                vectors.append([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+            elif "low-fit internship centered on academic or research-heavy work" in lowered:
+                vectors.append([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0])
             elif "target internship for an ms cs student focused on building ml and data systems" in lowered:
-                vectors.append([0.7, 0.5, 0.6, 0.0])
+                vectors.append([0.7, 0.4, 0.5, 0.6, 0.0, 0.0, 0.0])
             elif "low-fit internship centered on business analyst or consulting work" in lowered:
-                vectors.append([0.0, 0.0, 0.0, 1.0])
+                vectors.append([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
             elif "low-fit internship centered on marketing, content creation, social media" in lowered:
-                vectors.append([0.0, 0.0, 0.0, 1.0])
+                vectors.append([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
             elif "low-fit internship centered on web development, frontend product work" in lowered:
-                vectors.append([0.0, 0.0, 0.0, 1.0])
+                vectors.append([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
             elif "low-fit internship centered on quantitative research, trading, market making" in lowered:
-                vectors.append([0.0, 0.0, 0.0, 1.0])
+                vectors.append([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+            elif any(
+                phrase in lowered
+                for phrase in (
+                    "data science",
+                    "statistical analysis",
+                    "hypothesis testing",
+                    "predictive modeling",
+                    "model evaluation",
+                    "a/b testing",
+                    "experimentation",
+                )
+            ):
+                vectors.append([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             elif "data engineering" in lowered or "etl" in lowered or "lakehouse" in lowered:
-                vectors.append([1.0, 0.0, 0.0, 0.0])
+                vectors.append([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             elif any(
                 phrase in lowered
                 for phrase in (
@@ -59,11 +76,32 @@ class FakeEmbeddingBackend:
                     "azure cloud",
                 )
             ):
-                vectors.append([0.0, 1.0, 0.0, 0.0])
+                vectors.append([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+            elif any(
+                phrase in lowered
+                for phrase in (
+                    "research background preferred",
+                    "publications are a plus",
+                    "original research",
+                    "research scientist",
+                )
+            ):
+                vectors.append([0.0, 0.0, 0.0, 0.6, 0.0, 0.9, 0.0])
+            elif any(
+                phrase in lowered
+                for phrase in (
+                    "quantitative research",
+                    "market making",
+                    "options theory",
+                    "stat arb",
+                    "trading intuition",
+                )
+            ):
+                vectors.append([0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.95])
             elif "model deployment" in lowered or "applied ml" in lowered or "llm" in lowered or "production ml systems" in lowered:
-                vectors.append([0.0, 0.0, 1.0, 0.0])
+                vectors.append([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
             elif "summarize insights" in lowered or "documenting findings" in lowered:
-                vectors.append([0.7, 0.2, 0.2, 0.0])
+                vectors.append([0.3, 0.6, 0.1, 0.0, 0.0, 0.0, 0.0])
             elif any(
                 phrase in lowered
                 for phrase in (
@@ -85,9 +123,9 @@ class FakeEmbeddingBackend:
                     "newsletter",
                 )
             ):
-                vectors.append([0.0, 0.0, 0.0, 1.0])
+                vectors.append([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
             else:
-                vectors.append([0.0, 0.0, 0.0, 1.0])
+                vectors.append([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
         return FakeEmbeddingResult(vectors)
 
 
@@ -118,6 +156,31 @@ class Stage2SemanticTests(unittest.TestCase):
         self.assertIn("semantic_similarity_high", result.semantic_match_reason_codes)
         self.assertEqual(result.semantic_model_name, "fake-semantic-model")
         self.assertEqual(len(backend.calls), 2)
+
+    def test_semantic_scorer_prefers_data_science_profile(self) -> None:
+        backend = FakeEmbeddingBackend()
+        scorer = SemanticShadowScorer(backend=backend)
+        job = JobRecord(
+            source="fake",
+            external_id="1ds",
+            url="https://example.com/1ds",
+            title="Data Science Intern",
+            company="Example",
+            location="Remote - US",
+            is_internship=True,
+            posted_at="2026-06-25",
+            description=(
+                "Run statistical analysis and experimentation on product datasets. "
+                "Build predictive models in Python and SQL, evaluate model quality, "
+                "and communicate insights to cross-functional teams."
+            ),
+            ingested_at="2026-06-26T00:00:00+00:00",
+        )
+
+        result = scorer.score(job)
+
+        self.assertEqual(result.semantic_match_label, "pass")
+        self.assertEqual(result.semantic_profile_id, "data_science")
 
     def test_semantic_scorer_prefers_backend_engineering_profile(self) -> None:
         backend = FakeEmbeddingBackend()
@@ -162,6 +225,8 @@ class Stage2SemanticTests(unittest.TestCase):
         result = scorer.score(job)
 
         self.assertEqual(result.semantic_match_label, "reject")
+        self.assertEqual(result.semantic_profile_id, "no_positive_match")
+        self.assertIn("semantic_no_positive_profile_match", result.semantic_match_reason_codes)
         self.assertIn("semantic_similarity_low", result.semantic_match_reason_codes)
         self.assertTrue(result.semantic_text_hash)
 
@@ -189,11 +254,9 @@ class Stage2SemanticTests(unittest.TestCase):
 
         self.assertGreater(result.semantic_base_score, result.semantic_match_score)
         self.assertGreater(result.semantic_research_heaviness_score, 0.0)
-        self.assertIn("semantic_penalty_mentions_research", result.semantic_adjustment_reason_codes)
-        self.assertIn("semantic_penalty_masters_signal", result.semantic_adjustment_reason_codes)
-        self.assertIn("semantic_penalty_research_heavy_signal", result.semantic_adjustment_reason_codes)
-        self.assertIn("semantic_penalty_degree_track_title", result.semantic_adjustment_reason_codes)
-        self.assertIn("semantic_penalty_research_degree_title_stack", result.semantic_adjustment_reason_codes)
+        self.assertIn("semantic_research_profile_academic_research", result.semantic_adjustment_reason_codes)
+        self.assertIn("semantic_penalty_academic_research_profile", result.semantic_adjustment_reason_codes)
+        self.assertIn("semantic_penalty_research_background", result.semantic_adjustment_reason_codes)
         self.assertEqual(result.semantic_match_label, "reject")
 
     def test_semantic_scorer_penalizes_business_analyst_consulting_match(self) -> None:
@@ -218,8 +281,9 @@ class Stage2SemanticTests(unittest.TestCase):
 
         result = scorer.score(job)
 
-        self.assertEqual(result.semantic_profile_id, "builder_ml_data")
+        self.assertEqual(result.semantic_profile_id, "no_positive_match")
         self.assertEqual(result.semantic_match_label, "reject")
+        self.assertIn("semantic_no_positive_profile_match", result.semantic_match_reason_codes)
         self.assertIn(
             "semantic_negative_profile_business_analyst_consulting",
             result.semantic_match_reason_codes,
@@ -252,12 +316,65 @@ class Stage2SemanticTests(unittest.TestCase):
 
         result = scorer.score(job)
 
-        self.assertEqual(result.semantic_profile_id, "builder_ml_data")
-        self.assertIn("semantic_penalty_quant_signal", result.semantic_adjustment_reason_codes)
-        self.assertIn("semantic_penalty_trading_signal", result.semantic_adjustment_reason_codes)
+        self.assertEqual(result.semantic_profile_id, "no_positive_match")
+        self.assertIn("semantic_no_positive_profile_match", result.semantic_match_reason_codes)
+        self.assertIn("semantic_research_profile_quant_research_trading", result.semantic_adjustment_reason_codes)
+        self.assertIn("semantic_penalty_quant_research_trading_profile", result.semantic_adjustment_reason_codes)
         self.assertIn("semantic_penalty_quant_research_title", result.semantic_adjustment_reason_codes)
-        self.assertIn("semantic_penalty_quant_research_stack", result.semantic_adjustment_reason_codes)
         self.assertEqual(result.semantic_match_label, "reject")
+
+    def test_semantic_scorer_penalizes_analyst_program_title(self) -> None:
+        backend = FakeEmbeddingBackend()
+        scorer = SemanticShadowScorer(backend=backend)
+        job = JobRecord(
+            source="fake",
+            external_id="4c",
+            url="https://example.com/4c",
+            title="Quantitative Data Analytics Summer Analyst Program",
+            company="Example Bank",
+            location="US",
+            is_internship=True,
+            posted_at="2026-07-01",
+            description=(
+                "Support analytics projects and present findings to business partners. "
+                "Participate in a structured summer analyst program for quantitative talent."
+            ),
+            ingested_at="2026-07-02T00:00:00+00:00",
+        )
+
+        result = scorer.score(job)
+
+        self.assertIn("semantic_penalty_analyst_program_title", result.semantic_adjustment_reason_codes)
+        self.assertEqual(result.semantic_profile_id, "no_positive_match")
+        self.assertEqual(result.semantic_match_label, "reject")
+
+    def test_semantic_scorer_keeps_applied_ai_role_out_of_research_reject(self) -> None:
+        backend = FakeEmbeddingBackend()
+        scorer = SemanticShadowScorer(backend=backend)
+        job = JobRecord(
+            source="fake",
+            external_id="111",
+            url="https://example.com/111",
+            title="Agentic AI Intern",
+            company="DataRobot",
+            location="Remote - US",
+            is_internship=True,
+            posted_at="2026-07-15",
+            description=(
+                "Build and deploy agentic AI workflows for engineering automation. "
+                "Use AutoML and MLOps capabilities to design, evaluate, and ship solutions. "
+                "Currently pursuing or recently completed a Bachelor's or Master's degree in Computer Science, "
+                "Data Science, Statistics, Engineering, or a related quantitative field. "
+                "Prior internship, research, or project experience applying ML to real-world problems is helpful."
+            ),
+            ingested_at="2026-07-16T00:00:00+00:00",
+        )
+
+        result = scorer.score(job)
+
+        self.assertIn(result.semantic_profile_id, {"ml_engineering", "data_science"})
+        self.assertIn(result.semantic_match_label, {"review", "pass"})
+        self.assertLess(result.semantic_research_heaviness_score, 0.1)
 
     def test_semantic_scorer_penalizes_missing_builder_evidence(self) -> None:
         backend = FakeEmbeddingBackend()
@@ -321,6 +438,7 @@ class Stage2SemanticTests(unittest.TestCase):
             result.semantic_match_reason_codes,
         )
         self.assertEqual(result.semantic_match_label, "reject")
+        self.assertEqual(result.semantic_profile_id, "no_positive_match")
 
     def test_semantic_scorer_requires_lexical_support_for_negative_profile_penalty(self) -> None:
         backend = FakeEmbeddingBackend()

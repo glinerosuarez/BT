@@ -554,6 +554,24 @@ class PipelineUnitTests(unittest.TestCase):
             )
         )
 
+    def test_policy_gate_rejects_undergraduate_intern_with_three_years_coursework(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="3b",
+            url="https://example.com/3b",
+            title="LSE Undergraduate Intern",
+            company="Example",
+            location="US",
+            is_internship=True,
+            posted_at=None,
+            description=(
+                "Must be a U.S. citizen. Completion of at least three years of college coursework "
+                "in Computer Science, Engineering, Physics, Mathematics, or a related STEM field."
+            ),
+            ingested_at="now",
+        )
+        self.assertTrue(_fails_policy_gate(job, policy_reject_regexes=[]))
+
     def test_dedupe_stability(self) -> None:
         j1 = JobRecord(
             source="x",

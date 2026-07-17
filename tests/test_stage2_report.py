@@ -8,9 +8,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from job_hunter.config import Settings
-from job_hunter.pipeline import run_pipeline
+from job_hunter.models import JobRecord
 from job_hunter.storage import JobStore
 from job_hunter.stage2_report import main
+from job_hunter.stage2 import build_job_text_v1
 
 
 class FakeSource:
@@ -167,21 +168,41 @@ class Stage2ReportTests(unittest.TestCase):
         self.db_path = str(Path(self.temp_dir.name) / "test.db")
         self.settings = make_settings(self.db_path)
         self.store = JobStore(self.db_path)
-        payload = [
-            {
-                "source": "fake",
-                "external_id": "job-1",
-                "url": "https://example.com/job-1",
-                "title": "Data Engineering Intern",
-                "company": "Finz",
-                "location": "Remote - US",
-                "posted_at": "2026-06-25T00:00:00+00:00",
-                "description": "Build production ML systems with Python and SQL for our internship program.",
-                "skills": ["python", "sql"],
-            }
-        ]
-        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
-            run_pipeline(self.settings, self.store, None)
+        seed_job = JobRecord(
+            source="fake",
+            external_id="job-1",
+            url="https://example.com/job-1",
+            title="Data Engineering Intern",
+            company="Finz",
+            location="Remote - US",
+            is_internship=True,
+            posted_at="2026-06-25T00:00:00+00:00",
+            description="Build production ML systems with Python and SQL for our internship program.",
+            skills=["python", "sql"],
+            ingested_at="2026-06-26T00:00:00+00:00",
+            relevance_score=4.2,
+            eligibility_confidence=0.7,
+            eligibility_status="ambiguous",
+            profile_match_score=0.95,
+            profile_match_label="pass",
+            profile_match_reason_codes=["builder_signal_alignment", "target_title_alignment"],
+            profile_version="default_v1",
+            scorer_version="shadow_rules_v1",
+            job_text_version="job_text_v1",
+            semantic_match_score=0.81,
+            semantic_match_label="pass",
+            semantic_match_reason_codes=["semantic_profile_data_engineering", "semantic_similarity_high"],
+            semantic_base_score=0.84,
+            semantic_research_heaviness_score=0.03,
+            semantic_adjustment_reason_codes=[],
+            semantic_profile_id="data_engineering",
+            semantic_model_name="seed-model",
+            semantic_scorer_version="semantic_shadow_v1",
+            semantic_text_hash="seed-semantic-hash",
+            compensation_type="paid",
+        )
+        seed_job.job_text_snapshot = build_job_text_v1(seed_job)
+        self.store.insert_job(seed_job, "fake:job-1")
         self.store.close()
 
     def tearDown(self) -> None:
@@ -362,6 +383,62 @@ class Stage2ReportTests(unittest.TestCase):
         self.assertIn("Data Engineering Intern", output)
         self.assertIn("normalized_manual=reject", output)
         self.assertIn("axes=deterministic_vs_manual,semantic_vs_manual", output)
+
+    def test_list_hides_no_positive_match_by_default(self) -> None:
+        store = JobStore(self.db_path)
+        store.update_semantic_shadow(
+            1,
+            semantic_match_score=0.31,
+            semantic_match_label="reject",
+            semantic_match_reason_codes=["semantic_no_positive_profile_match", "semantic_similarity_low"],
+            semantic_base_score=0.45,
+            semantic_research_heaviness_score=0.0,
+            semantic_adjustment_reason_codes=[],
+            semantic_profile_id="no_positive_match",
+            semantic_model_name="fake-semantic-model",
+            semantic_scorer_version="semantic_shadow_v1",
+            semantic_text_hash="semantic-hash-2",
+        )
+        store.close()
+
+        buffer = io.StringIO()
+        with patch("job_hunter.stage2_report.load_settings", return_value=self.settings):
+            with patch("sys.argv", ["stage2_report.py", "list", "--limit", "5"]):
+                with redirect_stdout(buffer):
+                    rc = main()
+        output = buffer.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("No Stage 2 jobs found.", output)
+
+    def test_list_can_include_no_positive_match(self) -> None:
+        store = JobStore(self.db_path)
+        store.update_semantic_shadow(
+            1,
+            semantic_match_score=0.31,
+            semantic_match_label="reject",
+            semantic_match_reason_codes=["semantic_no_positive_profile_match", "semantic_similarity_low"],
+            semantic_base_score=0.45,
+            semantic_research_heaviness_score=0.0,
+            semantic_adjustment_reason_codes=[],
+            semantic_profile_id="no_positive_match",
+            semantic_model_name="fake-semantic-model",
+            semantic_scorer_version="semantic_shadow_v1",
+            semantic_text_hash="semantic-hash-3",
+        )
+        store.close()
+
+        buffer = io.StringIO()
+        with patch("job_hunter.stage2_report.load_settings", return_value=self.settings):
+            with patch(
+                "sys.argv",
+                ["stage2_report.py", "list", "--limit", "5", "--include-no-positive-match"],
+            ):
+                with redirect_stdout(buffer):
+                    rc = main()
+        output = buffer.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("Data Engineering Intern", output)
+        self.assertIn("profile=no_positive_match", output)
 
 
 if __name__ == "__main__":
