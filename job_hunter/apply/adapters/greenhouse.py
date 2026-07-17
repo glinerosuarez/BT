@@ -427,7 +427,12 @@ class GreenhouseAdapter:
         lowered_question = question_text.lower()
         lowered_field = field_name.lower()
         if "bound by any agreements" in lowered_question:
-            return resolver.resolve(question_text=question_text, field_name="agreements_restriction", field_type=field_type)
+            return resolver.resolve_for_portal(
+                portal=self.adapter_name,
+                question_text=question_text,
+                field_name="agreements_restriction",
+                field_type=field_type,
+            )
         if lowered_field == "first_name" or "first name" in lowered_question:
             full_name = resolver.profile.identity.full_name.strip().split()
             first_name = full_name[0] if full_name else ""
@@ -436,7 +441,12 @@ class GreenhouseAdapter:
             full_name = resolver.profile.identity.full_name.strip().split()
             last_name = " ".join(full_name[1:]) if len(full_name) > 1 else (full_name[0] if full_name else "")
             return AnswerResolution(answer=last_name, source="structured:identity.full_name")
-        return resolver.resolve(question_text=question_text, field_name=field_name, field_type=field_type)
+        return resolver.resolve_for_portal(
+            portal=self.adapter_name,
+            question_text=question_text,
+            field_name=field_name,
+            field_type=field_type,
+        )
 
     def _normalized_current_value(self, *, field_type: str, current_value: str) -> str:
         normalized = current_value.strip()

@@ -12,6 +12,7 @@ from .types import (
     EmploymentProfile,
     PreferenceProfile,
     WorkAuthorization,
+    WorkdayCredential,
 )
 
 
@@ -68,6 +69,22 @@ def _parse_profile(payload: dict[str, object]) -> ApplicationProfile:
     employment = _require_section(payload, "employment")
     preferences = _require_section(payload, "preferences")
     uploads = payload.get("uploads") if isinstance(payload.get("uploads"), dict) else {}
+    raw_workday_credentials = payload.get("workday_credentials", [])
+    if raw_workday_credentials is None:
+        raw_workday_credentials = []
+    if not isinstance(raw_workday_credentials, list):
+        raise ProfileValidationError("workday_credentials must be an array when provided")
+    workday_credentials: list[WorkdayCredential] = []
+    for idx, item in enumerate(raw_workday_credentials):
+        if not isinstance(item, dict):
+            raise ProfileValidationError(f"workday_credentials[{idx}] must be an object")
+        workday_credentials.append(
+            WorkdayCredential(
+                host=_require_str(item, "host", section_name=f"workday_credentials[{idx}]"),
+                email=_require_str(item, "email", section_name=f"workday_credentials[{idx}]"),
+                password=_require_str(item, "password", section_name=f"workday_credentials[{idx}]"),
+            )
+        )
     return ApplicationProfile(
         identity=ApplicationIdentity(
             full_name=_require_str(identity, "full_name", section_name="identity"),
@@ -108,6 +125,7 @@ def _parse_profile(payload: dict[str, object]) -> ApplicationProfile:
             relocation_ok=_require_bool(preferences, "relocation_ok", section_name="preferences"),
         ),
         uploads={str(key): str(value).strip() for key, value in uploads.items() if str(key).strip()},
+        workday_credentials=workday_credentials,
     )
 
 

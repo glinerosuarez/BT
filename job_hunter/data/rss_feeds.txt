@@ -1,6 +1,5 @@
 https://remoteok.com/remote-internship-jobs.rss
 https://weworkremotely.com/categories/remote-programming-jobs.rss
-https://weworkremotely.com/remote-jobs.rss
 https://stackoverflow.blog/jobs/feed/
 https://www.python.org/jobs/feed/rss/
 https://www.smashingmagazine.com/jobs/feed/

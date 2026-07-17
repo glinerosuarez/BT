@@ -33,7 +33,6 @@ pagerduty
 peloton
 pinterest
 postman
-reddit
 ripple
 robinhood
 scaleai

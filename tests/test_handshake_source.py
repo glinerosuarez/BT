@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from job_hunter.sources.handshake import (
+    HandshakeAccessWallError,
     _build_row,
     _build_row_from_job_page,
     _discover_card_url,
@@ -14,9 +15,11 @@ from job_hunter.sources.handshake import (
     _normalize_title_token,
     _normalize_search_url,
     _partition_handshake_urls,
+    _page_requires_auth,
     _page_body_has_security_verification,
     _parse_card_text,
     _parse_detail_text,
+    _raise_for_auth_wall,
     _relative_age_to_iso,
     _resolve_job_url,
     _select_best_card_url,
@@ -129,6 +132,24 @@ CREW
 """
 
 INLINE_SUMMARY_BETA_DETAIL_TEXT = """CRH Construction Commercialization Intern Posted 2 days ago∙Apply by August 8, 2026 at 10:59 PM Save Share Apply externally Summary Beta This job posting describes a data engineering intern position, which aligns well with the user's interest in learning about data-related roles. It highlights key responsibilities such as supporting commercialization efforts, developing reports, and maintaining documentation. At a glance $22–31/hr Remote Work from home Internship Part-time∙35 hours a week∙From September 1, 2026 to December 18, 2026 US work authorization required Eligible for visa sponsorship and open to candidates with OPT/CPT Job description CRH is a leading global diversified building materials group. Position Overview: As a Commercialization Intern (Americas) you will support various commercialization efforts within the Americas Solutions Group."""
+
+QUICK_APPLY_SUMMARY_BETA_DETAIL_TEXT = """Omni Hotels & Resorts
+Hotels & Accommodation
+Cook (Internship)
+Posted 1 day ago∙Apply by August 9, 2026 at 10:59 PM
+Save
+Share
+Quick apply Summary Beta This internship offers hands-on experience in a dynamic culinary setting, directly related to the user's interest in becoming a data engineer. It provides valuable insights into food and beverage management, which can complement the user's future career in data engineering by fostering organizational and analytical skills.
+At a glance
+$15–20/hr
+Onsite, based in Bedford, PA
+Internship
+Full-time∙From July 10, 2026 to February 28, 2027
+US work authorization required
+Open to candidates with OPT/CPT
+Job description
+Overview: Responsible for all prep and production for the banquet culinary operation, in accordance with hotel standards.
+"""
 
 PRESTO_BODY_TEXT = """Skip to content
 Explore
@@ -382,6 +403,22 @@ class HandshakeSourceTests(unittest.TestCase):
         self.assertNotIn("This job posting describes a data engineering intern position", row["description"])
         self.assertIn("Position Overview: As a Commercialization Intern", row["description"])
 
+    def test_build_row_strips_quick_apply_summary_beta_pollution(self) -> None:
+        row = _build_row(
+            CARD_TEXT,
+            QUICK_APPLY_SUMMARY_BETA_DETAIL_TEXT,
+            "https://app.joinhandshake.com/job-search/example",
+            "https://app.joinhandshake.com/jobs/11197119",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertNotIn("Summary Beta", row["description"])
+        self.assertNotIn("related to the user's interest in becoming a data engineer", row["description"])
+        self.assertNotIn("Quick apply At a glance", row["description"])
+        self.assertIn("At a glance", row["description"])
+        self.assertIn("Overview: Responsible for all prep and production", row["description"])
+
     def test_build_row_recovers_polluted_title_from_card_title(self) -> None:
         row = _build_row(
             "Citizens for Responsibility and Ethics in Washington\nCommunications Intern\n$18/hr · Internship\nWashington, DC\n2d ago\n",
@@ -473,6 +510,33 @@ class HandshakeSourceTests(unittest.TestCase):
         self.assertNotIn("Summary Beta", row["description"])
         self.assertNotIn("This job posting describes a data engineering intern position", row["description"])
         self.assertIn("Position Overview: As a Commercialization Intern", row["description"])
+
+    def test_build_row_from_job_page_strips_single_line_summary_beta_and_keeps_description(self) -> None:
+        body_text = "\n".join(
+            [
+                "GreenPoint Global",
+                "Internet & Software",
+                "Data Engineering & ETL Automation Intern",
+                (
+                    "Posted 1 week ago • Apply by July 30, 2026 at 1:59 AM Save Share Apply "
+                    "Summary Beta This is a full-time, unpaid internship opportunity for a data engineer intern. "
+                    "At a glance Remote, based in United States Internship Job description "
+                    "Job Title: Data Engineering & ETL Automation Intern Company: GreenPoint Global "
+                    "You will help build ETL workflows with Python and SQL."
+                ),
+            ]
+        )
+        row = _build_row_from_job_page(
+            detail_text=body_text,
+            job_url="https://app.joinhandshake.com/jobs/11168432",
+            detail_fetch_attempted=True,
+            detail_click_succeeded=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertNotIn("Summary Beta", row["description"])
+        self.assertNotIn("data engineer intern", row["description"].lower())
+        self.assertIn("Job description", row["description"])
+        self.assertIn("You will help build ETL workflows with Python and SQL.", row["description"])
 
     def test_partition_handshake_urls_separates_search_and_job_urls(self) -> None:
         search_urls, job_urls = _partition_handshake_urls(
@@ -616,6 +680,20 @@ class HandshakeSourceTests(unittest.TestCase):
                 return FakeBodyLocator()
 
         self.assertFalse(_page_body_has_security_verification(FakePage()))
+
+    def test_page_requires_auth_detects_access_wall(self) -> None:
+        self.assertTrue(_page_requires_auth("https://app.joinhandshake.com/access"))
+        self.assertTrue(_page_requires_auth("https://app.joinhandshake.com/login"))
+        self.assertFalse(_page_requires_auth("https://app.joinhandshake.com/jobs/11185743"))
+
+    def test_raise_for_auth_wall_raises_on_access_redirect(self) -> None:
+        with self.assertRaises(HandshakeAccessWallError) as context:
+            _raise_for_auth_wall(
+                "https://app.joinhandshake.com/access",
+                context="job page url=https://app.joinhandshake.com/jobs/11185743",
+            )
+        self.assertIn("auth wall", str(context.exception).lower())
+        self.assertIn("handshake_login", str(context.exception))
 
 
 if __name__ == "__main__":

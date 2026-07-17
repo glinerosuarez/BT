@@ -45,7 +45,7 @@ class BrowserManager:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def open(self, *, adapter_name: str) -> BrowserSession:
+    def open(self, *, adapter_name: str, headless: bool | None = None) -> BrowserSession:
         try:
             from playwright.sync_api import sync_playwright
         except ModuleNotFoundError as exc:
@@ -56,7 +56,7 @@ class BrowserManager:
         playwright = sync_playwright().start()
         temp_profile_dir: Path | None = None
         try:
-            context = self._launch_context(playwright, profile_dir)
+            context = self._launch_context(playwright, profile_dir, headless=headless)
         except Exception:
             if adapter_name not in {"handshake", "handshake_fellow"}:
                 playwright.stop()
@@ -64,7 +64,7 @@ class BrowserManager:
             temp_profile_dir = Path(tempfile.mkdtemp(prefix="job-hunter-handshake-", dir="/tmp"))
             self._clone_profile_dir(profile_dir, temp_profile_dir)
             try:
-                context = self._launch_context(playwright, temp_profile_dir)
+                context = self._launch_context(playwright, temp_profile_dir, headless=headless)
             except Exception:
                 playwright.stop()
                 raise
@@ -89,11 +89,11 @@ class BrowserManager:
         session.close = _close  # type: ignore[method-assign]
         return session
 
-    def _launch_context(self, playwright, profile_dir: Path):
+    def _launch_context(self, playwright, profile_dir: Path, *, headless: bool | None = None):
         return playwright.chromium.launch_persistent_context(
             str(profile_dir),
             channel="chrome",
-            headless=self.settings.apply_headless,
+            headless=self.settings.apply_headless if headless is None else headless,
             user_agent=_DEFAULT_CHROME_USER_AGENT,
             args=[
                 "--lang=en-US",

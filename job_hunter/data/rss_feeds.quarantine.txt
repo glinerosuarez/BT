@@ -8,3 +8,4 @@ https://www.careerjet.com/rss?location=United+States
 https://jobicy.com/jobs-rss-feed
 https://www.techfetch.com/rss.xml
 https://www.higheredjobs.com/rss/articleFeed.cfm
+https://weworkremotely.com/remote-jobs.rss

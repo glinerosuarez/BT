@@ -96,3 +96,4 @@ class PipelineOutcome:
     duplicate_count: int = 0
     error_count: int = 0
     source_stats: dict[str, SourceRunStats] = field(default_factory=dict)
+    source_query_stats: dict[str, dict[str, SourceRunStats]] = field(default_factory=dict)

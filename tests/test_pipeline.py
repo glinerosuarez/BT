@@ -102,12 +102,16 @@ def recent_posted_at(days_ago: int = 1) -> str:
 class FakeSource:
     name = "fake"
 
-    def __init__(self, payload: list[dict]) -> None:
+    def __init__(self, payload: list[dict], fetch_meta: dict[str, object] | None = None) -> None:
         self.payload = payload
+        self.fetch_meta = fetch_meta or {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
         _ = timeout_seconds
         return self.payload
+
+    def get_fetch_meta(self) -> dict[str, object]:
+        return dict(self.fetch_meta)
 
 
 class FakeNotifier:
@@ -117,6 +121,25 @@ class FakeNotifier:
     def send(self, job: JobRecord) -> bool:
         self.sent += 1
         return True
+
+
+class FakeSemanticResult:
+    semantic_base_score = 0.78
+    semantic_match_score = 0.72
+    semantic_match_label = "pass"
+    semantic_match_reason_codes = ["semantic_similarity_pass"]
+    semantic_research_heaviness_score = 0.0
+    semantic_adjustment_reason_codes = []
+    semantic_profile_id = "data_engineering"
+    semantic_model_name = "fake-semantic-model"
+    semantic_scorer_version = "semantic_shadow_v1"
+    semantic_text_hash = "fake-semantic-hash"
+
+
+class FakeSemanticScorer:
+    def score(self, job):
+        _ = job
+        return FakeSemanticResult()
 
 
 class PipelineUnitTests(unittest.TestCase):
@@ -466,6 +489,34 @@ class PipelineUnitTests(unittest.TestCase):
             )
         )
 
+    def test_data_role_gate_accepts_full_stack_ai_software_intern_from_title(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="2b",
+            url="https://example.com/fullstack-ai",
+            title="Full-Stack Software Engineering Intern, AI - Fall 2026",
+            company="Example",
+            location="Onsite - US",
+            is_internship=True,
+            posted_at=None,
+            description=(
+                "Build product features for an AI application. "
+                "Work with engineering teams on software delivery and product systems."
+            ),
+            ingested_at="now",
+        )
+        self.assertTrue(
+            _passes_data_role_gate(
+                job,
+                data_role_title_regexes=[re.compile(r"\bdata (science|scientist)\b", re.IGNORECASE)],
+                non_data_role_title_regexes=[
+                    re.compile(r"\bdeveloper advocacy\b", re.IGNORECASE),
+                    re.compile(r"\b(frontend|front-end|ios|android|mobile app|react native)\b", re.IGNORECASE),
+                ],
+                min_data_signal_count=2,
+            )
+        )
+
     def test_data_role_gate_rejects_frontend_only_software_intern(self) -> None:
         job = JobRecord(
             source="x",
@@ -588,8 +639,14 @@ class PipelineIntegrationTests(unittest.TestCase):
         db_path = str(Path(self.temp_dir.name) / "test.db")
         self.settings = make_settings(db_path)
         self.store = JobStore(db_path)
+        self.semantic_scorer_patcher = patch(
+            "job_hunter.pipeline._build_semantic_shadow_scorer",
+            return_value=FakeSemanticScorer(),
+        )
+        self.semantic_scorer_patcher.start()
 
     def tearDown(self) -> None:
+        self.semantic_scorer_patcher.stop()
         self.store.close()
         self.temp_dir.cleanup()
 
@@ -623,6 +680,26 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(outcome2.persisted_count, 0)
         self.assertGreaterEqual(outcome2.duplicate_count, 1)
         self.assertEqual(notifier.sent, 1)
+
+    def test_pipeline_fails_closed_when_semantic_scorer_unavailable(self) -> None:
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "job-semantic-required-1",
+                "url": "https://example.com/job-semantic-required-1",
+                "title": "Data Engineering Intern",
+                "company": "Acme",
+                "location": "Remote - US",
+                "posted_at": recent_posted_at(),
+                "description": "Build ETL pipelines with Python and SQL.",
+                "skills": ["python", "sql"],
+            }
+        ]
+
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            with patch("job_hunter.pipeline._build_semantic_shadow_scorer", return_value=None):
+                with self.assertRaises(RuntimeError):
+                    run_pipeline(self.settings, self.store, None)
 
     def test_db_false_positive_regression(self) -> None:
         payload = [
@@ -1336,6 +1413,32 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(int(row["fetched_count"] or 0), 1)
         self.assertEqual(int(row["after_stage_1b_count"] or 0), 1)
 
+    def test_configured_query_key_with_zero_rows_is_still_logged(self) -> None:
+        query_key = "https://www.linkedin.com/jobs/search-results/?keywords=ai+engineering+intern&f_TPR=r86400&sortBy=DD"
+        with patch(
+            "job_hunter.pipeline.build_sources",
+            return_value=[FakeSource([], fetch_meta={"configured_query_keys": [query_key]})],
+        ):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        self.assertIn("fake", outcome.source_query_stats)
+        self.assertIn(query_key, outcome.source_query_stats["fake"])
+        query_stats = outcome.source_query_stats["fake"][query_key]
+        self.assertEqual(query_stats.fetched_count, 0)
+
+        row = self.store._conn.execute(
+            """
+            SELECT source_name, query_key, fetched_count
+            FROM source_query_run_logs
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_name"], "fake")
+        self.assertEqual(row["query_key"], query_key)
+        self.assertEqual(int(row["fetched_count"] or 0), 0)
+
     def test_handshake_refresh_updates_existing_row_by_url_even_when_rejected_later(self) -> None:
         self.store._conn.execute(
             """
@@ -1487,6 +1590,104 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(row["title"], "AI Engineering Intern, Voice & LLM Systems")
         self.assertNotIn("Skip to content", row["description"])
         self.assertIn("About Presto Phoenix, Inc.", row["description"])
+
+    def test_stage2_deterministic_reject_suppresses_notification(self) -> None:
+        class FakeStage2Result:
+            profile_match_score = 0.1
+            profile_match_label = "reject"
+            profile_match_reason_codes = ["business_analyst_negative"]
+            profile_version = "default_v1"
+            scorer_version = "shadow_rules_v1"
+            job_text_version = "job_text_v1"
+            job_text_snapshot = "TITLE: Data Engineering Intern"
+
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "job-stage2-reject-1",
+                "url": "https://example.com/job-stage2-reject-1",
+                "title": "Data Engineering Intern",
+                "company": "Example",
+                "location": "Remote - US",
+                "posted_at": recent_posted_at(),
+                "description": (
+                    "Open to candidates with OPT/CPT. "
+                    "Build ETL pipelines with Python and SQL."
+                ),
+                "skills": ["python", "sql"],
+            }
+        ]
+
+        notifier = FakeNotifier()
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            with patch("job_hunter.pipeline.ShadowProfileScorer.score", return_value=FakeStage2Result()):
+                outcome = run_pipeline(self.settings, self.store, notifier)
+
+        self.assertEqual(outcome.persisted_count, 1)
+        self.assertEqual(outcome.notified_count, 0)
+        self.assertEqual(notifier.sent, 0)
+        row = self.store._conn.execute(
+            """
+            SELECT profile_match_label, notified
+            FROM jobs
+            WHERE id = 1
+            """
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["profile_match_label"], "reject")
+        self.assertEqual(int(row["notified"] or 0), 0)
+
+    def test_stage2_semantic_reject_suppresses_notification(self) -> None:
+        class FakeSemanticResult:
+            semantic_base_score = 0.2
+            semantic_match_score = 0.1
+            semantic_match_label = "reject"
+            semantic_match_reason_codes = ["semantic_negative_business_analyst"]
+            semantic_research_heaviness_score = 0.0
+            semantic_adjustment_reason_codes = []
+            semantic_profile_id = "data_engineering"
+            semantic_model_name = "fake-semantic-model"
+            semantic_scorer_version = "semantic_shadow_v1"
+            semantic_text_hash = "semantic-reject"
+
+        class FakeSemanticScorer:
+            def score(self, job):
+                _ = job
+                return FakeSemanticResult()
+
+        payload = [
+            {
+                "source": "fake",
+                "external_id": "job-stage2-reject-2",
+                "url": "https://example.com/job-stage2-reject-2",
+                "title": "Data Engineering Intern",
+                "company": "Example",
+                "location": "Remote - US",
+                "posted_at": recent_posted_at(),
+                "description": "Open to candidates with OPT/CPT. Build ETL pipelines with Python and SQL.",
+                "skills": ["python", "sql"],
+            }
+        ]
+
+        notifier = FakeNotifier()
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
+            with patch("job_hunter.pipeline._build_semantic_shadow_scorer", return_value=FakeSemanticScorer()):
+                outcome = run_pipeline(self.settings, self.store, notifier)
+
+        self.assertEqual(outcome.persisted_count, 1)
+        self.assertEqual(outcome.notified_count, 0)
+        self.assertEqual(notifier.sent, 0)
+        row = self.store._conn.execute(
+            """
+            SELECT profile_match_label, semantic_match_label, notified
+            FROM jobs
+            WHERE id = 1
+            """
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["profile_match_label"], "pass")
+        self.assertEqual(row["semantic_match_label"], "reject")
+        self.assertEqual(int(row["notified"] or 0), 0)
 
 
 if __name__ == "__main__":

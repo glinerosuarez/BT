@@ -179,9 +179,11 @@ class FakeBrowserManager:
     def __init__(self, page: FakePage) -> None:
         self.page = page
         self.open_calls: list[str] = []
+        self.headless_calls: list[bool | None] = []
 
-    def open(self, *, adapter_name: str):
+    def open(self, *, adapter_name: str, headless: bool | None = None):
         self.open_calls.append(adapter_name)
+        self.headless_calls.append(headless)
         return FakeSession(self.page)
 
 
@@ -1056,6 +1058,24 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(shown["blocked_reason"], "captcha")
         self.assertIn("frame_texts", shown["blocked_payload"]["details"])
 
+    def test_service_routes_linkedin_external_apply_to_workday_adapter(self) -> None:
+        page = FakePage(
+            url="https://www.linkedin.com/jobs/view/1",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+        page.external_url = (
+            "https://iherb.wd5.myworkdayjobs.com/Careers/job/Home-Office-CA/"
+            "Software-Development-Intern_R107025-1?source=LinkedIn"
+        )
+        service = self._service(page)
+        run = service.submit_job(job_id=1, profile_name="default", force=True)
+        shown = service.show_run(run.application_run_id)
+        self.assertEqual(run.status, "blocked")
+        self.assertEqual(shown["adapter_name"], "workday")
+        self.assertTrue(shown["blocked_reason"] in {"apply_button_missing", "unsupported_widget"})
+
     def test_service_reuses_previous_external_target_when_linkedin_guest_page_hides_it(self) -> None:
         first_page = FakePage(
             url="https://www.linkedin.com/jobs/view/1",
@@ -1771,6 +1791,44 @@ class ApplyJobsTests(unittest.TestCase):
 
         self.assertEqual(resumed.status, "submitted")
         self.assertIn("undergraduate GPA answer", manual_gate_messages[0])
+
+    def test_handoff_job_pauses_in_visible_browser_and_resumes_same_session(self) -> None:
+        class SubmittedGreenhouseAdapter(GreenhouseAdapter):
+            def submit(self, *, page, resolver, context):
+                return SubmitResult(
+                    status="submitted",
+                    current_url=page.url,
+                    confirmation_payload={"message": f"submitted after handoff at {page.url}"},
+                    adapter_name=self.adapter_name,
+                )
+
+        page = FakePage(
+            url="https://www.linkedin.com/jobs/view/1",
+            easy_apply=False,
+            greenhouse=True,
+        )
+        page.external_url = "https://boards.greenhouse.io/acme/jobs/1"
+        service = self._service(page)
+        service.greenhouse_adapter = SubmittedGreenhouseAdapter()
+        messages: list[str] = []
+
+        def _user_takeover() -> None:
+            page.url = "https://boards.greenhouse.io/acme/jobs/1/application"
+
+        run = service.handoff_job(
+            job_id=1,
+            profile_name="default",
+            force=True,
+            notify=messages.append,
+            wait_for_user=_user_takeover,
+        )
+
+        shown = service.show_run(run.application_run_id)
+        self.assertEqual(run.status, "submitted")
+        self.assertEqual(shown["current_url"], "https://boards.greenhouse.io/acme/jobs/1/application")
+        self.assertEqual(service.browser_manager.open_calls[-1], "linkedin")
+        self.assertEqual(service.browser_manager.headless_calls[-1], False)
+        self.assertIn("Live handoff opened in the browser", messages[0])
 
     def test_blocked_run_persists_debug_screenshot(self) -> None:
         page = FakePage(url="https://uscareers-medpace.icims.com/jobs/12767/login", easy_apply=False, greenhouse=False, icims=True)

@@ -21,6 +21,11 @@ def main() -> int:
     submit_parser.add_argument("--profile", default="default")
     submit_parser.add_argument("--force", action="store_true")
 
+    handoff_parser = subparsers.add_parser("handoff")
+    handoff_parser.add_argument("--job-id", type=int, required=True)
+    handoff_parser.add_argument("--profile", default="default")
+    handoff_parser.add_argument("--force", action="store_true")
+
     batch_parser = subparsers.add_parser("batch")
     batch_parser.add_argument("--profile", default="default")
     batch_parser.add_argument("--limit", type=int, default=None)
@@ -37,6 +42,7 @@ def main() -> int:
 
     resume_parser = subparsers.add_parser("resume")
     resume_parser.add_argument("--application-id", type=int, required=True)
+    resume_parser.add_argument("--manual-gate", action="store_true")
 
     args = parser.parse_args()
 
@@ -47,6 +53,17 @@ def main() -> int:
         if args.command == "submit":
             service = build_application_service(settings=settings, store=store)
             run = service.submit_job(job_id=args.job_id, profile_name=args.profile, force=args.force)
+            print(json.dumps({"application_id": run.application_run_id, "status": run.status, "output_dir": run.output_dir}, sort_keys=True))
+            return 0
+        if args.command == "handoff":
+            service = build_application_service(settings=settings, store=store)
+            run = service.handoff_job(
+                job_id=args.job_id,
+                profile_name=args.profile,
+                force=args.force,
+                notify=print,
+                wait_for_user=lambda: input(),
+            )
             print(json.dumps({"application_id": run.application_run_id, "status": run.status, "output_dir": run.output_dir}, sort_keys=True))
             return 0
         if args.command == "batch":
@@ -92,7 +109,14 @@ def main() -> int:
                 print(_render_text(payload))
             return 0
         service = build_application_service(settings=settings, store=store)
-        run = service.resume(application_run_id=args.application_id)
+        if args.manual_gate:
+            run = service.resume_with_manual_gate(
+                application_run_id=args.application_id,
+                notify=print,
+                wait_for_user=lambda: input(),
+            )
+        else:
+            run = service.resume(application_run_id=args.application_id)
         print(json.dumps({"application_id": run.application_run_id, "status": run.status, "output_dir": run.output_dir}, sort_keys=True))
         return 0
     except RuntimeError as exc:

@@ -48,6 +48,13 @@ class PreferenceProfile:
 
 
 @dataclass(slots=True)
+class WorkdayCredential:
+    host: str
+    email: str
+    password: str
+
+
+@dataclass(slots=True)
 class ApplicationProfile:
     identity: ApplicationIdentity
     work_authorization: WorkAuthorization
@@ -55,6 +62,7 @@ class ApplicationProfile:
     employment: EmploymentProfile
     preferences: PreferenceProfile
     uploads: dict[str, str] = field(default_factory=dict)
+    workday_credentials: list[WorkdayCredential] = field(default_factory=list)
 
     def structured_answers(self) -> dict[str, str]:
         payload: dict[str, str] = {}
@@ -63,6 +71,13 @@ class ApplicationProfile:
                 for key, value in section.items():
                     payload[f"{section_name}.{key}"] = str(value)
         return payload
+
+    def workday_credential_for_host(self, host: str) -> WorkdayCredential | None:
+        normalized = host.strip().lower()
+        for credential in self.workday_credentials:
+            if credential.host.strip().lower() == normalized:
+                return credential
+        return None
 
 
 @dataclass(slots=True)
@@ -83,6 +98,15 @@ class AnswerResolution:
     answer: str
     source: str
     matched_rule: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class FieldCapability:
+    portal: str
+    widget_types: tuple[str, ...]
+    intents: tuple[str, ...]
+    resolver_mode: str
+    submit_policy: str
 
 
 @dataclass(slots=True)

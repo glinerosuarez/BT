@@ -76,6 +76,10 @@ BACKEND_ADJACENT_DESCRIPTION_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
     for name, pattern in BACKEND_ADJACENT_DESCRIPTION_PATTERNS.items()
 }
+BACKEND_ADJACENT_TITLE_BOOST_REGEX = re.compile(
+    r"\b(full[- ]stack|backend|platform)\b",
+    flags=re.IGNORECASE,
+)
 INTERNSHIP_DESCRIPTION_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
     for name, pattern in INTERNSHIP_DESCRIPTION_PATTERNS.items()
@@ -238,6 +242,8 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
     now_iso = now.isoformat()
     shadow_scorer = ShadowProfileScorer()
     semantic_scorer = _build_semantic_shadow_scorer()
+    if semantic_scorer is None:
+        raise RuntimeError("semantic_shadow_scorer_required")
     title_blacklist_regexes = _merge_compiled_patterns(_compile_title_blacklist(settings.title_blacklist_patterns))
     data_role_title_regexes = _merge_compiled_patterns(
         list(DEFAULT_DATA_ROLE_TITLE_REGEXES.values()),
@@ -447,6 +453,10 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 if query_stats is not None:
                     query_stats.rejected_source_quality_count += 1
                 pass_notify = False
+            if job.profile_match_label == "reject":
+                pass_notify = False
+            if job.semantic_match_label == "reject":
+                pass_notify = False
 
             outcome.passed_filter_count += 1
             if existing_dedupe_key:
@@ -511,18 +521,17 @@ def _filter_suppressed_items(store: JobStore, source_name: str, items: list[str]
 
 def _build_semantic_shadow_scorer():
     if importlib.util.find_spec("sentence_transformers") is None:
-        LOG.info("semantic_shadow_scorer_unavailable_missing_sentence_transformers")
-        return None
+        raise RuntimeError("semantic_shadow_scorer_unavailable_missing_sentence_transformers")
     try:
         from job_hunter.stage2_semantic import SemanticShadowScorer
     except Exception:
-        LOG.info("semantic_shadow_scorer_unavailable")
-        return None
+        LOG.exception("semantic_shadow_scorer_unavailable")
+        raise RuntimeError("semantic_shadow_scorer_unavailable")
     try:
         return SemanticShadowScorer()
     except Exception:
-        LOG.info("semantic_shadow_scorer_init_failed", exc_info=True)
-        return None
+        LOG.exception("semantic_shadow_scorer_init_failed")
+        raise RuntimeError("semantic_shadow_scorer_init_failed")
 
 
 def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
@@ -709,6 +718,8 @@ def _passes_data_role_gate(
 
     backend_adjacent_title = any(pattern.search(title) for pattern in DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES.values())
     if backend_adjacent_title:
+        if BACKEND_ADJACENT_TITLE_BOOST_REGEX.search(title):
+            return True
         backend_signal_hits = 0
         for pattern in BACKEND_ADJACENT_DESCRIPTION_REGEXES.values():
             if pattern.search(desc_blob):

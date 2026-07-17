@@ -10,6 +10,7 @@ from job_hunter.apply.adapters.handshake import HandshakeAdapter
 from job_hunter.apply.adapters.handshake_fellow import HandshakeFellowAdapter
 from job_hunter.apply.adapters.icims import ICIMSAdapter
 from job_hunter.apply.adapters.linkedin import LinkedInEasyApplyAdapter
+from job_hunter.apply.adapters.workday import WorkdayAdapter
 from job_hunter.apply.browser import BrowserManager
 from job_hunter.apply.email_codes import GmailVerificationCodeClient
 from job_hunter.apply.profile_loader import load_application_inputs
@@ -52,6 +53,7 @@ class ApplicationService:
         handshake_adapter: HandshakeAdapter | None = None,
         handshake_fellow_adapter: HandshakeFellowAdapter | None = None,
         icims_adapter: ICIMSAdapter | None = None,
+        workday_adapter: WorkdayAdapter | None = None,
         email_code_client: GmailVerificationCodeClient | None = None,
     ) -> None:
         self.settings = settings
@@ -63,6 +65,7 @@ class ApplicationService:
         self.handshake_adapter = handshake_adapter or HandshakeAdapter()
         self.handshake_fellow_adapter = handshake_fellow_adapter or HandshakeFellowAdapter()
         self.icims_adapter = icims_adapter or ICIMSAdapter()
+        self.workday_adapter = workday_adapter or WorkdayAdapter()
         self.email_code_client = email_code_client
 
     def submit_job(self, *, job_id: int, profile_name: str, force: bool = False) -> ApplicationRunRecord:
@@ -168,6 +171,140 @@ class ApplicationService:
                 increment_attempt_count=True,
                 output_dir=str(output_dir),
             )
+            submit_started_at = datetime.now(timezone.utc)
+            result = adapter.submit(page=page, resolver=resolver, context=context)
+            result = self._maybe_complete_email_verification(
+                adapter_name=adapter_name,
+                adapter=adapter,
+                page=page,
+                result=result,
+                recipient_email=profile.identity.email,
+                submit_started_at=submit_started_at,
+            )
+            self._persist_result(run_id=run_id, result=result, output_dir=output_dir, page=page)
+            self._maybe_notify(job=job, run_id=run_id, result=result)
+            return self._run_record(run_id)
+        finally:
+            session.close()
+
+    def handoff_job(
+        self,
+        *,
+        job_id: int,
+        profile_name: str,
+        force: bool = False,
+        notify: callable | None = None,
+        wait_for_user: callable | None = None,
+    ) -> ApplicationRunRecord:
+        job = self.store.get_job_for_application(job_id)
+        if job is None:
+            raise RuntimeError(f"Job id {job_id} not found.")
+        if str(job["profile_match_label"] or "") != "pass" and not force:
+            raise RuntimeError(f"Job id {job_id} is not eligible for auto-apply because profile_match_label is not 'pass'.")
+
+        profile, answers = load_application_inputs(self.settings.tailoring_profile_root, profile_name)
+        resolver = AnswerResolver(profile=profile, answers=answers)
+        tailoring_artifact = self._ensure_tailoring_artifact(job_id=job_id, profile_name=profile_name, force=force)
+        context = self._build_adapter_context(profile, tailoring_artifact["output_dir"])
+
+        session = self.browser_manager.open(
+            adapter_name=self._session_adapter_name_for_source(str(job["source"] or "")),
+            headless=False,
+        )
+        try:
+            page = session.new_page()
+            initial_target_url = self._initial_target_url(job)
+            page.goto(initial_target_url, wait_until="domcontentloaded")
+            try:
+                adapter_name, adapter, target_url = self._resolve_adapter(job, page, initial_target_url)
+            except UnsupportedApplyTargetError as exc:
+                run_id = self.store.create_application_run(
+                    job_id=job_id,
+                    profile_name=profile_name,
+                    tailoring_artifact_id=int(tailoring_artifact["id"]),
+                    adapter_name="unsupported",
+                    source=str(job["source"]),
+                    target_url=exc.target_url,
+                    current_url=exc.current_url,
+                    status="applying",
+                    output_dir=str(self._output_dir(profile_name, "pending")),
+                )
+                output_dir = self._output_dir(profile_name, str(run_id))
+                output_dir.mkdir(parents=True, exist_ok=True)
+                self.store.update_application_run(
+                    run_id,
+                    tailoring_artifact_id=int(tailoring_artifact["id"]),
+                    target_url=exc.target_url,
+                    current_url=exc.current_url,
+                    increment_attempt_count=True,
+                    output_dir=str(output_dir),
+                )
+                result = SubmitResult(
+                    status="blocked",
+                    current_url=exc.current_url,
+                    blocker=Blocker(
+                        reason=exc.blocker_reason,
+                        question_text="Application target",
+                        field_name="target_url",
+                        field_type="url",
+                        details={
+                            "source": exc.source,
+                            "target_url": exc.target_url,
+                            **exc.details,
+                        },
+                    ),
+                    adapter_name="unsupported",
+                    target_url=exc.target_url,
+                )
+                self._persist_result(run_id=run_id, result=result, output_dir=output_dir, page=page)
+                return self._run_record(run_id)
+
+            duplicate = self.store.find_application_run(
+                job_id=job_id,
+                profile_name=profile_name,
+                adapter_name=adapter_name,
+                status="submitted",
+            )
+            if duplicate is not None and not force:
+                run_id = self.store.create_application_run(
+                    job_id=job_id,
+                    profile_name=profile_name,
+                    tailoring_artifact_id=int(tailoring_artifact["id"]),
+                    adapter_name=adapter_name,
+                    source=str(job["source"]),
+                    target_url=target_url,
+                    current_url=target_url,
+                    status="skipped",
+                    output_dir=str(self._output_dir(profile_name, "pending")),
+                    blocked_reason="duplicate_submitted_run",
+                )
+                return self._run_record(run_id)
+
+            run_id = self.store.create_application_run(
+                job_id=job_id,
+                profile_name=profile_name,
+                tailoring_artifact_id=int(tailoring_artifact["id"]),
+                adapter_name=adapter_name,
+                source=str(job["source"]),
+                target_url=target_url,
+                current_url=getattr(page, "url", target_url),
+                status="applying",
+                output_dir=str(self._output_dir(profile_name, "pending")),
+            )
+            output_dir = self._output_dir(profile_name, str(run_id))
+            output_dir.mkdir(parents=True, exist_ok=True)
+            self.store.update_application_run(
+                run_id,
+                tailoring_artifact_id=int(tailoring_artifact["id"]),
+                target_url=target_url,
+                current_url=getattr(page, "url", target_url),
+                increment_attempt_count=True,
+                output_dir=str(output_dir),
+            )
+            if notify is not None:
+                notify(self._handoff_message(job=job, adapter_name=adapter_name, run_id=run_id, target_url=target_url))
+            if wait_for_user is not None:
+                wait_for_user()
             submit_started_at = datetime.now(timezone.utc)
             result = adapter.submit(page=page, resolver=resolver, context=context)
             result = self._maybe_complete_email_verification(
@@ -296,6 +433,16 @@ class ApplicationService:
             "then return here and press Enter."
         )
 
+    def _handoff_message(self, *, job, adapter_name: str, run_id: int, target_url: str) -> str:
+        company = str(job["company"] or "").strip()
+        title = str(job["title"] or "").strip()
+        portal = adapter_name.replace("_", " ")
+        return (
+            f"Live handoff opened in the browser for application {run_id}: {company} / {title} via {portal}. "
+            f"Complete any sign-up, login, captcha, consent, or bootstrap steps, leave the browser on the "
+            f"resulting application page, then return here and press Enter to resume automation. target_url={target_url}"
+        )
+
     def submit_batch(
         self,
         *,
@@ -414,6 +561,8 @@ class ApplicationService:
             resume_pdf_path=str(resume_pdf_path),
             cover_letter_pdf_path=str(cover_letter_pdf_path),
             output_dir=output_dir,
+            profile=profile,
+            workday_account_store_path=None,
         )
 
     def _resolve_adapter(self, job, page, target_url: str):
@@ -452,6 +601,8 @@ class ApplicationService:
             return "greenhouse", self.greenhouse_adapter, target_url
         if self.icims_adapter.is_icims_target(target_url, page=page):
             return "icims", self.icims_adapter, target_url
+        if self.workday_adapter.is_workday_target(target_url, page=page):
+            return "workday", self.workday_adapter, target_url
         if self.handshake_adapter.is_handshake_target(target_url, page=page):
             current_url = str(getattr(page, "url", target_url) or target_url)
             return "handshake", self.handshake_adapter, current_url
@@ -631,6 +782,8 @@ class ApplicationService:
             return self.handshake_fellow_adapter
         if adapter_name == "icims":
             return self.icims_adapter
+        if adapter_name == "workday":
+            return self.workday_adapter
         raise RuntimeError(f"Unsupported adapter name: {adapter_name}")
 
     def _persist_result(self, *, run_id: int, result: SubmitResult, output_dir: Path, page) -> None:
@@ -689,17 +842,23 @@ class ApplicationService:
         recipient_email: str,
         submit_started_at: datetime,
     ) -> SubmitResult:
-        if adapter_name != "greenhouse":
+        if adapter_name not in {"greenhouse", "workday"}:
             return result
         if result.blocker is None or result.blocker.reason != "email_verification_required":
             return result
         if self.email_code_client is None or not self.email_code_client.is_enabled():
             return result
         try:
-            code = self.email_code_client.poll_for_greenhouse_code(
-                recipient_email=recipient_email,
-                requested_at=submit_started_at,
-            )
+            if adapter_name == "workday":
+                code = self.email_code_client.poll_for_workday_code(
+                    recipient_email=recipient_email,
+                    requested_at=submit_started_at,
+                )
+            else:
+                code = self.email_code_client.poll_for_greenhouse_code(
+                    recipient_email=recipient_email,
+                    requested_at=submit_started_at,
+                )
         except RuntimeError as exc:
             if result.blocker is None:
                 return result

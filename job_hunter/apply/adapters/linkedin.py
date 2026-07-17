@@ -393,6 +393,7 @@ class LinkedInEasyApplyAdapter:
               const fields = [];
               for (const el of nodes) {
                 if (el.type === 'radio') continue;
+                if (el.type === 'checkbox' && el.closest('fieldset')) continue;
                 if (!visible(el) || el.disabled) continue;
                 const id = el.getAttribute('id') || '';
                 let label = '';
@@ -475,6 +476,47 @@ class LinkedInEasyApplyAdapter:
                   options,
                 });
               }
+              const checkboxGroups = Array.from(dialog.querySelectorAll('fieldset')).filter((fieldset) => fieldset.querySelectorAll('input[type="checkbox"], [role="checkbox"]').length > 0);
+              for (const fieldset of checkboxGroups) {
+                const options = [];
+                let selectedText = '';
+                const questionText = firstText(Array.from(fieldset.parentElement?.querySelectorAll(':scope > p, :scope > legend, :scope > label, :scope > span, :scope > div') || []))
+                  || firstText(Array.from(fieldset.querySelectorAll('legend, p')));
+                const optionNodes = Array.from(fieldset.querySelectorAll('input[type="checkbox"]'));
+                for (const input of optionNodes) {
+                  const wrapper = input.closest('div[role="checkbox"]') || input.parentElement;
+                  const container = wrapper?.parentElement || wrapper || input;
+                  const textCandidates = Array.from(container.querySelectorAll('p, label, span, div'))
+                    .map((node) => (node.textContent || '').trim())
+                    .filter(Boolean)
+                    .filter((text) => text !== questionText);
+                  const text = textCandidates.find(Boolean) || '';
+                  counter += 1;
+                  if (wrapper) {
+                    wrapper.setAttribute('data-jobhunter-checkbox-index', String(counter));
+                  } else {
+                    input.setAttribute('data-jobhunter-checkbox-index', String(counter));
+                  }
+                  options.push({
+                    selector: wrapper ? `[data-jobhunter-checkbox-index="${counter}"]` : `[data-jobhunter-checkbox-index="${counter}"]`,
+                    text,
+                    checked: input.checked || wrapper?.getAttribute('aria-checked') === 'true',
+                  });
+                  if (input.checked || wrapper?.getAttribute('aria-checked') === 'true') {
+                    selectedText = text || 'checked';
+                  }
+                }
+                if (!options.length || !questionText) continue;
+                fields.push({
+                  selector: options[0].selector,
+                  field_name: '',
+                  field_type: 'checkbox-group',
+                  question_text: questionText,
+                  required: questionText.includes('*') || fieldset.getAttribute('aria-required') === 'true' || Boolean(fieldset.getAttribute('aria-describedby')),
+                  current_value: selectedText,
+                  options,
+                });
+              }
               return fields;
             }
             """
@@ -491,6 +533,8 @@ class LinkedInEasyApplyAdapter:
             page.set_input_files(selector, value)
         elif field_type == "radio":
             self._select_radio_value(page, field, value)
+        elif field_type == "checkbox-group":
+            self._select_checkbox_group_value(page, field, value)
         elif field_type == "select-one":
             self._select_value(page, field, value)
         elif field_type == "checkbox":
@@ -637,8 +681,18 @@ class LinkedInEasyApplyAdapter:
     def _resolve_field_value(self, *, resolver: AnswerResolver, question_text: str, field_name: str, field_type: str):
         lowered = question_text.lower()
         if "phone country code" in lowered:
-            return resolver.resolve(question_text="country", field_name="identity.country", field_type=field_type)
-        return resolver.resolve(question_text=question_text, field_name=field_name, field_type=field_type)
+            return resolver.resolve_for_portal(
+                portal=self.adapter_name,
+                question_text="country",
+                field_name="identity.country",
+                field_type=field_type,
+            )
+        return resolver.resolve_for_portal(
+            portal=self.adapter_name,
+            question_text=question_text,
+            field_name=field_name,
+            field_type=field_type,
+        )
 
     def _normalized_current_value(self, *, field_type: str, current_value: str) -> str:
         normalized = current_value.strip()
@@ -884,7 +938,12 @@ class LinkedInEasyApplyAdapter:
             )
             if current_value:
                 continue
-            resolution = resolver.resolve(question_text="city", field_name="identity.city", field_type="text")
+            resolution = resolver.resolve_for_portal(
+                portal=self.adapter_name,
+                question_text="city",
+                field_name="identity.city",
+                field_type="text",
+            )
             self._set_field(page, field, resolution.answer)
             steps.append(
                 StepSnapshot(
@@ -1153,7 +1212,8 @@ class LinkedInEasyApplyAdapter:
             return None
 
         try:
-            resolution = resolver.resolve(
+            resolution = resolver.resolve_for_portal(
+                portal=self.adapter_name,
                 question_text=question_text or structured_key,
                 field_name=structured_key,
                 field_type="radio",
@@ -1406,6 +1466,8 @@ class LinkedInEasyApplyAdapter:
             }
             """
         )
+        if not groups:
+            return None
         for group in groups:
             question_text = str(group.get("question_text") or "").strip()
             current_value = str(group.get("current_value") or "").strip()
@@ -1458,6 +1520,31 @@ class LinkedInEasyApplyAdapter:
         if dialog.count() == 0:
             return page.locator("body").inner_text(timeout=10000)
         return dialog.inner_text(timeout=10000)
+
+    def _select_checkbox_group_value(self, page, field: dict[str, object], value: str) -> None:
+        normalized = value.strip().lower()
+        options = list(field.get("options") or [])
+        if not options:
+            raise RuntimeError("Checkbox group has no options")
+        for option in options:
+            option_text = str(option.get("text") or "").strip().lower()
+            if option_text and option_text == normalized:
+                page.click(str(option.get("selector") or ""))
+                return
+        desired_true = normalized in {"1", "true", "yes", "on"}
+        desired_false = normalized in {"0", "false", "no", "off"}
+        if desired_true and len(options) == 1:
+            page.click(str(options[0].get("selector") or ""))
+            return
+        if desired_true:
+            for option in options:
+                option_text = str(option.get("text") or "").strip().lower()
+                if option_text in {"yes", "i agree", "agree", "consent"}:
+                    page.click(str(option.get("selector") or ""))
+                    return
+        if desired_false:
+            return
+        raise RuntimeError(f"Unsupported checkbox-group value '{value}' for {field.get('question_text')}")
 
     def _blocked(
         self,

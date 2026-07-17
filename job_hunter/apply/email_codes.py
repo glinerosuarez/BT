@@ -39,21 +39,56 @@ class GmailVerificationCodeClient:
         )
 
     def poll_for_greenhouse_code(self, *, recipient_email: str, requested_at: datetime) -> str | None:
+        return self.poll_for_code(
+            recipient_email=recipient_email,
+            requested_at=requested_at,
+            sender_filter=self.settings.apply_gmail_sender_filter.strip(),
+            allowed_lengths=(8,),
+        )
+
+    def poll_for_workday_code(self, *, recipient_email: str, requested_at: datetime) -> str | None:
+        return self.poll_for_code(
+            recipient_email=recipient_email,
+            requested_at=requested_at,
+            sender_filter="",
+            allowed_lengths=(6, 8),
+        )
+
+    def poll_for_code(
+        self,
+        *,
+        recipient_email: str,
+        requested_at: datetime,
+        sender_filter: str = "",
+        allowed_lengths: tuple[int, ...] = (8,),
+    ) -> str | None:
         deadline = time.monotonic() + max(self.settings.apply_gmail_poll_timeout_seconds, 1)
         while time.monotonic() < deadline:
-            code = self._fetch_recent_code(recipient_email=recipient_email, requested_at=requested_at)
+            code = self._fetch_recent_code(
+                recipient_email=recipient_email,
+                requested_at=requested_at,
+                sender_filter=sender_filter,
+                allowed_lengths=allowed_lengths,
+            )
             if code:
                 return code
             time.sleep(max(self.settings.apply_gmail_poll_interval_seconds, 1))
         return None
 
-    def _fetch_recent_code(self, *, recipient_email: str, requested_at: datetime) -> str | None:
+    def _fetch_recent_code(
+        self,
+        *,
+        recipient_email: str,
+        requested_at: datetime,
+        sender_filter: str,
+        allowed_lengths: tuple[int, ...],
+    ) -> str | None:
         window_minutes = max(5, int(self.settings.apply_gmail_poll_timeout_seconds / 60) + 5)
         query = f'to:{recipient_email} newer_than:{window_minutes}m -in:trash'
         search_url = f"{_GMAIL_API_ROOT}/messages?{urlencode({'q': query, 'maxResults': 10})}"
         search_payload = self._request_json(search_url)
         messages = search_payload.get("messages") or []
-        sender_filter = self.settings.apply_gmail_sender_filter.strip().lower()
+        sender_filter = sender_filter.strip().lower()
         for message in messages:
             message_id = str(message.get("id") or "").strip()
             if not message_id:
@@ -63,7 +98,7 @@ class GmailVerificationCodeClient:
                 continue
             if sender_filter and sender_filter not in self._sender_text(payload):
                 continue
-            code = extract_verification_code(_message_search_text(payload))
+            code = extract_verification_code(_message_search_text(payload), allowed_lengths=allowed_lengths)
             if code:
                 return code
         return None
@@ -98,6 +133,23 @@ class GmailVerificationCodeClient:
 
     def _request_json(self, url: str, *, method: str = "GET", data: bytes | None = None) -> dict[str, Any]:
         token = self._access_token()
+        try:
+            return self._request_json_with_token(url, token=token, method=method, data=data)
+        except RuntimeError as exc:
+            if "401" not in str(exc) or not self._has_refresh_credentials():
+                raise
+            self._cached_access_token = None
+            refreshed_token = self._access_token(force_refresh=True)
+            return self._request_json_with_token(url, token=refreshed_token, method=method, data=data)
+
+    def _request_json_with_token(
+        self,
+        url: str,
+        *,
+        token: str,
+        method: str = "GET",
+        data: bytes | None = None,
+    ) -> dict[str, Any]:
         request = Request(url, data=data, method=method)
         request.add_header("Authorization", f"Bearer {token}")
         request.add_header("Accept", "application/json")
@@ -112,8 +164,8 @@ class GmailVerificationCodeClient:
         except URLError as exc:
             raise RuntimeError(f"Gmail API request failed: {exc.reason}") from exc
 
-    def _access_token(self) -> str:
-        if self._cached_access_token:
+    def _access_token(self, *, force_refresh: bool = False) -> str:
+        if self._cached_access_token and not force_refresh:
             return self._cached_access_token
         refresh_token = self.settings.apply_gmail_refresh_token or ""
         client_id = self.settings.apply_gmail_client_id or ""
@@ -145,12 +197,19 @@ class GmailVerificationCodeClient:
         self._cached_access_token = token
         return token
 
+    def _has_refresh_credentials(self) -> bool:
+        return bool(
+            self.settings.apply_gmail_refresh_token
+            and self.settings.apply_gmail_client_id
+            and self.settings.apply_gmail_client_secret
+        )
 
-def extract_verification_code(text: str) -> str | None:
+
+def extract_verification_code(text: str, *, allowed_lengths: tuple[int, ...] = (8,)) -> str | None:
     for pattern in _CODE_PATTERNS:
         for match in pattern.finditer(text):
             code = match.group(1).strip()
-            if len(code) == 8:
+            if len(code) in allowed_lengths:
                 return code
     return None
 

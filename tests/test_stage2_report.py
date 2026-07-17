@@ -4,6 +4,7 @@ import io
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -98,6 +99,10 @@ class FakeSemanticScorer:
     def __init__(self, backend) -> None:
         self.backend = backend
 
+    def score(self, job):
+        _ = job
+        return FakeSemanticResult()
+
     def score_job_text(self, job_text: str):
         _ = job_text
         return FakeSemanticResult()
@@ -167,6 +172,11 @@ class Stage2ReportTests(unittest.TestCase):
         self.db_path = str(Path(self.temp_dir.name) / "test.db")
         self.settings = make_settings(self.db_path)
         self.store = JobStore(self.db_path)
+        self.semantic_scorer_patcher = patch(
+            "job_hunter.pipeline._build_semantic_shadow_scorer",
+            return_value=FakeSemanticScorer(FakeEmbeddingBackend()),
+        )
+        self.semantic_scorer_patcher.start()
         payload = [
             {
                 "source": "fake",
@@ -175,7 +185,7 @@ class Stage2ReportTests(unittest.TestCase):
                 "title": "Data Engineering Intern",
                 "company": "Finz",
                 "location": "Remote - US",
-                "posted_at": "2026-06-25T00:00:00+00:00",
+                "posted_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
                 "description": "Build production ML systems with Python and SQL for our internship program.",
                 "skills": ["python", "sql"],
             }
@@ -185,6 +195,7 @@ class Stage2ReportTests(unittest.TestCase):
         self.store.close()
 
     def tearDown(self) -> None:
+        self.semantic_scorer_patcher.stop()
         self.temp_dir.cleanup()
 
     def test_list_renders_shadow_rows(self) -> None:

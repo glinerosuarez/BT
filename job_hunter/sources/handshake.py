@@ -22,6 +22,10 @@ SECURITY_VERIFICATION_MARKERS = (
 
 class HandshakeSecurityVerificationError(RuntimeError):
     pass
+
+
+class HandshakeAccessWallError(RuntimeError):
+    pass
 DETAIL_TEXT_SCRIPT = """
 () => {
   let best = null;
@@ -79,6 +83,18 @@ SUMMARY_BETA_SECTION_RE = re.compile(
 )
 SUMMARY_BETA_INLINE_PREFIX_RE = re.compile(
     r"^(.*?)(summary beta\b.*)$",
+    flags=re.IGNORECASE,
+)
+SUMMARY_BETA_RESUME_MARKERS = (
+    "at a glance",
+    "job description",
+)
+HANDSHAKE_ACTION_PREFIX_RE = re.compile(
+    r"^(?:(?:save|share|apply(?: externally)?|quick apply)\s+)+(?=(at a glance|job description)\b)",
+    flags=re.IGNORECASE,
+)
+HANDSHAKE_ACTION_ONLY_RE = re.compile(
+    r"^(?:save|share|apply(?: externally)?|quick apply)(?:\s+(?:save|share|apply(?: externally)?|quick apply))*$",
     flags=re.IGNORECASE,
 )
 
@@ -174,10 +190,7 @@ class HandshakeSource(SourceConnector):
 
     def _fetch_search_page(self, page, search_url: str) -> list[dict]:
         self._goto_handshake_page(page, search_url)
-        if "joinhandshake.com/login" in page.url or "users/sign_in" in page.url:
-            raise RuntimeError(
-                "Handshake session not authenticated. Run `python -m job_hunter.handshake_login` first."
-            )
+        _raise_for_auth_wall(page.url, context="search results")
 
         try:
             page.get_by_text(re.compile(r"jobs? found", re.IGNORECASE)).first.wait_for(timeout=5000)
@@ -270,10 +283,7 @@ class HandshakeSource(SourceConnector):
 
     def _fetch_job_page(self, page, job_url: str) -> dict | None:
         self._goto_handshake_page(page, job_url, post_wait_ms=1500)
-        if "joinhandshake.com/login" in page.url or "users/sign_in" in page.url:
-            raise RuntimeError(
-                "Handshake session not authenticated. Run `python -m job_hunter.handshake_login` first."
-            )
+        _raise_for_auth_wall(page.url, context=f"job page url={job_url}")
         expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
         if expanded:
             page.wait_for_timeout(750)
@@ -293,8 +303,7 @@ class HandshakeSource(SourceConnector):
         detail_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
         try:
             self._goto_handshake_page(detail_page, job_url, post_wait_ms=1500)
-            if "joinhandshake.com/login" in detail_page.url or "users/sign_in" in detail_page.url:
-                return ""
+            _raise_for_auth_wall(detail_page.url, context=f"job detail fallback url={job_url}")
             expanded = int(detail_page.evaluate(EXPAND_MORE_SCRIPT) or 0)
             if expanded:
                 detail_page.wait_for_timeout(750)
@@ -353,6 +362,24 @@ def _normalize_search_url(search_url: str) -> str:
     filtered_pairs.append(("sort", "posted_date_desc"))
     normalized_query = urlencode(filtered_pairs, doseq=True)
     return urlunparse(parsed._replace(query=normalized_query))
+
+
+def _page_requires_auth(url: str) -> bool:
+    lowered = (url or "").lower()
+    return (
+        "joinhandshake.com/login" in lowered
+        or "users/sign_in" in lowered
+        or "joinhandshake.com/access" in lowered
+    )
+
+
+def _raise_for_auth_wall(url: str, *, context: str) -> None:
+    if not _page_requires_auth(url):
+        return
+    raise HandshakeAccessWallError(
+        f"Handshake session blocked by auth wall while loading {context}. "
+        "Run `python -m job_hunter.handshake_login` with the scraper profile and verify the posting opens there."
+    )
 
 
 def _extract_cards_from_page_text(body_text: str) -> list[dict[str, str]]:
@@ -809,6 +836,10 @@ def _trim_detail_text(lines: list[str], *, posted_idx: int | None = None) -> str
     skipping_summary_beta = False
     start_idx = _detail_content_start_index(lines, posted_idx)
     for line in lines[start_idx:]:
+        line = _strip_inline_summary_beta_segment(line)
+        line = _strip_handshake_action_chrome(line)
+        if not line:
+            continue
         lowered = line.lower()
         if any(marker in lowered for marker in stop_markers):
             break
@@ -821,14 +852,49 @@ def _trim_detail_text(lines: list[str], *, posted_idx: int | None = None) -> str
             skipping_summary_beta = True
             continue
         if skipping_summary_beta:
-            if lowered in {"at a glance", "job description"}:
+            resume_line = _resume_from_summary_beta_marker(line)
+            if resume_line is not None:
                 skipping_summary_beta = False
+                line = resume_line
+                lowered = line.lower()
             else:
                 continue
         if kept and kept[-1].lower().startswith("save") and lowered.startswith("apply"):
             continue
         kept.append(line)
     return "\n".join(kept).strip()
+
+
+def _strip_inline_summary_beta_segment(line: str) -> str:
+    lowered = line.lower()
+    if "summary beta" not in lowered:
+        return line.strip()
+    for marker in SUMMARY_BETA_RESUME_MARKERS:
+        marker_idx = lowered.find(marker)
+        summary_idx = lowered.find("summary beta")
+        if summary_idx != -1 and marker_idx > summary_idx:
+            prefix = line[:summary_idx].strip()
+            suffix = line[marker_idx:].strip()
+            return "\n".join(part for part in (prefix, suffix) if part).strip()
+    return line.strip()
+
+
+def _strip_handshake_action_chrome(line: str) -> str:
+    stripped = line.strip()
+    if not stripped:
+        return ""
+    if HANDSHAKE_ACTION_ONLY_RE.match(stripped):
+        return ""
+    return HANDSHAKE_ACTION_PREFIX_RE.sub("", stripped).strip()
+
+
+def _resume_from_summary_beta_marker(line: str) -> str | None:
+    lowered = line.lower()
+    for marker in SUMMARY_BETA_RESUME_MARKERS:
+        marker_idx = lowered.find(marker)
+        if marker_idx != -1:
+            return line[marker_idx:].strip()
+    return None
 
 
 def _find_posted_line_index(lines: list[str]) -> int | None:
