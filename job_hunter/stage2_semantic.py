@@ -28,6 +28,7 @@ ACADEMIC_RESEARCH_PROFILE_PENALTY_SCALE = 0.40
 QUANT_RESEARCH_PROFILE_PENALTY_SCALE = 0.45
 QUANT_RESEARCH_TITLE_PENALTY = 0.22
 ANALYST_PROGRAM_TITLE_PENALTY = 0.16
+PRODUCT_MANAGEMENT_TITLE_PENALTY = 0.28
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +135,16 @@ DEFAULT_SEMANTIC_PROFILES: tuple[SemanticProfile, ...] = (
         polarity="negative",
     ),
     SemanticProfile(
+        profile_id="product_management",
+        text=(
+            "Low-fit internship centered on product management, product strategy, roadmap planning, user research, "
+            "product requirements, prioritization, go-to-market planning, cross-functional coordination, launch readiness, "
+            "commercialization, customer insights, and stakeholder alignment rather than building software, data pipelines, "
+            "backend systems, or production ML systems."
+        ),
+        polarity="negative",
+    ),
+    SemanticProfile(
         profile_id="marketing_content_social",
         text=(
             "Low-fit internship centered on marketing, content creation, social media, TikTok, brand campaigns, "
@@ -212,6 +223,9 @@ _BUILDER_EVIDENCE_BUCKETS: dict[str, tuple[str, ...]] = {
 
 _GENERALIST_ANALYTICAL_PATTERNS: tuple[str, ...] = (
     r"\bbusiness analyst\b",
+    r"\bproduct management\b",
+    r"\bproduct manager\b",
+    r"\bapm\b",
     r"\bclient meetings?\b",
     r"\bpresentations? and reports?\b",
     r"\bworkshops? and interviews?\b",
@@ -245,6 +259,20 @@ _NEGATIVE_PROFILE_LEXICAL_PATTERNS: dict[str, tuple[str, ...]] = {
         r"\bbusiness development\b",
         r"\bstakeholders?\b",
         r"\bmarket analysis\b",
+    ),
+    "product_management": (
+        r"\bproduct management\b",
+        r"\bproduct manager\b",
+        r"\bassociate product manager\b",
+        r"\bapm\b",
+        r"\bproduct requirements?\b",
+        r"\broadmap\b",
+        r"\bprioritization\b",
+        r"\bgo-to-market\b",
+        r"\blaunch requirements?\b",
+        r"\bcustomer insights?\b",
+        r"\buser research\b",
+        r"\bcross-functional\b",
     ),
     "marketing_content_social": (
         r"\bcontent creation\b",
@@ -356,17 +384,17 @@ class SemanticShadowScorer:
             min(base_score - negative_penalty - research_heaviness_score - builder_evidence_penalty, 1.0),
         )
         label = _semantic_label(adjusted_score)
+        all_adjustment_reason_codes = negative_reason_codes + adjustment_reason_codes + builder_adjustment_reason_codes
         semantic_profile_id = _resolve_semantic_profile_id(
             best_profile.profile_id,
             base_score=base_score,
             adjusted_score=adjusted_score,
             negative_penalty=negative_penalty,
             builder_evidence_penalty=builder_evidence_penalty,
+            adjustment_reason_codes=all_adjustment_reason_codes,
         )
         reasons = _semantic_reason_codes(adjusted_score, semantic_profile_id)
-        reasons.extend(negative_reason_codes)
-        reasons.extend(adjustment_reason_codes)
-        reasons.extend(builder_adjustment_reason_codes)
+        reasons.extend(all_adjustment_reason_codes)
         return SemanticStage2Result(
             semantic_match_score=adjusted_score,
             semantic_match_label=label,
@@ -423,10 +451,21 @@ def _resolve_semantic_profile_id(
     adjusted_score: float,
     negative_penalty: float,
     builder_evidence_penalty: float,
+    adjustment_reason_codes: list[str],
 ) -> str:
     if adjusted_score >= 0.52:
         return profile_id
     if base_score < POSITIVE_PROFILE_ALIGNMENT_THRESHOLD:
+        return NO_POSITIVE_MATCH_PROFILE_ID
+    if any(
+        reason in adjustment_reason_codes
+        for reason in (
+            "semantic_penalty_product_management_title",
+            "semantic_penalty_analyst_program_title",
+            "semantic_penalty_quant_research_title",
+            "semantic_penalty_research_scientist_title",
+        )
+    ):
         return NO_POSITIVE_MATCH_PROFILE_ID
     if negative_penalty > 0.0 and builder_evidence_penalty > 0.0:
         return NO_POSITIVE_MATCH_PROFILE_ID
@@ -553,6 +592,9 @@ def _research_heaviness_adjustment(
     if _has_analyst_program_title_signal(title_blob):
         penalty += ANALYST_PROGRAM_TITLE_PENALTY
         reasons.append("semantic_penalty_analyst_program_title")
+    if _has_product_management_title_signal(title_blob):
+        penalty += PRODUCT_MANAGEMENT_TITLE_PENALTY
+        reasons.append("semantic_penalty_product_management_title")
     if "research scientist" in title_blob:
         penalty += 0.18
         reasons.append("semantic_penalty_research_scientist_title")
@@ -611,6 +653,18 @@ def _has_analyst_program_title_signal(title_blob: str) -> bool:
             re.compile(r"\bsummer analyst program\b", re.IGNORECASE),
             re.compile(r"\bquantitative\b.*\banalyst\b", re.IGNORECASE),
             re.compile(r"\banalyst\b.*\bprogram\b", re.IGNORECASE),
+        )
+    )
+
+
+def _has_product_management_title_signal(title_blob: str) -> bool:
+    return any(
+        pattern.search(title_blob)
+        for pattern in (
+            re.compile(r"\bproduct management\b", re.IGNORECASE),
+            re.compile(r"\bproduct manager\b", re.IGNORECASE),
+            re.compile(r"\bassociate product manager\b", re.IGNORECASE),
+            re.compile(r"\bapm\b", re.IGNORECASE),
         )
     )
 

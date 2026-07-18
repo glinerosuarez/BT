@@ -294,6 +294,36 @@ class Stage2SemanticTests(unittest.TestCase):
         )
         self.assertLessEqual(result.semantic_match_score, result.semantic_base_score)
 
+    def test_semantic_scorer_penalizes_product_management_match(self) -> None:
+        backend = FakeEmbeddingBackend()
+        scorer = SemanticShadowScorer(backend=backend)
+        job = JobRecord(
+            source="fake",
+            external_id="4pm",
+            url="https://example.com/4pm",
+            title="Product Management Intern (Summer 2027)",
+            company="Example",
+            location="US",
+            is_internship=True,
+            posted_at="2026-07-01",
+            description=(
+                "Support product requirements, roadmap prioritization, and launch readiness. "
+                "Work cross-functionally with engineering, design, and go-to-market teams. "
+                "Use customer insights and user research to inform product strategy."
+            ),
+            ingested_at="2026-07-02T00:00:00+00:00",
+        )
+
+        result = scorer.score(job)
+
+        self.assertEqual(result.semantic_profile_id, "no_positive_match")
+        self.assertEqual(result.semantic_match_label, "reject")
+        self.assertIn("semantic_no_positive_profile_match", result.semantic_match_reason_codes)
+        self.assertIn(
+            "semantic_penalty_product_management_title",
+            result.semantic_adjustment_reason_codes,
+        )
+
     def test_semantic_scorer_penalizes_quant_research_trading_match(self) -> None:
         backend = FakeEmbeddingBackend()
         scorer = SemanticShadowScorer(backend=backend)
