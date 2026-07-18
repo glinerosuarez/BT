@@ -13,6 +13,7 @@ from job_hunter.apply.adapters.handshake import HandshakeAdapter
 from job_hunter.apply.adapters.handshake_fellow import HandshakeFellowAdapter
 from job_hunter.apply.adapters.icims import ICIMSAdapter
 from job_hunter.apply.adapters.linkedin import LinkedInEasyApplyAdapter
+from job_hunter.apply.adapters.workday import WorkdayAdapter
 from job_hunter.apply.email_codes import extract_verification_code
 from job_hunter.apply.profile_loader import ProfileValidationError, load_application_inputs
 from job_hunter.apply.resolver import AnswerResolver, ResolutionError
@@ -185,6 +186,95 @@ class FakeBrowserManager:
         self.open_calls.append(adapter_name)
         self.headless_calls.append(headless)
         return FakeSession(self.page)
+
+
+class FakeWorkdayPage:
+    def __init__(self, *, verification_gate: bool = False, unknown_required_field: bool = False) -> None:
+        self.url = "https://iherb.wd5.myworkdayjobs.com/en-US/Careers/job/Home-Office-CA/Software-Development-Intern_R107025-1/apply/applyManually"
+        self._stage = "verification" if verification_gate else "my_information"
+        self._unknown_required_field = unknown_required_field
+        self.values: dict[str, str] = {}
+        self.clicked_actions: list[str] = []
+        self.verification_code = ""
+        self._steps = ["my_information", "my_experience", "review", "submitted"]
+        self._fields_by_stage = {
+            "my_information": [
+                {"field_name": "full_name", "question_text": "What is your full name?", "field_type": "text", "required": True, "current_value": ""},
+                {"field_name": "email", "question_text": "Email", "field_type": "text", "required": True, "current_value": ""},
+                {"field_name": "resume", "question_text": "Upload your resume", "field_type": "file", "required": True, "current_value": ""},
+                {"field_name": "cover_letter", "question_text": "Upload your cover letter", "field_type": "file", "required": True, "current_value": ""},
+            ],
+            "my_experience": [
+                {"field_name": "work_auth", "question_text": "Are you currently authorized to work in the United States?", "field_type": "radio-group", "required": True, "current_value": "", "options": [{"selector": "#work-auth-yes", "label": "Yes", "value": "Yes", "checked": False}, {"selector": "#work-auth-no", "label": "No", "value": "No", "checked": False}]},
+            ],
+            "review": [],
+        }
+        if unknown_required_field:
+            self._fields_by_stage["my_experience"].append(
+                {"field_name": "favorite_snack", "question_text": "Favorite snack", "field_type": "text", "required": True, "current_value": ""}
+            )
+
+    def content(self) -> str:
+        if self._stage == "verification":
+            return "Enter verification code We sent a verification code Resend code Submit"
+        if self._stage == "submitted":
+            return "Thank you for applying. Your application has been submitted."
+        stage_text = {
+            "my_information": "My Information Continue",
+            "my_experience": "My Experience Continue",
+            "review": "Review Submit Application",
+        }[self._stage]
+        return f"Careers at iHerb {stage_text}"
+
+    def has_workday_form_widgets(self) -> bool:
+        return self._stage in {"my_information", "my_experience", "review"}
+
+    def extract_workday_fields(self):
+        return self._fields_by_stage.get(self._stage, [])
+
+    def set_workday_field(self, field, value: str) -> None:
+        key = str(field.get("field_name") or field.get("question_text"))
+        self.values[key] = value
+        field["current_value"] = value
+        options = field.get("options")
+        if isinstance(options, list):
+            lowered = value.strip().lower()
+            for option in options:
+                if not isinstance(option, dict):
+                    continue
+                label = str(option.get("label") or option.get("value") or "").strip().lower()
+                option["checked"] = label == lowered or lowered in label or label in lowered
+            field["current_value"] = value
+
+    def extract_workday_navigation_action(self) -> str:
+        if self._stage == "my_information":
+            return "continue"
+        if self._stage == "my_experience":
+            return "continue"
+        if self._stage == "review":
+            return "submit"
+        return ""
+
+    def click_workday_navigation(self, action: str) -> bool:
+        self.clicked_actions.append(action)
+        if self._stage == "my_information" and action == "continue":
+            self._stage = "my_experience"
+            return True
+        if self._stage == "my_experience" and action == "continue":
+            self._stage = "review"
+            return True
+        if self._stage == "review" and action == "submit":
+            self._stage = "submitted"
+            self.url = "https://iherb.wd5.myworkdayjobs.com/en-US/Careers/application/submitted"
+            return True
+        return False
+
+    def fill_email_verification_code(self, code: str) -> None:
+        self.verification_code = code
+        self._stage = "my_information"
+
+    def wait_for_timeout(self, milliseconds: int) -> None:
+        return None
 
 
 class FakeContext:
@@ -380,6 +470,50 @@ class ApplyJobsTests(unittest.TestCase):
         with self.assertRaises(ResolutionError):
             resolver.resolve(question_text="What is your favorite database?")
 
+    def test_answer_resolver_computes_split_name_fields_when_structured_keys_are_absent(self) -> None:
+        resolver = self._resolver()
+        self.assertEqual(
+            resolver.resolve(question_text="First Name", field_name="first_name", field_type="text").answer,
+            "Ada",
+        )
+        self.assertEqual(
+            resolver.resolve(question_text="Last Name", field_name="last_name", field_type="text").answer,
+            "Lovelace",
+        )
+        self.assertEqual(
+            resolver.resolve(question_text="Father's Family Name*", field_name="legalName--lastName", field_type="text").answer,
+            "Lovelace",
+        )
+
+    def test_answer_resolver_computes_workday_phone_and_employment_answers(self) -> None:
+        resolver = self._resolver()
+        self.assertEqual(
+            resolver.resolve(question_text="Have you previously been employed by iHerb?", field_name="previously-employed", field_type="radio-group").answer,
+            "No",
+        )
+        self.assertEqual(
+            resolver.resolve(question_text="Phone Device Type", field_name="deviceType", field_type="select-one").answer,
+            "Mobile",
+        )
+        self.assertEqual(
+            resolver.resolve(question_text="Country Phone Code*", field_name="phoneNumber--countryPhoneCode", field_type="text").answer,
+            "+555",
+        )
+        self.assertEqual(
+            resolver.resolve(question_text="Phone Number*", field_name="phoneNumber", field_type="text").answer,
+            "5550100",
+        )
+
+    def test_workday_country_equivalence_treats_united_states_of_america_as_united_states(self) -> None:
+        adapter = WorkdayAdapter()
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="country",
+                current_value="United States of America",
+                desired_value="United States",
+            )
+        )
+
     def test_answer_resolver_classifies_supported_intents(self) -> None:
         resolver = self._resolver()
         self.assertEqual(
@@ -415,6 +549,15 @@ class ApplyJobsTests(unittest.TestCase):
 
     def test_answer_resolver_resolves_via_capability_matrix(self) -> None:
         resolver = self._resolver()
+        resolution = resolver.resolve_for_portal(
+            portal="workday",
+            question_text="Yes, I have read and consent to the terms and conditions*",
+            field_name="acceptTermsAndAgreements",
+            field_type="checkbox-group",
+        )
+        self.assertEqual(resolution.answer, "Yes")
+        self.assertIn("capability:workday:consent_required", resolution.source)
+
         resolution = resolver.resolve_for_portal(
             portal="linkedin",
             question_text="Please provide your consent for the storage, processing, and use of your data for employment.*",
@@ -1075,6 +1218,242 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(run.status, "blocked")
         self.assertEqual(shown["adapter_name"], "workday")
         self.assertTrue(shown["blocked_reason"] in {"apply_button_missing", "unsupported_widget"})
+
+    def test_workday_adapter_fills_form_fields_uploads_artifacts_and_submits(self) -> None:
+        adapter = WorkdayAdapter()
+        page = FakeWorkdayPage()
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(page.clicked_actions, ["continue", "continue", "submit"])
+        self.assertEqual(page.values["full_name"], "Ada Lovelace")
+        self.assertEqual(page.values["email"], "ada@example.com")
+        self.assertEqual(page.values["work_auth"], "Yes")
+        self.assertTrue(page.values["resume"].endswith(".pdf"))
+        self.assertTrue(page.values["cover_letter"].endswith(".pdf"))
+        self.assertIn("submitted", result.confirmation_payload["message"].lower())
+
+    def test_workday_recognizes_current_page_footer_navigation_controls(self) -> None:
+        class FooterOnlyPage:
+            def evaluate(self, script: str) -> bool:
+                return "pageFooterNextButton" in script
+
+        adapter = WorkdayAdapter()
+
+        self.assertTrue(adapter._has_application_form_widgets(FooterOnlyPage()))
+
+    def test_workday_shared_footer_button_requires_matching_action_label(self) -> None:
+        class Locator:
+            def __init__(self, *, text: str = "", present: bool = False, clicks: list[str] | None = None) -> None:
+                self.text = text
+                self.present = present
+                self.clicks = clicks if clicks is not None else []
+
+            @property
+            def first(self):
+                return self
+
+            def count(self) -> int:
+                return int(self.present)
+
+            def filter(self, *, has_text):
+                matches = bool(has_text.search(self.text)) if hasattr(has_text, "search") else has_text in self.text
+                return Locator(text=self.text, present=self.present and matches, clicks=self.clicks)
+
+            def click(self, **kwargs) -> None:
+                _ = kwargs
+                self.clicks.append(self.text)
+
+            def inner_text(self, **kwargs) -> str:
+                _ = kwargs
+                return self.text
+
+        class FooterPage:
+            def __init__(self) -> None:
+                self.clicks: list[str] = []
+
+            def locator(self, selector: str):
+                if selector == "body":
+                    return Locator(text="My Experience Review Save and Continue", present=True, clicks=self.clicks)
+                if selector == "[data-automation-id='pageFooterNextButton']":
+                    return Locator(text="Save and Continue", present=True, clicks=self.clicks)
+                return Locator(clicks=self.clicks)
+
+            def wait_for_timeout(self, milliseconds: int) -> None:
+                _ = milliseconds
+
+        adapter = WorkdayAdapter()
+        page = FooterPage()
+
+        action = adapter._next_form_action(page)
+
+        self.assertEqual(action, "save")
+        self.assertTrue(adapter._click_navigation(page, action))
+        self.assertEqual(page.clicks, ["Save and Continue"])
+
+    def test_workday_adapter_blocks_on_unknown_required_question(self) -> None:
+        adapter = WorkdayAdapter()
+        page = FakeWorkdayPage(unknown_required_field=True)
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "missing_required_answer")
+        self.assertEqual(result.blocker.field_name, "favorite_snack")
+
+    def test_workday_adapter_completes_email_verification_and_continues_submission(self) -> None:
+        adapter = WorkdayAdapter()
+        page = FakeWorkdayPage(verification_gate=True)
+
+        initial = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+        self.assertEqual(initial.status, "blocked")
+        self.assertEqual(initial.blocker.reason, "email_verification_required")
+
+        resumed = adapter.complete_email_verification(
+            page=page,
+            code="12345678",
+            steps=initial.steps,
+            context=self._adapter_context(),
+            resolver=self._resolver(),
+        )
+
+        self.assertEqual(page.verification_code, "12345678")
+        self.assertEqual(resumed.status, "submitted")
+        self.assertIn("submitted", resumed.confirmation_payload["message"].lower())
+
+    def test_workday_adapter_creates_manual_checkpoint_for_required_listbox(self) -> None:
+        class PhoneTypeCheckpointPage(FakeWorkdayPage):
+            def __init__(self) -> None:
+                super().__init__()
+                self._fields_by_stage["my_information"].append(
+                    {
+                        "field_name": "phoneType",
+                        "question_text": "Phone Device Type*",
+                        "field_type": "listbox-button",
+                        "required": True,
+                        "current_value": "",
+                    }
+                )
+
+            def set_workday_field(self, field, value: str) -> None:
+                key = str(field.get("field_name") or field.get("question_text"))
+                if key == "phoneType":
+                    raise RuntimeError("manual listbox intervention required")
+                super().set_workday_field(field, value)
+
+        adapter = WorkdayAdapter()
+        page = PhoneTypeCheckpointPage()
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "manual_checkpoint_required")
+        self.assertEqual(result.blocker.field_name, "phoneType")
+        self.assertEqual(result.blocker.details["checkpoint"], "workday_required_listbox")
+        self.assertEqual(result.blocker.details["expected_answer"], "Mobile")
+
+    def test_workday_adapter_creates_manual_checkpoint_for_required_choice(self) -> None:
+        class PreviousWorkerCheckpointPage(FakeWorkdayPage):
+            def __init__(self) -> None:
+                super().__init__()
+                self._fields_by_stage["my_information"].append(
+                    {
+                        "field_name": "candidateIsPreviousWorker",
+                        "question_text": "Have you previously been employed by iHerb? CURRENT EMPLOYEES: Please apply using your internal Workday account.*",
+                        "field_type": "radio-group",
+                        "required": True,
+                        "current_value": "",
+                        "options": [
+                            {"selector": "#prev-worker-yes", "label": "Yes", "value": "Yes", "checked": False},
+                            {"selector": "#prev-worker-no", "label": "No", "value": "No", "checked": False},
+                        ],
+                    }
+                )
+
+            def set_workday_field(self, field, value: str) -> None:
+                key = str(field.get("field_name") or field.get("question_text"))
+                if key == "candidateIsPreviousWorker":
+                    raise RuntimeError("manual radio intervention required")
+                super().set_workday_field(field, value)
+
+        adapter = WorkdayAdapter()
+        page = PreviousWorkerCheckpointPage()
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "manual_checkpoint_required")
+        self.assertEqual(result.blocker.field_name, "candidateIsPreviousWorker")
+        self.assertEqual(result.blocker.details["checkpoint"], "workday_required_choice")
+        self.assertEqual(result.blocker.details["expected_answer"], "No")
+
+    def test_workday_adapter_accepts_required_terms_checkbox(self) -> None:
+        class ConsentPage(FakeWorkdayPage):
+            def __init__(self) -> None:
+                super().__init__()
+                self._fields_by_stage["my_experience"].append(
+                    {
+                        "field_name": "acceptTermsAndAgreements",
+                        "question_text": "Yes, I have read and consent to the terms and conditions*",
+                        "field_type": "checkbox-group",
+                        "required": True,
+                        "current_value": "",
+                        "options": [
+                            {
+                                "selector": "#terms-consent",
+                                "label": "Yes, I have read and consent to the terms and conditions",
+                                "value": "Yes",
+                                "checked": False,
+                            }
+                        ],
+                    }
+                )
+
+        adapter = WorkdayAdapter()
+        page = ConsentPage()
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(page.values["acceptTermsAndAgreements"], "Yes")
+
+    def test_workday_waits_for_progressively_rendered_required_fields(self) -> None:
+        class ProgressivePage(FakeWorkdayPage):
+            def __init__(self) -> None:
+                super().__init__()
+                self.extraction_count = 0
+
+            def extract_workday_fields(self):
+                self.extraction_count += 1
+                fields = [
+                    {
+                        "field_name": "gender",
+                        "question_text": "Please indicate your gender.",
+                        "field_type": "listbox-button",
+                        "required": False,
+                        "current_value": "",
+                    }
+                ]
+                if self.extraction_count >= 3:
+                    fields.append(
+                        {
+                            "field_name": "acceptTermsAndAgreements",
+                            "question_text": "Yes, I have read and consent to the terms and conditions*",
+                            "field_type": "checkbox-group",
+                            "required": True,
+                            "current_value": "",
+                            "options": [],
+                        }
+                    )
+                return fields
+
+        adapter = WorkdayAdapter()
+        page = ProgressivePage()
+
+        adapter._wait_for_render(page)
+
+        self.assertGreaterEqual(page.extraction_count, 5)
 
     def test_service_reuses_previous_external_target_when_linkedin_guest_page_hides_it(self) -> None:
         first_page = FakePage(

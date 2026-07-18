@@ -14,7 +14,7 @@ class ResolutionError(RuntimeError):
 
 _QUESTION_FIELD_MAP: list[tuple[tuple[str, ...], str]] = [
     (("first name",), "identity.first_name"),
-    (("last name", "surname", "family name"), "identity.last_name"),
+    (("last name", "surname", "family name", "father's family name", "fathers family name"), "identity.last_name"),
     (("full name", "legal name", "name"), "identity.full_name"),
     (("email", "email address"), "identity.email"),
     (("phone", "mobile"), "identity.phone"),
@@ -42,7 +42,15 @@ _QUESTION_FIELD_MAP: list[tuple[tuple[str, ...], str]] = [
 ]
 
 _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
-    ("consent_required", ("provide your consent", "has my consent")),
+    (
+        "consent_required",
+        (
+            "provide your consent",
+            "has my consent",
+            "consent to the terms and conditions",
+            "accepttermsandagreements",
+        ),
+    ),
     ("current_location", ("current location", "where are you based", "city/state of residence")),
     ("work_auth_us", ("legally authorized to work in the united states", "authorized to work in the united states")),
     (
@@ -61,6 +69,13 @@ _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 _FIELD_CAPABILITIES: tuple[FieldCapability, ...] = (
+    FieldCapability(
+        portal="workday",
+        widget_types=("checkbox", "checkbox-group"),
+        intents=("consent_required",),
+        resolver_mode="computed_yes",
+        submit_policy="safe_autofill_if_single_option",
+    ),
     FieldCapability(
         portal="linkedin",
         widget_types=("checkbox-group",),
@@ -119,7 +134,9 @@ class AnswerResolver:
 
         structured_key = self._structured_key_for(question=normalized_question, field_name=normalized_field_name)
         if structured_key:
-            return AnswerResolution(answer=self._structured[structured_key], source=f"structured:{structured_key}")
+            structured_value = self._structured.get(structured_key, "")
+            if structured_value:
+                return AnswerResolution(answer=structured_value, source=f"structured:{structured_key}")
 
         default_key = normalized_field_name or normalized_question
         if default_key in self.answers.field_defaults:
@@ -216,7 +233,12 @@ class AnswerResolver:
             if first_name:
                 return AnswerResolution(answer=first_name, source="computed:identity.first_name")
 
-        if "last name" in question or field_name.endswith("last_name") or field_name == "last_name":
+        if (
+            "last name" in question
+            or "family name" in question
+            or field_name.endswith("last_name")
+            or field_name == "last_name"
+        ):
             last_name = _last_name(self._structured.get("identity.full_name", ""))
             if last_name:
                 return AnswerResolution(answer=last_name, source="computed:identity.last_name")
@@ -226,7 +248,13 @@ class AnswerResolver:
             if degree:
                 return AnswerResolution(answer=degree, source="computed:education.degree")
 
-        if forced_intent == "consent_required" or "provide your consent" in question or "has my consent" in question:
+        if (
+            forced_intent == "consent_required"
+            or "provide your consent" in question
+            or "has my consent" in question
+            or "consent to the terms and conditions" in question
+            or normalized_field_name == "accepttermsandagreements"
+        ):
             return AnswerResolution(answer="Yes", source="computed:consent_acknowledgement")
 
         if forced_intent == "current_location" or "current location" in question:
@@ -236,6 +264,27 @@ class AnswerResolver:
                 return AnswerResolution(answer=f"{city}, {region}", source="computed:identity.location")
             if city:
                 return AnswerResolution(answer=city, source="computed:identity.location")
+
+        if "18 or older" in question or "at least 18 years old" in question:
+            return AnswerResolution(answer="Yes", source="computed:eligibility.age_of_majority")
+
+        if "relatives currently working" in question or "family members currently working" in question:
+            return AnswerResolution(answer="No", source="computed:employment.related_party")
+
+        if "country of the position you are applying" in question:
+            country = _canonical_country(self._structured.get("identity.country", "").strip())
+            if country:
+                return AnswerResolution(answer=country, source="computed:position.country")
+
+        if question == "country" or question == "country*" or normalized_field_name == "country":
+            country = _canonical_country(self._structured.get("identity.country", "").strip())
+            if country:
+                return AnswerResolution(answer=country, source="computed:identity.country")
+
+        if "compensation expectations" in question or "salary expectations" in question:
+            compensation = self._structured.get("preferences.salary_min_usd", "").strip()
+            if compensation:
+                return AnswerResolution(answer=compensation, source="computed:preferences.salary_min_usd")
 
         if forced_intent == "work_auth_us" or "legally authorized to work in the united states" in question:
             authorized = self._structured.get("work_authorization.us_work_authorized", "").strip().lower()
@@ -261,8 +310,24 @@ class AnswerResolver:
         if forced_intent == "on_site_acknowledgement" or "requires me to work on-site" in question or "requires me to work on site" in question:
             return AnswerResolution(answer="Yes", source="computed:preferences.on_site_acknowledgement")
 
+        if "phone device type" in question:
+            return AnswerResolution(answer="Mobile", source="computed:identity.phone_device_type")
+
+        if "country phone code" in question or "countryphonecode" in normalized_field_name:
+            country_code = _phone_country_code(self._structured.get("identity.phone", ""))
+            if country_code:
+                return AnswerResolution(answer=country_code, source="computed:identity.phone_country_code")
+
+        if question == "phone number*" or question == "phone number" or normalized_field_name == "phonenumber":
+            local_phone = _phone_local_number(self._structured.get("identity.phone", ""))
+            if local_phone:
+                return AnswerResolution(answer=local_phone, source="computed:identity.phone_local_number")
+
         if "are you over 18" in question:
             return AnswerResolution(answer="Yes", source="computed:identity.over_18")
+
+        if "previously been employed by" in question:
+            return AnswerResolution(answer="No", source="computed:employment.previously_employed_by_company")
 
         if "previously been employed by medpace" in question:
             return AnswerResolution(answer="No", source="computed:employment.previously_employed_by_company")
@@ -400,6 +465,28 @@ def _first_name(full_name: str) -> str:
 def _last_name(full_name: str) -> str:
     parts = [part for part in (full_name or "").strip().split() if part]
     return parts[-1] if len(parts) >= 2 else ""
+
+
+def _phone_country_code(phone: str) -> str:
+    raw = (phone or "").strip()
+    if not raw:
+        return ""
+    match = re.match(r"^\+?(\d{1,3})", raw)
+    if not match:
+        return ""
+    return f"+{match.group(1)}"
+
+
+def _phone_local_number(phone: str) -> str:
+    raw = (phone or "").strip()
+    if not raw:
+        return ""
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if raw.startswith("+"):
+        country_code = _phone_country_code(raw).lstrip("+")
+        if country_code and digits.startswith(country_code):
+            digits = digits[len(country_code):]
+    return digits
 
 
 def _education_start_year(*, graduation_date: str, degree: str) -> str:
