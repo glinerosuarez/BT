@@ -191,7 +191,13 @@ DETAIL_SPLIT_MARKERS = (
 
 LEADING_NOISE_PREFIXES = (
     "0 notifications",
+    "0 notificaciones",
     "ir al contenido principal",
+    "ir a contenido principal",
+    "ir a al margen",
+    "ir a pie de página",
+    "pasar al contenido principal",
+    "pasar a la búsqueda",
     "skip to main content",
     "skip to primary content",
     "skip to contenido principal",
@@ -209,6 +215,7 @@ LEADING_NOISE_PREFIXES = (
     "messaging",
     "notificaciones",
     "notifications",
+    "más",
     "yo",
     "me",
     "para negocios",
@@ -627,7 +634,12 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
     posted_at = ""
     posted_line = ""
 
-    header_lines = lines[:25]
+    header_lines = lines[:40]
+    header_age_lines: list[str] = []
+    for line in header_lines:
+        if line.lower() in {"about the job", "job description", "acerca del empleo"}:
+            break
+        header_age_lines.append(line)
     header_preview = [_clean_location(line) for line in header_lines[:4]]
     if len(header_preview) >= 3 and _looks_like_role_title(header_preview[1]) and not _looks_like_role_title(header_preview[0]):
         company = header_preview[0]
@@ -655,6 +667,8 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
         if not posted_line and _looks_like_age_line(line):
             posted_line = line
 
+    if not posted_line:
+        posted_line = _find_best_posted_line(header_age_lines)
     if posted_line:
         posted_at = _relative_age_to_iso(posted_line) or ""
 
@@ -670,6 +684,13 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
         "posted_line": posted_line,
         "is_reposted": _is_reposted_age_line(posted_line),
     }
+
+
+def _find_best_posted_line(lines: list[str]) -> str:
+    reposted_match = next((line for line in lines if _looks_like_age_line(line) and _is_reposted_age_line(line)), "")
+    if reposted_match:
+        return reposted_match
+    return next((line for line in lines if _looks_like_age_line(line)), "")
 
 
 def _extract_description(lines: list[str]) -> str:
@@ -861,7 +882,7 @@ def _strip_leading_noise(lines: list[str]) -> list[str]:
     start = 0
     while start < len(lines):
         lowered = lines[start].lower()
-        if lowered.isdigit():
+        if lowered.isdigit() or _is_notification_badge(lowered):
             start += 1
             continue
         if lowered in GENERIC_NOISE_LINES or any(_matches_noise_prefix(lowered, prefix) for prefix in LEADING_NOISE_PREFIXES):
@@ -877,8 +898,12 @@ def _matches_noise_prefix(value: str, prefix: str) -> bool:
     return value.startswith(f"{prefix} ")
 
 
+def _is_notification_badge(value: str) -> bool:
+    return bool(re.fullmatch(r"\d+\s+(?:notifications|notificaciones)", value.strip()))
+
+
 def _starts_with_noise_prefix(value: str) -> bool:
-    return any(_matches_noise_prefix(value, prefix) for prefix in LEADING_NOISE_PREFIXES)
+    return _is_notification_badge(value) or any(_matches_noise_prefix(value, prefix) for prefix in LEADING_NOISE_PREFIXES)
 
 
 def _looks_like_role_title(value: str) -> bool:

@@ -65,6 +65,8 @@ DEFAULT_ASHBY_BOARDS = [
 ]
 DEFAULT_HANDSHAKE_PROFILE_DIR = str(Path(__file__).resolve().parent.parent / ".handshake-profile")
 DEFAULT_LINKEDIN_PROFILE_DIR = str(Path(__file__).resolve().parent.parent / ".linkedin-profile")
+DEFAULT_INTERSTRIDE_PROFILE_DIR = str(Path(__file__).resolve().parent.parent / ".interstride-profile")
+DEFAULT_INTERSTRIDE_SEARCH_URLS = ["https://student.interstride.com/jobs/search"]
 DEFAULT_TITLE_BLACKLIST_PATTERNS = [
     r"\brecruiter\b",
     r"\brecruiting\b",
@@ -221,6 +223,13 @@ class Settings:
     linkedin_max_results: int = 25
     linkedin_page_timeout_seconds: int = 30
     linkedin_fetch_details: bool = True
+    use_interstride: bool = False
+    interstride_search_urls: list[str] = field(default_factory=lambda: list(DEFAULT_INTERSTRIDE_SEARCH_URLS))
+    interstride_profile_dir: str = DEFAULT_INTERSTRIDE_PROFILE_DIR
+    interstride_headless: bool = True
+    interstride_max_results: int = 25
+    interstride_page_timeout_seconds: int = 30
+    interstride_fetch_details: bool = True
 
 
 DEFAULT_DB_PATH = "job_hunter.db"
@@ -256,6 +265,7 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
     lever_token_file = os.getenv("JOB_HUNTER_LEVER_TOKEN_FILE", DEFAULT_LEVER_TOKEN_FILE)
     rss_feed_file = os.getenv("JOB_HUNTER_RSS_FEED_FILE", DEFAULT_RSS_FEED_FILE)
     linkedin_search_urls = _env_csv("JOB_HUNTER_LINKEDIN_SEARCH_URLS", [])
+    interstride_search_urls = _env_csv("JOB_HUNTER_INTERSTRIDE_SEARCH_URLS", DEFAULT_INTERSTRIDE_SEARCH_URLS)
     greenhouse_quarantine_file = os.getenv(
         "JOB_HUNTER_GREENHOUSE_QUARANTINE_FILE",
         _derive_quarantine_file(greenhouse_token_file, DEFAULT_GREENHOUSE_TOKEN_FILE),
@@ -366,4 +376,11 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         linkedin_max_results=_env_int("JOB_HUNTER_LINKEDIN_MAX_RESULTS", 25),
         linkedin_page_timeout_seconds=_env_int("JOB_HUNTER_LINKEDIN_PAGE_TIMEOUT_SECONDS", 30),
         linkedin_fetch_details=_env_bool("JOB_HUNTER_LINKEDIN_FETCH_DETAILS", True),
+        use_interstride=_env_bool("JOB_HUNTER_SOURCE_INTERSTRIDE", False),
+        interstride_search_urls=interstride_search_urls,
+        interstride_profile_dir=os.getenv("JOB_HUNTER_INTERSTRIDE_PROFILE_DIR", DEFAULT_INTERSTRIDE_PROFILE_DIR),
+        interstride_headless=_env_bool("JOB_HUNTER_INTERSTRIDE_HEADLESS", True),
+        interstride_max_results=_env_int("JOB_HUNTER_INTERSTRIDE_MAX_RESULTS", 25),
+        interstride_page_timeout_seconds=_env_int("JOB_HUNTER_INTERSTRIDE_PAGE_TIMEOUT_SECONDS", 30),
+        interstride_fetch_details=_env_bool("JOB_HUNTER_INTERSTRIDE_FETCH_DETAILS", True),
     )

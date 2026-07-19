@@ -1385,6 +1385,29 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(reasons, ["linkedin_closed"])
         self.assertFalse(notify_allowed)
 
+    def test_linkedin_missing_posted_at_is_quarantined(self) -> None:
+        job = JobRecord(
+            source="linkedin",
+            external_id="li-missing-posted-at-1",
+            url="https://www.linkedin.com/jobs/view/4310239488",
+            title="Machine Learning Co-Op (Fall 2026)",
+            company="Hendrickson",
+            location="United States",
+            is_internship=True,
+            posted_at=None,
+            description="Machine learning co-op with Python and SQL.",
+            ingested_at=datetime.now(timezone.utc).isoformat(),
+            source_metadata={
+                "detail_fetch_attempted": True,
+                "detail_quality_status": "detail_complete",
+                "accepting_applications": True,
+            },
+        )
+        status, reasons, notify_allowed = _evaluate_source_quality(job)
+        self.assertEqual(status, "missing_posted_at")
+        self.assertEqual(reasons, ["linkedin_missing_posted_at"])
+        self.assertFalse(notify_allowed)
+
     def test_query_level_run_logs_record_linkedin_search_url_stats(self) -> None:
         payload = [
             {

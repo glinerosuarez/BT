@@ -8,6 +8,7 @@ It also includes a tailoring module for job-specific artifacts and an adapter-ba
 
 - Pulls postings from multi-source connectors (`Arbeitnow`, `Remotive`, `The Muse`, `Greenhouse`, `Lever`, `RSS`, `Ashby`, optional public GitHub internship repos).
 - Supports an optional logged-in `Handshake` browser automation source for personal account searches.
+- Supports an optional logged-in `Interstride` browser automation source for student-account searches.
 - Supports optional keyed connectors (`USAJobs`, `Adzuna`) when credentials are provided.
 - Loads large default ATS/RSS source lists from `job_hunter/data/*.txt` (with env overrides).
 - Normalizes jobs into a unified schema.
@@ -64,6 +65,13 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `JOB_HUNTER_HANDSHAKE_SEARCH_URLS` accepts a comma-separated list of quoted URLs in `.env`.
 - Handshake source quality depends heavily on the search URLs you give it. Broad searches like `data` tend to surface many adjacent non-target internships.
 
+## Interstride usage
+
+- Bootstrap the saved browser session once:
+  - `python -m job_hunter.interstride_login`
+- Set `JOB_HUNTER_SOURCE_INTERSTRIDE=true` in `.env` after logging in.
+- `JOB_HUNTER_INTERSTRIDE_SEARCH_URLS` accepts comma-separated Interstride search URLs. The default is `https://student.interstride.com/jobs/search`.
+
 ## CLI entrypoints
 
 - `python -m job_hunter.run_once`
@@ -72,6 +80,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 - `python -m job_hunter.funnel_report`
 - `python -m job_hunter.funnel_report --format json`
 - `python -m job_hunter.handshake_login`
+- `python -m job_hunter.interstride_login`
 - `python -m job_hunter.tailor_jobs generate --job-id N --profile default`
 - `python -m job_hunter.tailor_jobs batch --profile default --limit 10`
 - `python -m job_hunter.tailor_jobs list --limit 20`

@@ -35,6 +35,7 @@ from job_hunter.sources import (
     ArbeitnowSource,
     GithubRepoSource,
     HandshakeSource,
+    InterstrideSource,
     GreenhouseSource,
     LeverSource,
     LinkedInSource,
@@ -213,6 +214,18 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 page_timeout_seconds=settings.linkedin_page_timeout_seconds,
                 max_posting_age_days=settings.max_posting_age_days,
                 fetch_details=settings.linkedin_fetch_details,
+            )
+        )
+    if settings.use_interstride and settings.interstride_search_urls:
+        sources.append(
+            InterstrideSource(
+                search_urls=settings.interstride_search_urls,
+                profile_dir=settings.interstride_profile_dir,
+                headless=settings.interstride_headless,
+                max_results=settings.interstride_max_results,
+                page_timeout_seconds=settings.interstride_page_timeout_seconds,
+                max_posting_age_days=settings.max_posting_age_days,
+                fetch_details=settings.interstride_fetch_details,
             )
         )
 
@@ -636,6 +649,8 @@ def _evaluate_source_quality(job: JobRecord) -> tuple[str, list[str], bool]:
         accepting_applications = job.source_metadata.get("accepting_applications", True)
         if accepting_applications is False:
             return "closed", ["linkedin_closed"], False
+        if not str(job.posted_at or "").strip():
+            return "missing_posted_at", ["linkedin_missing_posted_at"], False
         return "ok", [], True
 
     if job.source != "handshake":

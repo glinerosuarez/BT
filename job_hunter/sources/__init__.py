@@ -5,6 +5,7 @@ from job_hunter.sources.base import SourceConnector
 from job_hunter.sources.greenhouse import GreenhouseSource
 from job_hunter.sources.github_repo import GithubRepoSource
 from job_hunter.sources.handshake import HandshakeSource
+from job_hunter.sources.interstride import InterstrideSource
 from job_hunter.sources.lever import LeverSource
 from job_hunter.sources.linkedin import LinkedInSource
 from job_hunter.sources.remotive import RemotiveSource
@@ -20,6 +21,7 @@ __all__ = [
     "GreenhouseSource",
     "GithubRepoSource",
     "HandshakeSource",
+    "InterstrideSource",
     "LeverSource",
     "LinkedInSource",
     "RemotiveSource",

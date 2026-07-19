@@ -117,6 +117,27 @@ Acerca de la empresa
 Core & Main is a leader in advancing reliable infrastructure.
 """
 
+SPANISH_LEADING_NOISE_DETAIL_TEXT = """0 notificaciones
+Ir a contenido principal
+Ir a al margen
+Ir a pie de página
+Inicio
+Mi red
+Empleos
+Mensajes
+Notificaciones
+Más
+Para negocios
+Learning
+First Solar
+AI Intern (Fall 2026)
+Perrysburg, OH
+Publicado hace 5 días
+Acerca del empleo
+Build data pipelines and machine learning models with Python and SQL.
+The fall internship can last up to 3 months.
+"""
+
 ENGLISH_LEADING_NOISE_DETAIL_TEXT = """Skip to primary content
 Skip to aside
 Jobs
@@ -334,6 +355,15 @@ class LinkedInSourceTests(unittest.TestCase):
         self.assertIn("machine learning solutions", parsed["description"])
         self.assertNotIn("0 notifications", parsed["description"])
 
+    def test_parse_detail_text_strips_spanish_navigation_noise(self) -> None:
+        parsed = _parse_detail_text(SPANISH_LEADING_NOISE_DETAIL_TEXT)
+        self.assertEqual(parsed["company"], "First Solar")
+        self.assertEqual(parsed["title"], "AI Intern (Fall 2026)")
+        self.assertEqual(parsed["location"], "Perrysburg, OH")
+        self.assertEqual(parsed["posted_line"], "Publicado hace 5 días")
+        self.assertIn("data pipelines", parsed["description"])
+        self.assertNotIn("0 notificaciones", parsed["description"])
+
     def test_parse_detail_text_strips_english_skip_navigation_noise(self) -> None:
         parsed = _parse_detail_text(ENGLISH_LEADING_NOISE_DETAIL_TEXT)
         self.assertEqual(parsed["company"], "LinkedIn")
@@ -521,6 +551,22 @@ Compartido hace 12 horas
             detail_fetch_attempted=False,
         )
         self.assertIsNone(row)
+
+    def test_parse_detail_text_finds_reposted_line_beyond_initial_header_slot(self) -> None:
+        parsed = _parse_detail_text(
+            """Hendrickson
+Machine Learning Co-Op (Fall 2026)
+Canton, Ohio, United States
+Benefits found in job post
+401(k)
+Vision insurance
+Reposted 12 hours ago
+About the job
+Build machine learning and analytics solutions with Python and SQL.
+"""
+        )
+        self.assertTrue(parsed["posted_at"])
+        self.assertTrue(parsed["is_reposted"])
 
     def test_relative_age_to_iso(self) -> None:
         self.assertIsNotNone(_relative_age_to_iso("Reposted 2 days ago"))
