@@ -1,84 +1,22 @@
 from __future__ import annotations
 
 import logging
-import re
-from datetime import datetime, timedelta, timezone
-from hashlib import sha1
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urlparse
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from job_hunter.sources.base import SourceConnector
 
 LOG = logging.getLogger(__name__)
 
-JOB_CANDIDATES_SCRIPT = """
-() => {
-  const seen = new Set();
-  const rows = [];
-  for (const anchor of Array.from(document.querySelectorAll('a[href*="/jobs/detail/"]'))) {
-    const url = anchor.href || '';
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    let container = anchor;
-    for (let depth = 0; depth < 5 && container.parentElement; depth += 1) {
-      const parent = container.parentElement;
-      const text = (parent.innerText || '').trim();
-      if (text && text.length <= 3000) container = parent;
-      else break;
-    }
-    const text = (container.innerText || anchor.innerText || '').trim();
-    if (text) rows.push({ url, text });
-  }
-  return rows;
-}
-"""
-
-DETAIL_TEXT_SCRIPT = """
-() => {
-  let best = '';
-  for (const node of Array.from(document.querySelectorAll('main, article, section, div'))) {
-    const text = (node.innerText || '').trim();
-    if (text.length < 120) continue;
-    if (!/job description|description|responsibilities|qualifications/i.test(text)) continue;
-    if (text.length > best.length) best = text;
-  }
-  return best;
-}
-"""
-
-EXTERNAL_APPLY_URL_SCRIPT = """
-() => {
-  for (const node of Array.from(document.querySelectorAll('a[href]'))) {
-    const text = (node.innerText || node.getAttribute('aria-label') || '').trim().toLowerCase();
-    if (text === 'apply' || text === 'apply now' || text === 'apply for this job') return node.href || '';
-  }
-  return '';
-}
-"""
-
-RELATIVE_AGE_RE = re.compile(
-    r"\b(?:posted\s+)?(\d+)\s*(hours?|hrs?|hr|days?|weeks?|wks?|wk|months?|mos?|mo)\s+ago\b",
-    re.IGNORECASE,
-)
-AGE_LINE_RE = re.compile(r"\b(?:posted\s+)?\d+\s*(?:hours?|hrs?|hr|days?|weeks?|wks?|wk|months?|mos?|mo)\s+ago\b", re.IGNORECASE)
-LOCATION_RE = re.compile(r"\b(remote|hybrid|on-?site|united states|[A-Za-z .'-]+,\s*[A-Z]{2})\b", re.IGNORECASE)
-DETAIL_MARKERS = ("job description", "description", "about the job", "responsibilities")
-DETAIL_STOP_MARKERS = ("qualifications", "benefits", "about the company", "similar jobs", "report this job")
-NOISE_LINES = {
-    "jobs",
-    "job search",
-    "save",
-    "apply",
-    "apply now",
-    "view job",
-    "job details",
-}
+API_URL = "https://web.production.interstride.com/api/v1/jobs/search"
+BASE_SEARCH_URL = "https://student.interstride.com/jobs/search"
 
 
 class InterstrideSource(SourceConnector):
+    """Fetch structured Interstride results through the authenticated web client API."""
+
     def __init__(
         self,
         search_urls: list[str],
@@ -111,9 +49,14 @@ class InterstrideSource(SourceConnector):
                 context.set_default_timeout(self.page_timeout_seconds * 1000)
                 context.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
                 page = context.pages[0] if context.pages else context.new_page()
+                page.goto(BASE_SEARCH_URL, wait_until="domcontentloaded")
+                page.wait_for_timeout(1000)
+                _raise_for_auth_wall(page)
+
                 rows: list[dict] = []
                 for search_url in self.search_urls:
-                    rows.extend(self._fetch_search_page(page, search_url))
+                    items = self._fetch_api_page(page, search_url)
+                    rows.extend(_build_row(item, search_url) for item in items[: self.max_results])
                 self._fetch_meta = {"configured_query_keys": list(self.search_urls)}
                 return _dedupe_rows(rows)
             finally:
@@ -122,165 +65,113 @@ class InterstrideSource(SourceConnector):
     def get_fetch_meta(self) -> dict[str, object]:
         return dict(self._fetch_meta)
 
-    def _fetch_search_page(self, page, search_url: str) -> list[dict]:
-        page.goto(search_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(2500)
-        _raise_for_auth_wall(page)
-        candidates = page.evaluate(JOB_CANDIDATES_SCRIPT) or []
-        rows: list[dict] = []
-        for candidate in candidates[: self.max_results]:
-            if not isinstance(candidate, dict):
-                continue
-            card = _parse_card(str(candidate.get("text") or ""), str(candidate.get("url") or ""))
-            if not card["title"] or not card["company"] or not card["url"]:
-                continue
-            if _is_older_than_lookback(card["posted_at"], self.max_posting_age_days):
-                continue
-            detail_text = ""
-            external_apply_url = ""
-            if self.fetch_details:
-                detail_text, external_apply_url = self._fetch_detail(page.context, card["url"])
-            rows.append(_build_row(card, detail_text, search_url, self.fetch_details, external_apply_url))
-        return rows
+    def _fetch_api_page(self, page, search_url: str) -> list[dict]:
+        payload = _search_payload(search_url)
+        response = page.evaluate(
+            """async ({ url, payload }) => {
+              const token = localStorage.getItem('authToken');
+              if (!token) return { status: 401, error: 'missing_auth_token', jobs: [] };
+              const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json;charset=utf-8',
+                  'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify(payload),
+              });
+              const body = await response.json().catch(() => ({}));
+              return { status: response.status, error: body?.error || '', jobs: body?.data?.jobs || [] };
+            }""",
+            {"url": API_URL, "payload": payload},
+        )
+        if not isinstance(response, dict) or int(response.get("status") or 0) != 200:
+            raise RuntimeError(f"interstride_search_failed status={response.get('status') if isinstance(response, dict) else 'unknown'}")
+        jobs = response.get("jobs")
+        if not isinstance(jobs, list):
+            return []
+        return [item for item in jobs if isinstance(item, dict)]
 
-    def _fetch_detail(self, context, job_url: str) -> tuple[str, str]:
-        detail_page = context.new_page()
-        detail_page.set_default_timeout(self.page_timeout_seconds * 1000)
-        detail_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
-        try:
-            detail_page.goto(job_url, wait_until="domcontentloaded")
-            detail_page.wait_for_timeout(1500)
-            _raise_for_auth_wall(detail_page)
-            text = str(detail_page.evaluate(DETAIL_TEXT_SCRIPT) or "")
-            if not text.strip():
-                text = str(detail_page.locator("body").inner_text() or "")
-            external_apply_url = str(detail_page.evaluate(EXTERNAL_APPLY_URL_SCRIPT) or "")
-            return text, _safe_external_apply_url(external_apply_url)
-        except PlaywrightTimeoutError:
-            LOG.warning("interstride_detail_timeout url=%s", job_url)
-            return "", ""
-        finally:
-            detail_page.close()
+
+def _search_payload(search_url: str) -> dict[str, object]:
+    query = parse_qs(urlparse(search_url).query)
+    keyword = (query.get("keyword") or query.get("query") or [""])[0].strip()
+    payload: dict[str, object] = {
+        "sort": "date",
+        "job_region": "us",
+        "country": "us",
+        "visa": "all_sponsored_companies",
+        "job_type": ["internship"],
+        "job_search_type": "approx",
+        "page": 1,
+    }
+    if keyword:
+        payload["search"] = keyword
+        payload["keyword"] = keyword
+    return payload
 
 
 def _raise_for_auth_wall(page) -> None:
     url = str(page.url or "").lower()
     if "/login" in url or "/sign-in" in url:
         raise RuntimeError("Interstride session not authenticated. Run `python -m job_hunter.interstride_login` first.")
-    text = str(page.locator("body").inner_text() or "").lower()
-    if "sign in to interstride" in text or "log in to interstride" in text:
+    if not page.evaluate("Boolean(localStorage.getItem('authToken'))"):
         raise RuntimeError("Interstride session not authenticated. Run `python -m job_hunter.interstride_login` first.")
 
 
-def _parse_card(text: str, url: str) -> dict[str, str]:
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    lines = [line for line in lines if line.lower() not in NOISE_LINES]
-    title = lines[0] if lines else ""
-    company = lines[1] if len(lines) > 1 else ""
-    location = next((line for line in lines[2:] if LOCATION_RE.search(line)), "")
-    age_line = next((line for line in lines if AGE_LINE_RE.search(line)), "")
-    return {
-        "title": title,
-        "company": company,
-        "location": location,
-        "posted_at": _relative_age_to_iso(age_line) or "",
-        "url": _canonical_job_url(url),
+def _build_row(item: dict, search_url: str) -> dict:
+    title = str(item.get("job_title") or "").strip()
+    company = str(item.get("company") or "").strip()
+    location = str(item.get("formatted_location_full") or item.get("formatted_location") or "").strip()
+    job_url = str(item.get("url") or "").strip()
+    external_id = str(item.get("id") or item.get("job_key") or job_url).strip()
+    summary = str(item.get("snippet") or item.get("ai_summary") or "").strip()
+    sponsorship_available = bool(item.get("visa_sponsorship"))
+    source_metadata: dict[str, object] = {
+        "detail_fetch_attempted": False,
+        "detail_quality_status": "summary_only",
+        "description_provenance": "interstride_summary",
+        "interstride_job_key": str(item.get("job_key") or ""),
+        "interstride_source": str(item.get("source") or ""),
+        "visa_sponsorship": sponsorship_available,
     }
-
-
-def _extract_description(detail_text: str) -> str:
-    lines = [line.strip() for line in detail_text.splitlines() if line.strip()]
-    start = 0
-    for index, line in enumerate(lines):
-        if line.lower() in DETAIL_MARKERS:
-            start = index + 1
-            break
-    kept: list[str] = []
-    for line in lines[start:]:
-        if line.lower() in DETAIL_STOP_MARKERS:
-            break
-        if line.lower() not in NOISE_LINES:
-            kept.append(line)
-    return "\n".join(kept).strip()
-
-
-def _build_row(card: dict[str, str], detail_text: str, search_url: str, detail_fetch_attempted: bool, external_apply_url: str) -> dict:
-    description = _extract_description(detail_text) or card["title"]
-    job_url = card["url"]
-    external_id = _job_id(job_url) or sha1(job_url.encode("utf-8")).hexdigest()
-    detail_status = "detail_complete" if len(description) >= 200 else ("detail_partial" if detail_text else "card_only")
-    metadata: dict[str, object] = {
-        "detail_fetch_attempted": detail_fetch_attempted,
-        "detail_quality_status": detail_status,
-        "resolved_job_url": job_url,
-    }
-    if external_apply_url:
-        metadata["external_apply_url"] = external_apply_url
+    if job_url:
+        source_metadata["external_apply_url"] = job_url
+    description = summary or "Interstride listing without a full job description."
+    if sponsorship_available:
+        description = f"Sponsorship available. {description}"
     return {
         "source": "interstride",
         "source_detail": search_url,
-        "source_metadata": metadata,
+        "source_metadata": source_metadata,
         "external_id": external_id,
-        "url": job_url,
-        "title": card["title"],
-        "company": card["company"],
-        "location": card["location"],
-        "posted_at": card["posted_at"] or None,
+        "url": job_url or BASE_SEARCH_URL,
+        "title": title,
+        "company": company,
+        "location": location,
+        "posted_at": str(item.get("date") or "").strip() or None,
         "description": description,
         "skills": [],
     }
 
 
-def _relative_age_to_iso(value: str) -> str | None:
-    match = RELATIVE_AGE_RE.search(value)
-    if not match:
-        return None
-    amount = int(match.group(1))
-    unit = match.group(2).lower()
-    if unit.startswith(("hour", "hr")):
-        delta = timedelta(hours=amount)
-    elif unit.startswith("day"):
-        delta = timedelta(days=amount)
-    elif unit.startswith(("week", "wk")):
-        delta = timedelta(weeks=amount)
-    else:
-        delta = timedelta(days=30 * amount)
-    return (datetime.now(timezone.utc) - delta).isoformat()
-
-
-def _is_older_than_lookback(posted_at: str, max_days: int) -> bool:
-    if not posted_at:
-        return False
-    try:
-        return datetime.fromisoformat(posted_at).astimezone(timezone.utc) < datetime.now(timezone.utc) - timedelta(days=max_days)
-    except ValueError:
-        return False
-
-
-def _canonical_job_url(value: str) -> str:
-    if not value:
-        return ""
-    return urljoin("https://student.interstride.com", value)
-
-
-def _job_id(url: str) -> str:
-    match = re.search(r"/jobs/(?:detail|job-details)/([^/?#]+)", urlparse(url).path)
-    return match.group(1) if match else ""
-
-
-def _safe_external_apply_url(url: str) -> str:
-    if not url:
-        return ""
-    return "" if "student.interstride.com" in urlparse(url).netloc else url
-
-
 def _dedupe_rows(rows: list[dict]) -> list[dict]:
-    seen: set[str] = set()
-    result: list[dict] = []
+    best_by_key: dict[str, dict] = {}
     for row in rows:
-        key = str(row.get("external_id") or row.get("url") or "")
-        if not key or key in seen:
+        key = "|".join(
+            [
+                _normalized_key_part(row.get("company")),
+                _normalized_key_part(row.get("title")),
+                _normalized_key_part(row.get("location")),
+                str(row.get("posted_at") or "")[:10],
+            ]
+        )
+        if not key.strip("|"):
             continue
-        seen.add(key)
-        result.append(row)
-    return result
+        current = best_by_key.get(key)
+        if current is None or len(str(row.get("description") or "")) > len(str(current.get("description") or "")):
+            best_by_key[key] = row
+    return list(best_by_key.values())
+
+
+def _normalized_key_part(value: object) -> str:
+    return " ".join(str(value or "").lower().split())
