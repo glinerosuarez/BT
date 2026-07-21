@@ -29,6 +29,7 @@ QUANT_RESEARCH_PROFILE_PENALTY_SCALE = 0.45
 QUANT_RESEARCH_TITLE_PENALTY = 0.22
 ANALYST_PROGRAM_TITLE_PENALTY = 0.16
 PRODUCT_MANAGEMENT_TITLE_PENALTY = 0.28
+RESEARCH_SCIENTIST_TITLE_PENALTY = 0.20
 
 
 @dataclass(frozen=True, slots=True)
@@ -596,7 +597,7 @@ def _research_heaviness_adjustment(
         penalty += PRODUCT_MANAGEMENT_TITLE_PENALTY
         reasons.append("semantic_penalty_product_management_title")
     if "research scientist" in title_blob:
-        penalty += 0.18
+        penalty += RESEARCH_SCIENTIST_TITLE_PENALTY
         reasons.append("semantic_penalty_research_scientist_title")
 
     return min(penalty, 0.6), reasons

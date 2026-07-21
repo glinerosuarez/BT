@@ -259,6 +259,31 @@ class Stage2SemanticTests(unittest.TestCase):
         self.assertIn("semantic_penalty_research_background", result.semantic_adjustment_reason_codes)
         self.assertEqual(result.semantic_match_label, "reject")
 
+    def test_semantic_scorer_rejects_research_scientist_title(self) -> None:
+        backend = FakeEmbeddingBackend()
+        scorer = SemanticShadowScorer(backend=backend)
+        job = JobRecord(
+            source="fake",
+            external_id="research-scientist",
+            url="https://example.com/research-scientist",
+            title="Research Scientist Intern, AI Alignment",
+            company="Example",
+            location="US",
+            is_internship=True,
+            posted_at="2026-07-20",
+            description=(
+                "Research Scientist Intern focused on AI Alignment, developing state-of-the-art algorithms "
+                "and systems. Requires deep experience in machine learning and deep learning."
+            ),
+            ingested_at="2026-07-20T00:00:00+00:00",
+        )
+
+        result = scorer.score(job)
+
+        self.assertEqual(result.semantic_match_label, "reject")
+        self.assertEqual(result.semantic_profile_id, "no_positive_match")
+        self.assertIn("semantic_penalty_research_scientist_title", result.semantic_match_reason_codes)
+
     def test_semantic_scorer_penalizes_business_analyst_consulting_match(self) -> None:
         backend = FakeEmbeddingBackend()
         scorer = SemanticShadowScorer(backend=backend)
