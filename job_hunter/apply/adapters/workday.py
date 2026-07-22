@@ -26,6 +26,18 @@ _FORM_STAGE_MARKERS = (
     "review",
 )
 _EMPTY_SELECT_VALUES = {"", "select...", "select", "select one", "choose one", "choose an option"}
+_US_STATE_NAMES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
+    "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware", "FL": "Florida", "GA": "Georgia",
+    "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa",
+    "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi", "MO": "Missouri",
+    "MT": "Montana", "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey",
+    "NM": "New Mexico", "NY": "New York", "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio",
+    "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont",
+    "VA": "Virginia", "WA": "Washington", "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming",
+}
 
 
 def _canonical_country(country: str) -> str:
@@ -127,6 +139,8 @@ class WorkdayAdapter:
 
     def _submit_form(self, *, page, resolver, context: AdapterContext) -> SubmitResult:
         steps: list[StepSnapshot] = []
+        last_form_signature: tuple[tuple[str, ...], ...] | None = None
+        repeated_form_signature = 0
         for _ in range(20):
             self._wait_for_render(page)
             confirmation = self._extract_confirmation(page)
@@ -158,6 +172,34 @@ class WorkdayAdapter:
                 )
             if not self._is_form_stage(page):
                 break
+            form_signature = self._form_content_signature(page)
+            if form_signature and form_signature == last_form_signature:
+                repeated_form_signature += 1
+            else:
+                last_form_signature = form_signature or None
+                repeated_form_signature = 0
+            if repeated_form_signature >= 2:
+                invalid_fields = [
+                    {
+                        "field_name": str(field.get("field_name") or ""),
+                        "field_type": str(field.get("field_type") or ""),
+                        "question_text": str(field.get("question_text") or ""),
+                    }
+                    for field in self._extract_fields(page)
+                    if bool(field.get("required")) and bool(field.get("invalid"))
+                ]
+                return self._blocked(
+                    "manual_checkpoint_required",
+                    page,
+                    question_text="Workday did not advance after repeated attempts on the same form step.",
+                    details={
+                        "checkpoint": "workday_no_progress",
+                        "checkpoint_label": "Workday form did not advance",
+                        "invalid_fields": invalid_fields,
+                        "current_url": str(getattr(page, "url", "") or ""),
+                    },
+                    steps=steps,
+                )
             blocker, filled_count = self._fill_required_fields(page=page, resolver=resolver, context=context, steps=steps)
             if blocker is not None:
                 return blocker
@@ -423,6 +465,9 @@ class WorkdayAdapter:
             if "/apply/applymanually" in current_url:
                 if self._has_account_gate(page) or self._has_email_verification_gate(page) or self._extract_confirmation(page):
                     return
+                if self._is_apply_flow_loading(page):
+                    self._wait(page, 1000)
+                    continue
                 if self._is_form_stage(page):
                     signature = self._form_content_signature(page)
                     if signature:
@@ -440,6 +485,9 @@ class WorkdayAdapter:
                     return
                 if self._has_account_gate(page) or self._has_email_verification_gate(page) or self._extract_confirmation(page):
                     return
+                if self._is_apply_flow_loading(page):
+                    self._wait(page, 1000)
+                    continue
                 if self._is_form_stage(page):
                     signature = self._form_content_signature(page)
                     if signature:
@@ -457,6 +505,27 @@ class WorkdayAdapter:
             if text and "loading" not in text and "follow us" not in text:
                 return
             self._wait(page, 1000)
+
+    def _is_apply_flow_loading(self, page) -> bool:
+        """Workday renders form controls before its loading veil is removed."""
+        if not hasattr(page, "evaluate"):
+            return False
+        try:
+            return bool(
+                page.evaluate(
+                    """
+                    () => {
+                      const el = document.querySelector('[data-automation-id="applyFlowLoadingPage"]');
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      const rect = el.getBoundingClientRect();
+                      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+                    }
+                    """
+                )
+            )
+        except Exception:
+            return False
 
     def _form_content_signature(self, page) -> tuple[tuple[str, ...], ...]:
         fields = self._extract_fields(page)
@@ -549,12 +618,21 @@ class WorkdayAdapter:
                       const pushField = (el, fieldType, extra = {}) => {
                         const allowHidden = extra.allowHidden === true;
                         if ((!allowHidden && !visible(el)) || el.disabled) return;
+                        const formField = el.closest('[data-automation-id^="formField-"]');
                         counter += 1;
                         const marker = `jobhunter-workday-${counter}`;
                         el.setAttribute('data-jobhunter-field-index', marker);
                         let currentValue = '';
                         if (fieldType === 'checkbox') {
                           currentValue = el.checked ? 'Yes' : '';
+                        } else if (fieldType === 'prompt-input') {
+                          const container = el.closest('[data-automation-id="multiSelectContainer"]');
+                          currentValue = normalize(
+                            container?.querySelector('[data-automation-id="selectedItem"]')?.textContent ||
+                            container?.querySelector('[data-automation-id="promptSelectionLabel"]')?.textContent ||
+                            el.value ||
+                            ''
+                          );
                         } else if (fieldType === 'listbox-button') {
                           currentValue = normalize(el.innerText || el.textContent || el.getAttribute('value') || '');
                         } else if (fieldType === 'select-one') {
@@ -564,13 +642,25 @@ class WorkdayAdapter:
                         } else {
                           currentValue = normalize(el.value || '');
                         }
+                        if (Object.prototype.hasOwnProperty.call(extra, 'currentValue')) {
+                          currentValue = normalize(extra.currentValue || '');
+                        }
                         fields.push({
                           selector: `[data-jobhunter-field-index="${marker}"]`,
                           field_name: el.getAttribute('name') || el.getAttribute('id') || questionTextFor(el),
                           field_type: fieldType,
                           question_text: questionTextFor(el),
-                          required: extra.required === true || el.required || el.getAttribute('aria-required') === 'true',
+                          required:
+                            extra.required === true ||
+                            el.required ||
+                            el.getAttribute('aria-required') === 'true' ||
+                            formField?.querySelector('abbr') !== null ||
+                            formField?.querySelector('[data-automation-id="inputAlert"]') !== null,
                           current_value: currentValue,
+                          container_id: extra.containerId || '',
+                          invalid:
+                            el.getAttribute('aria-invalid') === 'true' ||
+                            formField?.querySelector('[data-automation-id="inputAlert"]') !== null,
                         });
                       };
                       const pushChoiceInputs = (inputs, type, root = null) => {
@@ -625,11 +715,17 @@ class WorkdayAdapter:
                           const uploadContainer = el.closest('[data-automation-id="attachments-FileUpload"]');
                           const row = el.closest('[data-automation-id^="formField-"]') || uploadContainer;
                           if (!row || !visible(row)) continue;
+                          const uploadedNames = Array.from(
+                            uploadContainer?.querySelectorAll('[data-automation-id="file-upload-item-name"]') || []
+                          ).map((node) => normalize(node.textContent || '')).filter(Boolean).join(', ');
                           const required =
                             row.querySelector('abbr') !== null ||
                             uploadContainer?.getAttribute('aria-required') === 'true' ||
                             row.querySelector('[data-automation-id="inputAlert"]') !== null;
-                          pushField(el, 'file', { allowHidden: true, required });
+                          pushField(el, 'file', { allowHidden: true, required, currentValue: uploadedNames });
+                          const fileField = fields[fields.length - 1];
+                          fileField.question_text = normalize(row.querySelector('label')?.textContent || 'Resume/CV');
+                          fileField.field_name = el.getAttribute('name') || el.getAttribute('id') || 'resumeAttachments';
                           continue;
                         }
                         if (el.tagName.toLowerCase() === 'select') {
@@ -638,6 +734,14 @@ class WorkdayAdapter:
                         }
                         if (el.getAttribute('role') === 'combobox') {
                           pushField(el, 'select-one');
+                          continue;
+                        }
+                        const multiSelect = el.closest('[data-automation-id="multiSelectContainer"]');
+                        if (multiSelect) {
+                          pushField(el, 'prompt-input', {
+                            required: el.getAttribute('aria-required') === 'true',
+                            containerId: multiSelect.getAttribute('id') || '',
+                          });
                           continue;
                         }
                         if (!['', 'text', 'email', 'tel', 'number'].includes(type)) continue;
@@ -716,16 +820,18 @@ class WorkdayAdapter:
         if consent_blocker is not None:
             return consent_blocker, filled_count
         filled_count += consent_filled
-        for field in self._extract_fields(page):
+        fields = sorted(self._extract_fields(page), key=self._field_fill_priority)
+        for field in fields:
             question_text = str(field.get("question_text") or field.get("field_name") or "").strip()
             field_name = str(field.get("field_name") or "")
             field_type = str(field.get("field_type") or "text")
             required = bool(field.get("required", True))
             current_value = self._normalized_current_value(field_type=field_type, current_value=field.get("current_value"))
+            invalid = bool(field.get("invalid", False))
             if not required:
                 continue
             force_refresh = self._should_refresh_prefilled_value(field_name=field_name, question_text=question_text)
-            if current_value and not force_refresh:
+            if current_value and not force_refresh and not invalid:
                 continue
             if field_type == "file":
                 upload_path = context.cover_letter_pdf_path if "cover" in question_text.lower() else context.resume_pdf_path
@@ -786,17 +892,25 @@ class WorkdayAdapter:
                 continue
             try:
                 self._set_field(page, field, resolution.answer)
-            except Exception:
-                if field_type in {"listbox-button", "radio-group", "checkbox-group"}:
+            except Exception as exc:
+                if field_type in {"prompt-input", "listbox-button", "radio-group", "checkbox-group"}:
                     checkpoint = (
-                        "workday_required_listbox"
-                        if field_type == "listbox-button"
-                        else "workday_required_choice"
+                        "workday_required_prompt"
+                        if field_type == "prompt-input"
+                        else (
+                            "workday_required_listbox"
+                            if field_type == "listbox-button"
+                            else "workday_required_choice"
+                        )
                     )
                     checkpoint_label = (
-                        "Workday required dropdown"
-                        if field_type == "listbox-button"
-                        else "Workday required choice"
+                        "Workday required search selection"
+                        if field_type == "prompt-input"
+                        else (
+                            "Workday required dropdown"
+                            if field_type == "listbox-button"
+                            else "Workday required choice"
+                        )
                     )
                     return (
                         self._blocked(
@@ -811,6 +925,7 @@ class WorkdayAdapter:
                                 "field_name": field_name,
                                 "question_text": question_text,
                                 "expected_answer": resolution.answer,
+                                "error": str(exc),
                                 "current_url": str(getattr(page, "url", "") or ""),
                             },
                             steps=steps,
@@ -824,7 +939,7 @@ class WorkdayAdapter:
                         question_text=question_text,
                         field_name=field_name,
                         field_type=field_type,
-                        details={"answer": resolution.answer},
+                        details={"answer": resolution.answer, "error": str(exc)},
                         steps=steps,
                     ),
                     filled_count,
@@ -843,6 +958,16 @@ class WorkdayAdapter:
             )
             filled_count += 1
         return None, filled_count
+
+    def _field_fill_priority(self, field: dict[str, object]) -> int:
+        field_name = str(field.get("field_name") or "").strip().lower()
+        if field_name == "country":
+            return 0
+        if field_name == "countryregion":
+            return 1
+        if "countryphonecode" in field_name:
+            return 2
+        return 1
 
     def _fill_terms_consent_checkbox(self, *, page, steps: list[StepSnapshot]) -> tuple[SubmitResult | None, int]:
         if not hasattr(page, "locator"):
@@ -911,7 +1036,19 @@ class WorkdayAdapter:
             current_digits = "".join(ch for ch in current if ch.isdigit())
             desired_digits = "".join(ch for ch in desired if ch.isdigit())
             return bool(current_digits and desired_digits and current_digits == desired_digits)
+        if self._is_us_state_equivalent(
+            field_name=field_name,
+            current_value=current_value,
+            desired_value=desired_value,
+        ):
+            return True
         return current == desired
+
+    def _is_us_state_equivalent(self, *, field_name: str, current_value: str, desired_value: str) -> bool:
+        if field_name.strip().lower() != "countryregion":
+            return False
+        expected_name = _US_STATE_NAMES.get(desired_value.strip().upper())
+        return bool(expected_name and current_value.strip().lower() == expected_name.lower())
 
     def _normalized_current_value(self, *, field_type: str, current_value: object) -> str:
         raw = str(current_value or "").strip()
@@ -921,6 +1058,52 @@ class WorkdayAdapter:
 
     def _normalize_option_text(self, value: str) -> str:
         return " ".join((value or "").strip().lower().split())
+
+    def _listbox_option_match_score(self, *, field_name: str, target: str, candidate: str) -> int:
+        normalized_target = self._normalize_option_text(target)
+        normalized_candidate = self._normalize_option_text(candidate)
+        if not normalized_target or not normalized_candidate:
+            return 0
+        if normalized_candidate == normalized_target:
+            return 3
+        if self._is_us_state_equivalent(field_name=field_name, current_value=candidate, desired_value=target):
+            return 2
+        if self._is_effectively_same_value(
+            field_name=field_name,
+            current_value=candidate,
+            desired_value=target,
+        ):
+            return 2
+        if normalized_target in normalized_candidate or normalized_candidate in normalized_target:
+            return 1
+        return 0
+
+    def _prompt_option_match_score(
+        self,
+        *,
+        field_name: str,
+        target: str,
+        candidate: str,
+        selected_country: str = "",
+    ) -> int:
+        score = self._listbox_option_match_score(
+            field_name=field_name,
+            target=target,
+            candidate=candidate,
+        )
+        if "countryphonecode" not in field_name.strip().lower() or not selected_country.strip():
+            return score
+        candidate_country = candidate.rsplit("(", 1)[0].strip()
+        if (
+            _canonical_country(candidate_country) == _canonical_country(selected_country)
+            and self._is_effectively_same_value(
+                field_name=field_name,
+                current_value=candidate,
+                desired_value=target,
+            )
+        ):
+            return 4
+        return score
 
     def _set_field(self, page, field: dict[str, object], value: str) -> None:
         setter = getattr(page, "set_workday_field", None)
@@ -932,47 +1115,134 @@ class WorkdayAdapter:
         if not selector or not hasattr(page, "locator"):
             raise RuntimeError("missing selector")
         if field_type == "file":
+            successful_uploads = page.locator('[data-automation-id="file-upload-successful"]')
+            previous_success_count = successful_uploads.count()
             page.locator(selector).first.set_input_files(value)
-            self._wait(page, 500)
+            for _ in range(60):
+                if successful_uploads.count() > previous_success_count:
+                    return
+                self._wait(page, 250)
+            raise RuntimeError("Workday file upload did not reach a successful state")
             return
         if field_type == "text":
             page.locator(selector).first.fill(value)
             self._wait(page, 200)
+            return
+        if field_type == "prompt-input":
+            locator = page.locator(selector).first
+            locator.fill("")
+            locator.fill(value)
+            self._wait(page, 500)
+            options = page.locator('[role="option"], [data-automation-id="promptOption"]')
+            normalized_target = self._normalize_option_text(value)
+            option_locator = None
+            best_match_score = 0
+            field_name = str(field.get("field_name") or "")
+            selected_country = ""
+            if "countryphonecode" in field_name.lower():
+                try:
+                    selected_country = self._listbox_current_value(
+                        page,
+                        {"field_name": "country", "selector": 'button[name="country"]'},
+                    )
+                except Exception:
+                    selected_country = ""
+            for _ in range(20):
+                for index in range(options.count()):
+                    candidate = options.nth(index)
+                    try:
+                        if not candidate.is_visible():
+                            continue
+                    except Exception:
+                        pass
+                    match_score = self._prompt_option_match_score(
+                        field_name=field_name,
+                        target=value,
+                        candidate=str(candidate.inner_text() or ""),
+                        selected_country=selected_country,
+                    )
+                    if match_score > best_match_score:
+                        option_locator = candidate
+                        best_match_score = match_score
+                    if match_score == 4:
+                        break
+                if option_locator is not None:
+                    break
+                self._wait(page, 150)
+            if option_locator is not None:
+                option_locator.click()
+            else:
+                locator.press("ArrowDown")
+                self._wait(page, 150)
+                locator.press("Enter")
+            self._wait(page, 300)
+            current_value = self._prompt_current_value(page, field)
+            if not current_value or self._prompt_is_invalid(page, field):
+                locator = page.locator(selector).first
+                locator.press("ArrowDown")
+                self._wait(page, 200)
+                locator.press("Enter")
+                self._wait(page, 300)
+                try:
+                    locator.press("Tab")
+                except Exception:
+                    pass
+            for _ in range(15):
+                current_value = self._prompt_current_value(page, field)
+                if current_value and not self._prompt_is_invalid(page, field):
+                    break
+                self._wait(page, 100)
+            if (
+                normalized_target not in self._normalize_option_text(current_value)
+                or self._prompt_is_invalid(page, field)
+            ):
+                raise RuntimeError(
+                    "prompt selection was not committed: "
+                    f"current={current_value!r}, desired={value!r}, "
+                    f"invalid={self._prompt_is_invalid(page, field)}"
+                )
             return
         if field_type == "listbox-button":
             locator = page.locator(selector).first
             try:
                 locator.click(force=True)
                 self._wait(page, 250)
-                option_selectors = '[role="option"], [data-automation-id="menuItem"], [data-automation-id="promptOption"]'
-                options = page.locator(option_selectors)
+                options = self._listbox_options(page, locator)
                 normalized_target = self._normalize_option_text(value)
-                exact_locator = None
-                fuzzy_locator = None
+                field_name = str(field.get("field_name") or "")
+                option_locator = None
+                best_match_score = 0
                 for index in range(options.count()):
                     candidate = options.nth(index)
                     candidate_text = self._normalize_option_text(candidate.inner_text())
                     if not candidate_text:
                         continue
-                    if candidate_text == normalized_target:
-                        exact_locator = candidate
+                    match_score = self._listbox_option_match_score(
+                        field_name=field_name,
+                        target=value,
+                        candidate=candidate_text,
+                    )
+                    if match_score > best_match_score:
+                        option_locator = candidate
+                        best_match_score = match_score
+                    if match_score == 3:
                         break
-                    if normalized_target in candidate_text or candidate_text in normalized_target:
-                        fuzzy_locator = fuzzy_locator or candidate
-                option_locator = exact_locator or fuzzy_locator
-                if option_locator is None:
-                    text_locator = page.locator(f'text="{value}"').first
-                    if text_locator.count() > 0:
-                        option_locator = text_locator
                 if option_locator is not None:
                     option_locator.click(force=True)
                     self._wait(page, 400)
+                    self._wait_for_render(page)
                     current_value = self._normalized_current_value(
                         field_type=field_type,
-                        current_value=page.locator(selector).first.inner_text(),
+                        current_value=self._listbox_current_value(page, field),
                     )
-                    if self._normalize_option_text(current_value) != normalized_target:
-                        raise RuntimeError("listbox selected unexpected value")
+                    if not self._is_effectively_same_value(
+                        field_name=field_name,
+                        current_value=current_value,
+                        desired_value=value,
+                    ):
+                        raise RuntimeError(
+                            f"listbox selected unexpected value: current={current_value!r}, desired={value!r}"
+                        )
                     self._wait(page, 400)
                     return
                 keyboard = getattr(page, "keyboard", None)
@@ -1007,7 +1277,7 @@ class WorkdayAdapter:
                     self._wait(page, 400)
                     return
             except Exception as exc:
-                raise RuntimeError("listbox selection failed") from exc
+                raise RuntimeError(f"listbox selection failed: {exc}") from exc
         if field_type == "checkbox":
             lowered = value.strip().lower()
             locator = page.locator(selector).first
@@ -1089,6 +1359,60 @@ class WorkdayAdapter:
             except Exception as exc:
                 raise RuntimeError("select failed") from exc
         raise RuntimeError(f"unsupported field type: {field_type}")
+
+    def _listbox_current_value(self, page, field: dict[str, object]) -> str:
+        """Read from a stable Workday selector after React replaces the opened button."""
+        field_name = str(field.get("field_name") or "").strip()
+        if field_name:
+            escaped_name = field_name.replace("\\", "\\\\").replace('"', '\\"')
+            stable_locator = page.locator(f'button[name="{escaped_name}"]').first
+            if stable_locator.count() > 0:
+                return str(stable_locator.inner_text() or "")
+        selector = str(field.get("selector") or "")
+        return str(page.locator(selector).first.inner_text() or "")
+
+    def _prompt_current_value(self, page, field: dict[str, object]) -> str:
+        container_id = str(field.get("container_id") or "").strip()
+        if not container_id:
+            return ""
+        escaped_id = container_id.replace("\\", "\\\\").replace('"', '\\"')
+        selected = page.locator(
+            f'[id="{escaped_id}"] [data-automation-id="selectedItem"]'
+        ).first
+        selected_text = str(selected.inner_text() or "") if selected.count() > 0 else ""
+        if selected_text.strip():
+            return selected_text
+        label = page.locator(
+            f'[id="{escaped_id}"] [data-automation-id="promptSelectionLabel"]'
+        ).first
+        label_text = str(label.inner_text() or "") if label.count() > 0 else ""
+        if label_text.strip():
+            return label_text
+        return ""
+
+    def _prompt_is_invalid(self, page, field: dict[str, object]) -> bool:
+        field_name = str(field.get("field_name") or "").strip()
+        if not field_name:
+            return False
+        escaped_name = field_name.replace("\\", "\\\\").replace('"', '\\"')
+        input_locator = page.locator(f'input[id="{escaped_name}"]').first
+        if input_locator.count() == 0:
+            return False
+        return str(input_locator.get_attribute("aria-invalid") or "").lower() == "true"
+
+    def _listbox_options(self, page, button_locator):
+        """Limit option matching to the menu controlled by the selected Workday field."""
+        option_selectors = '[role="option"], [data-automation-id="menuItem"], [data-automation-id="promptOption"]'
+        try:
+            controls_id = str(button_locator.get_attribute("aria-controls") or "").strip()
+        except Exception:
+            controls_id = ""
+        if controls_id:
+            escaped_id = controls_id.replace("\\", "\\\\").replace('"', '\\"')
+            scoped_options = page.locator(f'[id="{escaped_id}"] {option_selectors}')
+            if scoped_options.count() > 0:
+                return scoped_options
+        return page.locator(option_selectors)
 
     def _next_form_action(self, page) -> str:
         extractor = getattr(page, "extract_workday_navigation_action", None)

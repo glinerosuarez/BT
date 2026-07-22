@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -492,6 +493,10 @@ class ApplyJobsTests(unittest.TestCase):
             "No",
         )
         self.assertEqual(
+            resolver.resolve(question_text="Were you previously employed at DataRobot?", field_name="candidateIsPreviousWorker", field_type="radio-group").answer,
+            "No",
+        )
+        self.assertEqual(
             resolver.resolve(question_text="Phone Device Type", field_name="deviceType", field_type="select-one").answer,
             "Mobile",
         )
@@ -503,6 +508,53 @@ class ApplyJobsTests(unittest.TestCase):
             resolver.resolve(question_text="Phone Number*", field_name="phoneNumber", field_type="text").answer,
             "5550100",
         )
+        company = resolver.resolve(
+            question_text="Company*",
+            field_name="companyName",
+            field_type="text",
+        )
+        self.assertEqual(company.answer, "Example Co")
+        self.assertEqual(company.source, "structured:employment.current_company")
+        self.assertEqual(
+            resolver.resolve(
+                question_text="From*",
+                field_name="workExperience-6--startDate-dateSectionMonth-input",
+                field_type="text",
+            ).answer,
+            "1",
+        )
+        self.assertEqual(
+            resolver.resolve(
+                question_text="From*",
+                field_name="workExperience-6--startDate-dateSectionYear-input",
+                field_type="text",
+            ).answer,
+            str(datetime.now().year - 2),
+        )
+        self.assertEqual(
+            resolver.resolve(
+                question_text="To*",
+                field_name="workExperience-6--endDate-dateSectionMonth-input",
+                field_type="text",
+            ).answer,
+            str(datetime.now().month),
+        )
+        work_auth = resolver.resolve_for_portal(
+            portal="workday",
+            question_text="Are you legally permitted to work in the country where this job is located?*",
+            field_name="work-authorization",
+            field_type="listbox-button",
+        )
+        self.assertEqual(work_auth.answer, "Yes")
+        self.assertEqual(work_auth.source, "capability:workday:work_auth_us:safe_autofill")
+        sponsorship = resolver.resolve_for_portal(
+            portal="workday",
+            question_text="Will you now or in the future require DataRobot sponsorship for a visa or work permit in the country where the job is located?*",
+            field_name="future-sponsorship",
+            field_type="listbox-button",
+        )
+        self.assertEqual(sponsorship.answer, "No")
+        self.assertEqual(sponsorship.source, "capability:workday:future_sponsorship_us:safe_autofill")
 
     def test_workday_country_equivalence_treats_united_states_of_america_as_united_states(self) -> None:
         adapter = WorkdayAdapter()
@@ -512,6 +564,80 @@ class ApplyJobsTests(unittest.TestCase):
                 current_value="United States of America",
                 desired_value="United States",
             )
+        )
+
+    def test_workday_country_listbox_prefers_equivalent_country_over_partial_match(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertGreater(
+            adapter._listbox_option_match_score(
+                field_name="country",
+                target="United States",
+                candidate="United States of America",
+            ),
+            adapter._listbox_option_match_score(
+                field_name="country",
+                target="United States",
+                candidate="United States Minor Outlying Islands",
+            ),
+        )
+
+    def test_workday_state_listbox_prefers_full_state_name_over_partial_country_match(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertGreater(
+            adapter._listbox_option_match_score(
+                field_name="countryRegion",
+                target="CA",
+                candidate="California",
+            ),
+            adapter._listbox_option_match_score(
+                field_name="countryRegion",
+                target="CA",
+                candidate="Canada (+1)",
+            ),
+        )
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="countryRegion",
+                current_value="California",
+                desired_value="CA",
+            )
+        )
+
+    def test_workday_phone_prompt_prefers_selected_country_for_shared_code(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertGreater(
+            adapter._prompt_option_match_score(
+                field_name="phoneNumber--countryPhoneCode",
+                target="+1",
+                candidate="United States of America (+1)",
+                selected_country="United States of America",
+            ),
+            adapter._prompt_option_match_score(
+                field_name="phoneNumber--countryPhoneCode",
+                target="+1",
+                candidate="Canada (+1)",
+                selected_country="United States of America",
+            ),
+        )
+
+    def test_workday_country_is_filled_before_phone_country_code(self) -> None:
+        adapter = WorkdayAdapter()
+        fields = [
+            {"field_name": "phoneNumber--countryPhoneCode"},
+            {"field_name": "source--source"},
+            {"field_name": "countryRegion"},
+            {"field_name": "country"},
+        ]
+
+        ordered = sorted(fields, key=adapter._field_fill_priority)
+
+        self.assertEqual(ordered[0]["field_name"], "country")
+        self.assertLess(
+            ordered.index({"field_name": "countryRegion"}),
+            ordered.index({"field_name": "phoneNumber--countryPhoneCode"}),
         )
 
     def test_answer_resolver_classifies_supported_intents(self) -> None:
@@ -1243,6 +1369,16 @@ class ApplyJobsTests(unittest.TestCase):
 
         self.assertTrue(adapter._has_application_form_widgets(FooterOnlyPage()))
 
+    def test_workday_detects_visible_apply_flow_loading_overlay(self) -> None:
+        class LoadingPage:
+            def evaluate(self, script: str) -> bool:
+                self.script = script
+                return "applyFlowLoadingPage" in script
+
+        adapter = WorkdayAdapter()
+
+        self.assertTrue(adapter._is_apply_flow_loading(LoadingPage()))
+
     def test_workday_shared_footer_button_requires_matching_action_label(self) -> None:
         class Locator:
             def __init__(self, *, text: str = "", present: bool = False, clicks: list[str] | None = None) -> None:
@@ -1291,6 +1427,184 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(action, "save")
         self.assertTrue(adapter._click_navigation(page, action))
         self.assertEqual(page.clicks, ["Save and Continue"])
+
+    def test_workday_listbox_verification_uses_stable_name_after_rerender(self) -> None:
+        class Locator:
+            def __init__(self, *, present: bool, text: str = "") -> None:
+                self.present = present
+                self.text = text
+
+            @property
+            def first(self):
+                return self
+
+            def count(self) -> int:
+                return int(self.present)
+
+            def inner_text(self) -> str:
+                return self.text
+
+        class Page:
+            def locator(self, selector: str):
+                if selector == 'button[name="country"]':
+                    return Locator(present=True, text="United States")
+                return Locator(present=False)
+
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._listbox_current_value(
+                Page(),
+                {"selector": '[data-jobhunter-field-index="stale"]', "field_name": "country"},
+            ),
+            "United States",
+        )
+
+    def test_workday_listbox_options_use_the_opened_button_menu(self) -> None:
+        class Locator:
+            def __init__(self, *, count: int, controls_id: str = "") -> None:
+                self._count = count
+                self._controls_id = controls_id
+
+            def count(self) -> int:
+                return self._count
+
+            def get_attribute(self, name: str) -> str | None:
+                return self._controls_id if name == "aria-controls" else None
+
+        class Page:
+            def __init__(self) -> None:
+                self.selectors: list[str] = []
+
+            def locator(self, selector: str):
+                self.selectors.append(selector)
+                if selector.startswith('[id="country-options"]'):
+                    return Locator(count=1)
+                return Locator(count=3)
+
+        adapter = WorkdayAdapter()
+        page = Page()
+
+        options = adapter._listbox_options(page, Locator(count=1, controls_id="country-options"))
+
+        self.assertEqual(options.count(), 1)
+        self.assertTrue(page.selectors[0].startswith('[id="country-options"]'))
+
+    def test_workday_prompt_value_rejects_uncommitted_search_text(self) -> None:
+        class Locator:
+            def __init__(self, *, present: bool, text: str = "", value: str = "") -> None:
+                self.present = present
+                self.text = text
+                self.value = value
+
+            @property
+            def first(self):
+                return self
+
+            def count(self) -> int:
+                return int(self.present)
+
+            def inner_text(self) -> str:
+                return self.text
+
+            def input_value(self) -> str:
+                return self.value
+
+        class Page:
+            def locator(self, selector: str):
+                if selector == 'input[id="source--source"]':
+                    return Locator(present=True, value="Career Website")
+                return Locator(present=True, text="")
+
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._prompt_current_value(
+                Page(),
+                {"container_id": "source-container", "field_name": "source--source"},
+            ),
+            "",
+        )
+
+    def test_workday_prompt_invalid_state_reads_stable_input(self) -> None:
+        class Locator:
+            def __init__(self, *, present: bool, invalid: str = "") -> None:
+                self.present = present
+                self.invalid = invalid
+
+            @property
+            def first(self):
+                return self
+
+            def count(self) -> int:
+                return int(self.present)
+
+            def get_attribute(self, name: str) -> str | None:
+                return self.invalid if name == "aria-invalid" else None
+
+        class Page:
+            def locator(self, selector: str):
+                return Locator(
+                    present=selector == 'input[id="source--source"]',
+                    invalid="true",
+                )
+
+        adapter = WorkdayAdapter()
+
+        self.assertTrue(
+            adapter._prompt_is_invalid(
+                Page(),
+                {"field_name": "source--source"},
+            )
+        )
+
+    def test_workday_prompt_value_prefers_selected_item_over_empty_label(self) -> None:
+        class Locator:
+            def __init__(self, *, present: bool, text: str = "") -> None:
+                self.present = present
+                self.text = text
+
+            @property
+            def first(self):
+                return self
+
+            def count(self) -> int:
+                return int(self.present)
+
+            def inner_text(self) -> str:
+                return self.text
+
+        class Page:
+            def locator(self, selector: str):
+                if 'data-automation-id="selectedItem"' in selector:
+                    return Locator(present=True, text="United States of America (+1)")
+                return Locator(present=True, text="")
+
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._prompt_current_value(
+                Page(),
+                {"container_id": "phone-container", "field_name": "phoneNumber--countryPhoneCode"},
+            ),
+            "United States of America (+1)",
+        )
+
+    def test_workday_adapter_blocks_after_repeated_form_without_progress(self) -> None:
+        class StuckWorkdayPage(FakeWorkdayPage):
+            def click_workday_navigation(self, action: str) -> bool:
+                self.clicked_actions.append(action)
+                return True
+
+        adapter = WorkdayAdapter()
+        page = StuckWorkdayPage()
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "manual_checkpoint_required")
+        self.assertEqual(result.blocker.details["checkpoint"], "workday_no_progress")
+        self.assertEqual(page.clicked_actions, ["continue", "continue"])
 
     def test_workday_adapter_blocks_on_unknown_required_question(self) -> None:
         adapter = WorkdayAdapter()
@@ -2069,11 +2383,16 @@ class ApplyJobsTests(unittest.TestCase):
         manual_gate_messages: list[str] = []
         service.browser_manager = FakeBrowserManager(resumed_page)
         service.icims_adapter = SubmittedICIMSAdapter()
-        resumed = service.resume_with_manual_gate(
-            application_run_id=blocked.application_run_id,
-            notify=manual_gate_messages.append,
-            wait_for_user=lambda: None,
-        )
+        with patch.object(
+            service,
+            "_ensure_tailoring_artifact",
+            side_effect=AssertionError("manual resume must reuse its stored tailoring artifact"),
+        ):
+            resumed = service.resume_with_manual_gate(
+                application_run_id=blocked.application_run_id,
+                notify=manual_gate_messages.append,
+                wait_for_user=lambda: None,
+            )
         shown = service.show_run(resumed.application_run_id)
         self.assertEqual(resumed.status, "submitted")
         self.assertEqual(shown["target_url"], current_url)

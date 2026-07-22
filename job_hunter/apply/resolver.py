@@ -52,12 +52,20 @@ _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
         ),
     ),
     ("current_location", ("current location", "where are you based", "city/state of residence")),
-    ("work_auth_us", ("legally authorized to work in the united states", "authorized to work in the united states")),
+    (
+        "work_auth_us",
+        (
+            "legally authorized to work in the united states",
+            "authorized to work in the united states",
+            "legally permitted to work in the country where this job is located",
+        ),
+    ),
     (
         "future_sponsorship_us",
         (
             "require employer sponsorship to work in the united states",
             "require sponsorship to work in the united states",
+            "require datarobot sponsorship for a visa or work permit",
             "require medpace inc. to commence",
         ),
     ),
@@ -75,6 +83,13 @@ _FIELD_CAPABILITIES: tuple[FieldCapability, ...] = (
         intents=("consent_required",),
         resolver_mode="computed_yes",
         submit_policy="safe_autofill_if_single_option",
+    ),
+    FieldCapability(
+        portal="workday",
+        widget_types=("radio-group", "select-one", "listbox-button"),
+        intents=("work_auth_us", "future_sponsorship_us"),
+        resolver_mode="structured_boolean_yes_no",
+        submit_policy="safe_autofill",
     ),
     FieldCapability(
         portal="linkedin",
@@ -313,6 +328,31 @@ class AnswerResolver:
         if "phone device type" in question:
             return AnswerResolution(answer="Mobile", source="computed:identity.phone_device_type")
 
+        if question.rstrip("*").strip() == "company" or normalized_field_name == "companyname":
+            company = self._structured.get("employment.current_company", "").strip()
+            if company:
+                return AnswerResolution(answer=company, source="structured:employment.current_company")
+
+        if "startdate-datesection" in normalized_field_name:
+            experience_start = _employment_start_date(self._structured.get("employment.years_experience", ""))
+            if "month-input" in normalized_field_name:
+                return AnswerResolution(
+                    answer=str(datetime.strptime(experience_start["month"], "%B").month),
+                    source="computed:employment.start_month",
+                )
+            if "year-input" in normalized_field_name:
+                return AnswerResolution(answer=experience_start["year"], source="computed:employment.start_year")
+
+        if "enddate-datesection" in normalized_field_name:
+            experience_end = _employment_end_date()
+            if "month-input" in normalized_field_name:
+                return AnswerResolution(
+                    answer=str(datetime.strptime(experience_end["month"], "%B").month),
+                    source="computed:employment.end_month",
+                )
+            if "year-input" in normalized_field_name:
+                return AnswerResolution(answer=experience_end["year"], source="computed:employment.end_year")
+
         if "country phone code" in question or "countryphonecode" in normalized_field_name:
             country_code = _phone_country_code(self._structured.get("identity.phone", ""))
             if country_code:
@@ -326,10 +366,7 @@ class AnswerResolver:
         if "are you over 18" in question:
             return AnswerResolution(answer="Yes", source="computed:identity.over_18")
 
-        if "previously been employed by" in question:
-            return AnswerResolution(answer="No", source="computed:employment.previously_employed_by_company")
-
-        if "previously been employed by medpace" in question:
+        if "previously" in question and "employ" in question:
             return AnswerResolution(answer="No", source="computed:employment.previously_employed_by_company")
 
         if "ever interviewed with medpace" in question:

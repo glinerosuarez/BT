@@ -178,6 +178,8 @@ class ApplicationService:
                 adapter=adapter,
                 page=page,
                 result=result,
+                context=context,
+                resolver=resolver,
                 recipient_email=profile.identity.email,
                 submit_started_at=submit_started_at,
             )
@@ -312,6 +314,8 @@ class ApplicationService:
                 adapter=adapter,
                 page=page,
                 result=result,
+                context=context,
+                resolver=resolver,
                 recipient_email=profile.identity.email,
                 submit_started_at=submit_started_at,
             )
@@ -350,14 +354,25 @@ class ApplicationService:
 
         profile, answers = load_application_inputs(self.settings.tailoring_profile_root, profile_name)
         resolver = AnswerResolver(profile=profile, answers=answers)
-        tailoring_artifact = self._ensure_tailoring_artifact(job_id=job_id, profile_name=profile_name, force=True)
+        tailoring_artifact = None
+        stored_artifact_id = int(row["tailoring_artifact_id"] or 0)
+        if stored_artifact_id:
+            stored_artifact = self.store.get_tailoring_artifact(stored_artifact_id)
+            if stored_artifact is not None and Path(str(stored_artifact["output_dir"])).exists():
+                tailoring_artifact = {key: stored_artifact[key] for key in stored_artifact.keys()}
+        if tailoring_artifact is None:
+            tailoring_artifact = self._ensure_tailoring_artifact(
+                job_id=job_id,
+                profile_name=profile_name,
+                force=False,
+            )
         context = self._build_adapter_context(profile, tailoring_artifact["output_dir"])
         adapter = self._adapter_for_name(adapter_name)
         manual_url = str(row["current_url"] or row["target_url"] or job["url"] or "").strip()
         if not manual_url:
             raise RuntimeError(f"Application id {application_run_id} does not have a stored target URL.")
 
-        session = self.browser_manager.open(adapter_name=adapter_name)
+        session = self.browser_manager.open(adapter_name=adapter_name, headless=False)
         try:
             page = session.new_page()
             page.goto(manual_url, wait_until="domcontentloaded")
@@ -394,6 +409,8 @@ class ApplicationService:
                 adapter=adapter,
                 page=page,
                 result=result,
+                context=context,
+                resolver=resolver,
                 recipient_email=profile.identity.email,
                 submit_started_at=submit_started_at,
             )
@@ -425,6 +442,24 @@ class ApplicationService:
                 return (
                     "Manual checkpoint opened in the browser. Complete the Handshake Fellow application steps, "
                     "stop on the final submission confirmation page or the last review screen, leave that page open, "
+                    "then return here and press Enter."
+                )
+            if checkpoint == "workday_required_listbox":
+                question_text = str(details.get("question_text") or "the required dropdown").strip()
+                expected_answer = str(details.get("expected_answer") or "").strip()
+                answer_clause = f" and select `{expected_answer}`" if expected_answer else ""
+                return (
+                    "Manual checkpoint opened in the browser. Open "
+                    f"{question_text}{answer_clause}, leave the application on the same page after the selection, "
+                    "then return here and press Enter."
+                )
+            if checkpoint == "workday_required_choice":
+                question_text = str(details.get("question_text") or "the required choice field").strip()
+                expected_answer = str(details.get("expected_answer") or "").strip()
+                answer_clause = f" and select `{expected_answer}`" if expected_answer else ""
+                return (
+                    "Manual checkpoint opened in the browser. Open "
+                    f"{question_text}{answer_clause}, leave the application on the same page after the selection, "
                     "then return here and press Enter."
                 )
         return (
@@ -839,6 +874,8 @@ class ApplicationService:
         adapter,
         page,
         result: SubmitResult,
+        context,
+        resolver,
         recipient_email: str,
         submit_started_at: datetime,
     ) -> SubmitResult:
@@ -885,7 +922,13 @@ class ApplicationService:
             return result
         if not code:
             return result
-        return adapter.complete_email_verification(page=page, code=code, steps=result.steps)
+        return adapter.complete_email_verification(
+            page=page,
+            code=code,
+            steps=result.steps,
+            context=context,
+            resolver=resolver,
+        )
 
     def _run_record(self, run_id: int) -> ApplicationRunRecord:
         row = self.store.get_application_run(run_id)
