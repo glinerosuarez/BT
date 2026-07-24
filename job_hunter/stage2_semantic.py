@@ -30,6 +30,7 @@ QUANT_RESEARCH_TITLE_PENALTY = 0.22
 ANALYST_PROGRAM_TITLE_PENALTY = 0.16
 PRODUCT_MANAGEMENT_TITLE_PENALTY = 0.28
 RESEARCH_SCIENTIST_TITLE_PENALTY = 0.20
+WEB_DEVELOPMENT_TITLE_PENALTY = 0.12
 
 
 @dataclass(frozen=True, slots=True)
@@ -465,6 +466,7 @@ def _resolve_semantic_profile_id(
             "semantic_penalty_analyst_program_title",
             "semantic_penalty_quant_research_title",
             "semantic_penalty_research_scientist_title",
+            "semantic_penalty_web_development_title",
         )
     ):
         return NO_POSITIVE_MATCH_PROFILE_ID
@@ -599,6 +601,9 @@ def _research_heaviness_adjustment(
     if "research scientist" in title_blob:
         penalty += RESEARCH_SCIENTIST_TITLE_PENALTY
         reasons.append("semantic_penalty_research_scientist_title")
+    if _has_web_development_title_signal(title_blob):
+        penalty += WEB_DEVELOPMENT_TITLE_PENALTY
+        reasons.append("semantic_penalty_web_development_title")
 
     return min(penalty, 0.6), reasons
 
@@ -666,6 +671,17 @@ def _has_product_management_title_signal(title_blob: str) -> bool:
             re.compile(r"\bproduct manager\b", re.IGNORECASE),
             re.compile(r"\bassociate product manager\b", re.IGNORECASE),
             re.compile(r"\bapm\b", re.IGNORECASE),
+        )
+    )
+
+
+def _has_web_development_title_signal(title_blob: str) -> bool:
+    return any(
+        pattern.search(title_blob)
+        for pattern in (
+            re.compile(r"\bweb development\b", re.IGNORECASE),
+            re.compile(r"\bweb developer\b", re.IGNORECASE),
+            re.compile(r"\bfront[ -]?end\b", re.IGNORECASE),
         )
     )
 

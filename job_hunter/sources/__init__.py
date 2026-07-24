@@ -1,4 +1,5 @@
 from job_hunter.sources.adzuna import AdzunaSource
+from job_hunter.sources.apple import AppleJobsSource
 from job_hunter.sources.ashby import AshbySource
 from job_hunter.sources.arbeitnow import ArbeitnowSource
 from job_hunter.sources.base import SourceConnector
@@ -16,6 +17,7 @@ from job_hunter.sources.usajobs import USAJobsSource
 __all__ = [
     "SourceConnector",
     "AdzunaSource",
+    "AppleJobsSource",
     "AshbySource",
     "ArbeitnowSource",
     "GreenhouseSource",

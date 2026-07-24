@@ -290,6 +290,28 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertIn("us_work_auth_required", negative)
         self.assertIn("visa_sponsorship", positive)
 
+    def test_eligibility_rejects_itar_us_person_requirement(self) -> None:
+        job = JobRecord(
+            source="linkedin",
+            external_id="itar-1",
+            url="https://example.com/itar-1",
+            title="Software Engineering Intern",
+            company="Example Aerospace",
+            location="Golden, CO",
+            is_internship=True,
+            posted_at="2026-07-23",
+            description=(
+                "ITAR Requirements: To conform to U.S. Government export regulations, applicant must be a "
+                "U.S. citizen or national, U.S. lawful permanent resident, refugee, or asylee."
+            ),
+            ingested_at="2026-07-23T00:00:00+00:00",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("itar_us_person_required", negative)
+        self.assertEqual(positive, [])
+
     def test_internship_and_us_scope_filters(self) -> None:
         job = JobRecord(
             source="x",

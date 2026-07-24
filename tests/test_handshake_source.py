@@ -14,6 +14,8 @@ from job_hunter.sources.handshake import (
     _job_search_url_to_jobs_url,
     _normalize_title_token,
     _normalize_search_url,
+    _broad_recent_search_url,
+    _with_page_number,
     _partition_handshake_urls,
     _page_requires_auth,
     _page_body_has_security_verification,
@@ -652,6 +654,25 @@ class HandshakeSourceTests(unittest.TestCase):
         normalized = _normalize_search_url(url)
         self.assertIn("sort=posted_date_desc", normalized)
         self.assertNotIn("sort=relevance", normalized)
+
+    def test_broad_recent_search_url_removes_keyword_and_keeps_filters(self) -> None:
+        url = (
+            "https://app.joinhandshake.com/job-search/11120409"
+            "?jobType=3&workAuthorization=openToOptionalPracticalTraining"
+            "&query=data%20engineer%20intern&sort=relevance&page=4"
+        )
+        normalized = _broad_recent_search_url(url)
+        self.assertIn("jobType=3", normalized)
+        self.assertIn("workAuthorization=openToOptionalPracticalTraining", normalized)
+        self.assertIn("sort=posted_date_desc", normalized)
+        self.assertIn("page=1", normalized)
+        self.assertNotIn("query=", normalized)
+
+    def test_with_page_number_replaces_existing_page(self) -> None:
+        url = "https://app.joinhandshake.com/job-search/11120409?query=data&page=1"
+        normalized = _with_page_number(url, 3)
+        self.assertIn("page=3", normalized)
+        self.assertNotIn("page=1", normalized)
 
     def test_page_body_has_security_verification_true(self) -> None:
         class FakeBodyLocator:

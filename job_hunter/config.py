@@ -67,6 +67,17 @@ DEFAULT_HANDSHAKE_PROFILE_DIR = str(Path(__file__).resolve().parent.parent / ".h
 DEFAULT_LINKEDIN_PROFILE_DIR = str(Path(__file__).resolve().parent.parent / ".linkedin-profile")
 DEFAULT_INTERSTRIDE_PROFILE_DIR = str(Path(__file__).resolve().parent.parent / ".interstride-profile")
 DEFAULT_INTERSTRIDE_SEARCH_URLS = ["https://student.interstride.com/jobs/search"]
+DEFAULT_APPLE_QUERIES = [
+    "machine learning and artificial intelligence masters internships",
+    "machine learning and artificial intelligence undergrad internships",
+    "data engineer intern",
+    "data science intern",
+    "ai ml intern",
+    "software engineer intern",
+    "backend engineer intern",
+    "applied scientist intern",
+    "data platform intern",
+]
 DEFAULT_TITLE_BLACKLIST_PATTERNS = [
     r"\brecruiter\b",
     r"\brecruiting\b",
@@ -230,6 +241,13 @@ class Settings:
     interstride_max_results: int = 25
     interstride_page_timeout_seconds: int = 30
     interstride_fetch_details: bool = True
+    use_apple: bool = False
+    apple_queries: list[str] = field(default_factory=lambda: list(DEFAULT_APPLE_QUERIES))
+    apple_max_results: int = 25
+    apple_headless: bool = True
+    apple_page_timeout_seconds: int = 30
+    handshake_recent_pages: int = 10
+    handshake_use_keyword_supplemental: bool = False
 
 
 DEFAULT_DB_PATH = "job_hunter.db"
@@ -266,6 +284,7 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
     rss_feed_file = os.getenv("JOB_HUNTER_RSS_FEED_FILE", DEFAULT_RSS_FEED_FILE)
     linkedin_search_urls = _env_csv("JOB_HUNTER_LINKEDIN_SEARCH_URLS", [])
     interstride_search_urls = _env_csv("JOB_HUNTER_INTERSTRIDE_SEARCH_URLS", DEFAULT_INTERSTRIDE_SEARCH_URLS)
+    apple_queries = _env_csv("JOB_HUNTER_APPLE_QUERIES", DEFAULT_APPLE_QUERIES)
     greenhouse_quarantine_file = os.getenv(
         "JOB_HUNTER_GREENHOUSE_QUARANTINE_FILE",
         _derive_quarantine_file(greenhouse_token_file, DEFAULT_GREENHOUSE_TOKEN_FILE),
@@ -383,4 +402,11 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         interstride_max_results=_env_int("JOB_HUNTER_INTERSTRIDE_MAX_RESULTS", 25),
         interstride_page_timeout_seconds=_env_int("JOB_HUNTER_INTERSTRIDE_PAGE_TIMEOUT_SECONDS", 30),
         interstride_fetch_details=_env_bool("JOB_HUNTER_INTERSTRIDE_FETCH_DETAILS", True),
+        use_apple=_env_bool("JOB_HUNTER_SOURCE_APPLE", False),
+        apple_queries=apple_queries,
+        apple_max_results=_env_int("JOB_HUNTER_APPLE_MAX_RESULTS", 25),
+        apple_headless=_env_bool("JOB_HUNTER_APPLE_HEADLESS", True),
+        apple_page_timeout_seconds=_env_int("JOB_HUNTER_APPLE_PAGE_TIMEOUT_SECONDS", 30),
+        handshake_recent_pages=_env_int("JOB_HUNTER_HANDSHAKE_RECENT_PAGES", 10),
+        handshake_use_keyword_supplemental=_env_bool("JOB_HUNTER_HANDSHAKE_USE_KEYWORD_SUPPLEMENTAL", False),
     )

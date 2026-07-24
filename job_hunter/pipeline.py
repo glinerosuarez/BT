@@ -31,6 +31,7 @@ from job_hunter.notify import TelegramNotifier
 from job_hunter.stage2 import ShadowProfileScorer
 from job_hunter.sources import (
     AdzunaSource,
+    AppleJobsSource,
     AshbySource,
     ArbeitnowSource,
     GithubRepoSource,
@@ -202,6 +203,8 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 page_timeout_seconds=settings.handshake_page_timeout_seconds,
                 max_posting_age_days=settings.max_posting_age_days,
                 fetch_details=settings.handshake_fetch_details,
+                recent_pages=getattr(settings, "handshake_recent_pages", 10),
+                use_keyword_supplemental=getattr(settings, "handshake_use_keyword_supplemental", False),
             )
         )
     if settings.use_linkedin and linkedin_search_urls:
@@ -226,6 +229,15 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 page_timeout_seconds=settings.interstride_page_timeout_seconds,
                 max_posting_age_days=settings.max_posting_age_days,
                 fetch_details=settings.interstride_fetch_details,
+            )
+        )
+    if settings.use_apple and settings.apple_queries:
+        sources.append(
+            AppleJobsSource(
+                queries=settings.apple_queries,
+                max_results=settings.apple_max_results,
+                headless=settings.apple_headless,
+                page_timeout_seconds=settings.apple_page_timeout_seconds,
             )
         )
 

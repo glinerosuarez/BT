@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha1
 from pathlib import Path
@@ -26,6 +27,13 @@ class HandshakeSecurityVerificationError(RuntimeError):
 
 class HandshakeAccessWallError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class SearchPageFetch:
+    rows: list[dict]
+    card_count: int
+    stopped_on_age: bool
 DETAIL_TEXT_SCRIPT = """
 () => {
   let best = null;
@@ -109,6 +117,8 @@ class HandshakeSource(SourceConnector):
         page_timeout_seconds: int,
         max_posting_age_days: int,
         fetch_details: bool = True,
+        recent_pages: int = 10,
+        use_keyword_supplemental: bool = False,
     ) -> None:
         super().__init__(name="handshake")
         self.search_urls = search_urls
@@ -118,6 +128,8 @@ class HandshakeSource(SourceConnector):
         self.page_timeout_seconds = max(page_timeout_seconds, 5)
         self.max_posting_age_days = max(max_posting_age_days, 1)
         self.fetch_details = fetch_details
+        self.recent_pages = max(recent_pages, 1)
+        self.use_keyword_supplemental = use_keyword_supplemental
         self._fetch_meta: dict[str, object] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
@@ -141,31 +153,62 @@ class HandshakeSource(SourceConnector):
                 page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
                 results: list[dict] = []
                 search_urls, job_urls = _partition_handshake_urls(self.search_urls)
-                total_search_urls = len(search_urls)
-                for index, search_url in enumerate(search_urls, start=1):
-                    normalized_search_url = _normalize_search_url(search_url)
-                    LOG.info(
-                        "handshake_search_fetch_started index=%s total=%s url=%s",
-                        index,
-                        total_search_urls,
-                        normalized_search_url,
-                    )
+                broad_recent_url = _broad_recent_search_url(search_urls[0]) if search_urls else ""
+                recent_sweep_blocked = False
+                if broad_recent_url:
                     try:
-                        rows = self._fetch_search_page(page, normalized_search_url)
+                        recent_rows, recent_pages_fetched, stopped_on_age = self._fetch_recent_pages(page, broad_recent_url)
+                        results.extend(recent_rows)
+                        item_results.append(
+                            {
+                                "item": broad_recent_url,
+                                "status": "success",
+                                "error": "",
+                                "pages_fetched": str(recent_pages_fetched),
+                                "stopped_on_age": str(stopped_on_age).lower(),
+                            }
+                        )
                     except HandshakeSecurityVerificationError as exc:
                         security_verification_blocked_count += 1
-                        item_results.append({"item": normalized_search_url, "status": "failure", "error": str(exc)})
-                        LOG.warning("handshake_search_security_verification_blocked url=%s", normalized_search_url)
-                        continue
-                    item_results.append({"item": normalized_search_url, "status": "success", "error": ""})
-                    LOG.info(
-                        "handshake_search_fetch_finished index=%s total=%s url=%s fetched_count=%s",
-                        index,
-                        total_search_urls,
-                        normalized_search_url,
-                        len(rows),
-                    )
-                    results.extend(rows)
+                        recent_sweep_blocked = True
+                        item_results.append({"item": broad_recent_url, "status": "failure", "error": str(exc)})
+                        LOG.warning("handshake_recent_sweep_security_verification_blocked url=%s", broad_recent_url)
+                if self.use_keyword_supplemental:
+                    total_search_urls = len(search_urls)
+                    for index, search_url in enumerate(search_urls, start=1):
+                        if recent_sweep_blocked:
+                            item_results.append(
+                                {
+                                    "item": _normalize_search_url(search_url),
+                                    "status": "skipped",
+                                    "error": "recent_sweep_security_verification_blocked",
+                                }
+                            )
+                            continue
+                        normalized_search_url = _normalize_search_url(search_url)
+                        LOG.info(
+                            "handshake_search_fetch_started index=%s total=%s url=%s",
+                            index,
+                            total_search_urls,
+                            normalized_search_url,
+                        )
+                        try:
+                            page_result = self._fetch_search_page(page, normalized_search_url)
+                            rows = page_result.rows
+                        except HandshakeSecurityVerificationError as exc:
+                            security_verification_blocked_count += 1
+                            item_results.append({"item": normalized_search_url, "status": "failure", "error": str(exc)})
+                            LOG.warning("handshake_search_security_verification_blocked url=%s", normalized_search_url)
+                            continue
+                        item_results.append({"item": normalized_search_url, "status": "success", "error": ""})
+                        LOG.info(
+                            "handshake_search_fetch_finished index=%s total=%s url=%s fetched_count=%s",
+                            index,
+                            total_search_urls,
+                            normalized_search_url,
+                            len(rows),
+                        )
+                        results.extend(rows)
                 for job_url in job_urls:
                     try:
                         parsed = self._fetch_job_page(page, job_url)
@@ -179,6 +222,9 @@ class HandshakeSource(SourceConnector):
                         results.append(parsed)
                 self._fetch_meta = {
                     "security_verification_blocked_count": security_verification_blocked_count,
+                    "recent_sweep_blocked": recent_sweep_blocked,
+                    "keyword_supplemental_enabled": self.use_keyword_supplemental,
+                    "recent_sweep_page_limit": self.recent_pages,
                     "item_results": item_results,
                 }
                 return _dedupe_rows(results)
@@ -188,7 +234,28 @@ class HandshakeSource(SourceConnector):
     def get_fetch_meta(self) -> dict[str, object]:
         return dict(self._fetch_meta)
 
-    def _fetch_search_page(self, page, search_url: str) -> list[dict]:
+    def _fetch_recent_pages(self, page, search_url: str) -> tuple[list[dict], int, bool]:
+        rows: list[dict] = []
+        for page_number in range(1, self.recent_pages + 1):
+            page_url = _with_page_number(search_url, page_number)
+            LOG.info(
+                "handshake_recent_sweep_page_started page=%s page_limit=%s url=%s",
+                page_number,
+                self.recent_pages,
+                page_url,
+            )
+            result = self._fetch_search_page(page, page_url)
+            rows.extend(result.rows)
+            if result.stopped_on_age or result.card_count == 0:
+                return rows, page_number, result.stopped_on_age
+        LOG.warning(
+            "handshake_recent_sweep_page_limit_reached page_limit=%s url=%s",
+            self.recent_pages,
+            search_url,
+        )
+        return rows, self.recent_pages, False
+
+    def _fetch_search_page(self, page, search_url: str) -> SearchPageFetch:
         self._goto_handshake_page(page, search_url)
         _raise_for_auth_wall(page.url, context="search results")
 
@@ -200,9 +267,11 @@ class HandshakeSource(SourceConnector):
         body_text = page.locator("body").inner_text()
         card_payloads = _extract_cards_from_page_text(body_text)
         rows: list[dict] = []
+        stopped_on_age = False
         max_cards = min(len(card_payloads), self.max_results)
         for card_index, card in enumerate(card_payloads[: self.max_results], start=1):
             if _is_card_older_than_lookback(card, self.max_posting_age_days):
+                stopped_on_age = True
                 LOG.info(
                     "handshake_search_stopped_on_age url=%s card_index=%s max_cards=%s title=%s",
                     search_url,
@@ -279,7 +348,7 @@ class HandshakeSource(SourceConnector):
                     str(parsed.get("source_metadata", {}).get("detail_quality_status") or ""),
                     str(parsed.get("url") or ""),
                 )
-        return rows
+        return SearchPageFetch(rows=rows, card_count=len(card_payloads), stopped_on_age=stopped_on_age)
 
     def _fetch_job_page(self, page, job_url: str) -> dict | None:
         self._goto_handshake_page(page, job_url, post_wait_ms=1500)
@@ -362,6 +431,21 @@ def _normalize_search_url(search_url: str) -> str:
     filtered_pairs.append(("sort", "posted_date_desc"))
     normalized_query = urlencode(filtered_pairs, doseq=True)
     return urlunparse(parsed._replace(query=normalized_query))
+
+
+def _broad_recent_search_url(search_url: str) -> str:
+    parsed = urlparse(search_url)
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    broad_pairs = [(key, value) for key, value in query_pairs if key not in {"query", "sort", "page"}]
+    broad_pairs.extend((("sort", "posted_date_desc"), ("page", "1")))
+    return urlunparse(parsed._replace(query=urlencode(broad_pairs, doseq=True)))
+
+
+def _with_page_number(search_url: str, page_number: int) -> str:
+    parsed = urlparse(search_url)
+    query_pairs = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key != "page"]
+    query_pairs.append(("page", str(max(page_number, 1))))
+    return urlunparse(parsed._replace(query=urlencode(query_pairs, doseq=True)))
 
 
 def _page_requires_auth(url: str) -> bool:

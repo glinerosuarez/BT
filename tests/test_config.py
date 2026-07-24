@@ -47,6 +47,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.handshake_max_results, 25)
         self.assertEqual(settings.handshake_page_timeout_seconds, 30)
         self.assertTrue(settings.handshake_fetch_details)
+        self.assertEqual(settings.handshake_recent_pages, 10)
+        self.assertFalse(settings.handshake_use_keyword_supplemental)
         self.assertEqual(settings.tailoring_profile_root, "profiles")
         self.assertEqual(settings.tailoring_output_root, "artifacts/tailoring")
         self.assertEqual(settings.tailoring_provider, "anthropic")

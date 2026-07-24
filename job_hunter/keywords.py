@@ -100,6 +100,10 @@ NEGATIVE_WORK_AUTH_PATTERNS = {
     "must_have_us_work_auth": r"\bmust have\s+(current\s+)?(us|u\.s\.|united states)\s+work authorization\b",
     "us_work_authorized_only": r"\b(indefinite\s+)?(us|u\.s\.|united states)\s+work authorized individuals only\b",
     "citizen_or_pr_required": r"\b(us citizens?\s+only|must be a us citizen|must be (a )?permanent resident)\b",
+    "itar_us_person_required": (
+        r"\bitar requirements?\b(?s:.{0,700}?)"
+        r"\b(?:u\.?s\.?\s+citizen|u\.?s\.?\s+lawful,?\s+permanent resident|green card holder)\b"
+    ),
 }
 
 POSITIVE_SPONSORSHIP_PATTERNS = {

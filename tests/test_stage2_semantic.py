@@ -494,6 +494,7 @@ class Stage2SemanticTests(unittest.TestCase):
         )
         self.assertEqual(result.semantic_match_label, "reject")
         self.assertEqual(result.semantic_profile_id, "no_positive_match")
+        self.assertIn("semantic_penalty_web_development_title", result.semantic_match_reason_codes)
 
     def test_semantic_scorer_requires_lexical_support_for_negative_profile_penalty(self) -> None:
         backend = FakeEmbeddingBackend()
