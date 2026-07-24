@@ -12,14 +12,14 @@ AI Engineer with experience building LLM orchestration, RAG, evaluation, and dat
 **Specializations**: Agentic workflows, anomaly detection, data quality, LLM observability, tool-calling systems, Agile development
 
 ## Education
-**University of Southern California** *August 2025-May 2027*
+**University of Southern California** *August 2025-December 2027*
 <br>Master of Science in Computer Science *3.67/4.0 GPA*
 <br>Coursework: *Programming Systems Design (C++, Java), Analysis of Algorithms, Computer Networks, Deep Learning.*
 <br>Clubs and Associations: *Director of the Society of Hispanic Professional Engineers (SHPE) at USC*
 
 ## Work Experience
 **AI Engineer Intern | Impatico** May 2026 - Present<br>
-**Technologies**: Python, PyTorch, LangChain, RAG, OCR, VLMs, Phoenix, OpenTelemetry, SQL, GCP, Docker<br>
+**Technologies**: Python, PyTorch, LangChain, RAG, OCR, VLMs, Phoenix, MLFlow, OpenTelemetry, SQL, GCP, Docker<br>
 *(Los Angeles, CA)*<br>
 - Built an agentic document extraction pipeline to ingest ESG data from more than 1000 company reports, using a LangChain LLM orchestrator hosted on Google Agent Platform, fine-tuned vision-language models (VLMs), OCR models, and PyTorch-based deep learning workflows.
 - Designed and deployed our evals approach, which included building eval datasets, using Phoenix to instrument agent calls with OpenTelemetry, computing metrics, and running experiments across versions to improve visibility into agent performance and make the system more truthful, increasing precision from 50% with our initial zero-shot approach to 80% with a RAG-based system.

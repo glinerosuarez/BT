@@ -12,7 +12,7 @@ Software engineer with experience building production data and application syste
 **Specializations**: Distributed systems, backend services, ETL pipelines, anomaly detection, data quality, Agile development
 
 ## Education
-**University of Southern California** *August 2025-May 2027*
+**University of Southern California** *August 2025-December 2027*
 <br>Master of Science in Computer Science *3.67/4.0 GPA*
 <br>Coursework: *Programming Systems Design (C++, Java), Analysis of Algorithms, Computer Networks, Deep Learning.*
 <br>Clubs and Associations: *Director of the Society of Hispanic Professional Engineers (SHPE) at USC*
