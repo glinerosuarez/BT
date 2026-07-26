@@ -126,7 +126,7 @@ python -m job_hunter.run_loop --interval-minutes 15
 
 - Create `profiles/<profile>/application_profile.json`.
 - Create `profiles/<profile>/application_answers.json`.
-- Automated submit currently supports `LinkedIn Easy Apply` and `Greenhouse`.
+- Automated submit supports `LinkedIn Easy Apply`, `Greenhouse`, `Handshake`, `iCIMS`, `Workday`, and public `Ashby` forms. Ashby long-form prompts require matching `application_answers.json` rules; the adapter does not generate or guess answers.
 - Unsupported portals, captchas, login/account walls, unknown required questions, and ambiguous submit states are stored as `blocked` runs for manual takeover.
 - Application artifacts are written under `artifacts/applications/<profile>/<application-id>/`.
   - `run.json`

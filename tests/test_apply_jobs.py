@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from job_hunter.apply.adapters.ashby import AshbyAdapter
 from job_hunter.apply.adapters.greenhouse import GreenhouseAdapter
 from job_hunter.apply.adapters.handshake import HandshakeAdapter
 from job_hunter.apply.adapters.handshake_fellow import HandshakeFellowAdapter
@@ -43,13 +44,14 @@ class FakeProvider:
 
 
 class FakePage:
-    def __init__(self, *, url: str, fields=None, confirmation=None, easy_apply=True, greenhouse=True, icims=False) -> None:
+    def __init__(self, *, url: str, fields=None, confirmation=None, easy_apply=True, greenhouse=True, icims=False, ashby=False) -> None:
         self.url = url
         self._fields = list(fields or [])
         self._confirmation = dict(confirmation or {})
         self._easy_apply = easy_apply
         self._greenhouse = greenhouse
         self._icims = icims
+        self._ashby = ashby
         self._login_wall = False
         self._captcha = False
         self._unsupported_widget = False
@@ -104,6 +106,9 @@ class FakePage:
 
     def detect_icims(self) -> bool:
         return self._icims
+
+    def detect_ashby(self) -> bool:
+        return self._ashby
 
     def detect_candidate_profile(self) -> bool:
         return self._candidate_profile
@@ -984,6 +989,108 @@ class ApplyJobsTests(unittest.TestCase):
         result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
         self.assertEqual(result.status, "submitted")
         self.assertEqual(result.confirmation_payload["application_id"], "gh-123")
+
+    def test_ashby_adapter_fills_standard_fields_uploads_tailored_resume_and_confirms(self) -> None:
+        adapter = AshbyAdapter()
+        page = FakePage(
+            url="https://jobs.ashbyhq.com/serval/job-id/application",
+            fields=[
+                {"field_name": "_systemfield_name", "question_text": "Name", "field_type": "text", "required": True},
+                {"field_name": "_systemfield_email", "question_text": "Email", "field_type": "text", "required": True},
+                {"field_name": "_systemfield_resume", "question_text": "Resume", "field_type": "file", "required": True},
+                {"field_name": "linkedin", "question_text": "LinkedIn", "field_type": "text", "required": True},
+                {
+                    "field_name": "onsite",
+                    "question_text": "Are you able and willing to work from our San Francisco HQ 5 days a week (or relocate if needed)?",
+                    "field_type": "yes-no",
+                    "required": True,
+                    "current_value": "",
+                },
+            ],
+            confirmation={"application_id": "ashby-123"},
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+            ashby=True,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertTrue(adapter.is_ashby_target(page.url, page=page))
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(page.values["_systemfield_name"], "Ada Lovelace")
+        self.assertEqual(page.values["_systemfield_email"], "ada@example.com")
+        self.assertEqual(page.values["_systemfield_resume"], self._adapter_context().resume_pdf_path)
+        self.assertEqual(page.values["linkedin"], "https://linkedin.com/in/ada")
+        self.assertEqual(page.values["onsite"], "Yes")
+        self.assertTrue(page.submitted)
+
+    def test_ashby_adapter_blocks_on_unanswered_required_long_form_prompt(self) -> None:
+        adapter = AshbyAdapter()
+        page = FakePage(
+            url="https://jobs.ashbyhq.com/serval/job-id/application",
+            fields=[
+                {
+                    "field_name": "technical_areas",
+                    "question_text": "What are your strongest programming languages and technical areas?",
+                    "field_type": "textarea",
+                    "required": True,
+                    "current_value": "",
+                }
+            ],
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+            ashby=True,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "missing_required_answer")
+        self.assertFalse(page.submitted)
+
+    def test_ashby_adapter_blocks_on_unknown_required_widget(self) -> None:
+        adapter = AshbyAdapter()
+        page = FakePage(
+            url="https://jobs.ashbyhq.com/serval/job-id/application",
+            fields=[
+                {
+                    "field_name": "custom_widget",
+                    "question_text": "Select your availability",
+                    "field_type": "unsupported",
+                    "required": True,
+                    "current_value": "",
+                }
+            ],
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+            ashby=True,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "unsupported_widget")
+        self.assertFalse(page.submitted)
+
+    def test_application_service_dispatches_ashby_target(self) -> None:
+        page = FakePage(
+            url="https://jobs.ashbyhq.com/Serval/d7fb089c-db8a-4877-a5f3-73a09e67f54b",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+            ashby=True,
+        )
+        service = self._service(page)
+        job = self.store.get_job_for_application(1)
+
+        adapter_name, adapter, target_url = service._resolve_adapter(job, page, page.url)
+
+        self.assertEqual(adapter_name, "ashby")
+        self.assertIsInstance(adapter, AshbyAdapter)
+        self.assertEqual(target_url, page.url)
 
     def test_handshake_adapter_uploads_documents_and_confirms(self) -> None:
         adapter = HandshakeAdapter()

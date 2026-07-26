@@ -69,7 +69,15 @@ _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
             "require medpace inc. to commence",
         ),
     ),
-    ("on_site_acknowledgement", ("requires me to work on-site", "requires me to work on site")),
+    (
+        "on_site_acknowledgement",
+        (
+            "requires me to work on-site",
+            "requires me to work on site",
+            "able and willing to work",
+            "relocate if needed",
+        ),
+    ),
     ("education_end_month", ("end date month",)),
     ("education_end_year", ("end date year", "what year will you graduate")),
     ("identity_linkedin_url", ("linkedin profile",)),
@@ -110,6 +118,13 @@ _FIELD_CAPABILITIES: tuple[FieldCapability, ...] = (
         widget_types=("radio-group", "select-one"),
         intents=("work_auth_us", "future_sponsorship_us", "on_site_acknowledgement"),
         resolver_mode="structured_boolean_yes_no",
+        submit_policy="safe_autofill",
+    ),
+    FieldCapability(
+        portal="ashby",
+        widget_types=("yes-no",),
+        intents=("on_site_acknowledgement",),
+        resolver_mode="computed_yes",
         submit_policy="safe_autofill",
     ),
     FieldCapability(
