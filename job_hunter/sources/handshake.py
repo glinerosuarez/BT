@@ -268,17 +268,17 @@ class HandshakeSource(SourceConnector):
         card_payloads = _extract_cards_from_page_text(body_text)
         rows: list[dict] = []
         stopped_on_age = False
-        max_cards = min(len(card_payloads), self.max_results)
-        for card_index, card in enumerate(card_payloads[: self.max_results], start=1):
+        recent_cards_fetched = 0
+        for card_index, card in enumerate(card_payloads, start=1):
             if _is_card_older_than_lookback(card, self.max_posting_age_days):
-                stopped_on_age = True
                 LOG.info(
-                    "handshake_search_stopped_on_age url=%s card_index=%s max_cards=%s title=%s",
+                    "handshake_card_skipped_stale url=%s card_index=%s title=%s",
                     search_url,
                     card_index,
-                    max_cards,
                     str(card.get("title") or ""),
                 )
+                continue
+            if recent_cards_fetched >= self.max_results:
                 break
             company = str(card.get("company") or "")
             title = str(card.get("title") or "")
@@ -288,10 +288,10 @@ class HandshakeSource(SourceConnector):
             if not company or not title:
                 continue
             LOG.info(
-                "handshake_card_fetch_started url=%s card_index=%s max_cards=%s title=%s",
+                "handshake_card_fetch_started url=%s card_index=%s recent_limit=%s title=%s",
                 search_url,
                 card_index,
-                max_cards,
+                self.max_results,
                 title,
             )
             card_text = "\n".join([company, title, meta, location, freshness])
@@ -339,15 +339,17 @@ class HandshakeSource(SourceConnector):
             )
             if parsed is not None:
                 rows.append(parsed)
+                recent_cards_fetched += 1
                 LOG.info(
-                    "handshake_card_fetch_finished url=%s card_index=%s max_cards=%s title=%s quality=%s resolved_url=%s",
+                    "handshake_card_fetch_finished url=%s card_index=%s recent_limit=%s title=%s quality=%s resolved_url=%s",
                     search_url,
                     card_index,
-                    max_cards,
+                    self.max_results,
                     title,
                     str(parsed.get("source_metadata", {}).get("detail_quality_status") or ""),
                     str(parsed.get("url") or ""),
                 )
+        stopped_on_age = _all_cards_are_stale(card_payloads, self.max_posting_age_days)
         return SearchPageFetch(rows=rows, card_count=len(card_payloads), stopped_on_age=stopped_on_age)
 
     def _fetch_job_page(self, page, job_url: str) -> dict | None:
@@ -505,6 +507,21 @@ def _is_card_older_than_lookback(card: dict[str, str], max_posting_age_days: int
         return False
     cutoff = (datetime.now(timezone.utc) - timedelta(days=max_posting_age_days)).date()
     return posted_date < cutoff
+
+
+def _all_cards_are_stale(cards: list[dict[str, str]], max_posting_age_days: int) -> bool:
+    """Only end pagination when every visible, dateable card is outside the window.
+
+    Handshake can insert promoted listings into a newest-first result page, so a
+    single old card is not proof that later cards are also stale.
+    """
+
+    if not cards:
+        return False
+    dated_cards = [card for card in cards if _relative_age_to_iso(str(card.get("freshness") or ""))]
+    return bool(dated_cards) and len(dated_cards) == len(cards) and all(
+        _is_card_older_than_lookback(card, max_posting_age_days) for card in dated_cards
+    )
 
 
 def _build_row(

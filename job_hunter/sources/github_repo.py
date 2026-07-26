@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import logging
 import re
 import urllib.request
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 
-from job_hunter.sources.base import SourceConnector, USER_AGENT
+from job_hunter.sources.base import SourceConnector, USER_AGENT, clamp_bulk_source_timeout
 
 LOG = logging.getLogger(__name__)
 TABLE_HEADER = "| Company | Role | Location | Application/Link | Date Posted |"
@@ -14,15 +16,40 @@ BACK_TO_TOP_MARKER = "[⬆️ Back to Top"
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]*\]\((https?://[^)]+)\)")
 HTTP_URL_RE = re.compile(r"https?://[^\s)]+")
 MONTH_DAY_RE = re.compile(r"^(?P<month>[A-Za-z]{3,9})\s+(?P<day>\d{1,2})$")
+DETAIL_MIN_TEXT_LENGTH = 400
+
+
+class _VisibleTextParser(HTMLParser):
+    """Extract human-readable text while ignoring executable and styling content."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._ignored_depth = 0
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        _ = attrs
+        if tag.lower() in {"script", "style", "noscript", "svg"}:
+            self._ignored_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"script", "style", "noscript", "svg"} and self._ignored_depth:
+            self._ignored_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._ignored_depth:
+            self.parts.append(data)
 
 
 class GithubRepoSource(SourceConnector):
-    def __init__(self, readme_urls: list[str]) -> None:
+    def __init__(self, readme_urls: list[str], max_posting_age_days: int = 7) -> None:
         super().__init__(name="github_repo")
         self.readme_urls = readme_urls
+        self.max_posting_age_days = max_posting_age_days
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
         results: list[dict] = []
+        detail_timeout_seconds = clamp_bulk_source_timeout(timeout_seconds)
         for readme_url in self.readme_urls:
             try:
                 req = urllib.request.Request(readme_url, headers={"User-Agent": USER_AGENT})
@@ -46,6 +73,14 @@ class GithubRepoSource(SourceConnector):
                     date_text=date_text,
                 )
                 posted_at = _normalize_posted_at(date_text)
+                if posted_at and not _is_within_lookback(posted_at, self.max_posting_age_days):
+                    continue
+                listing_description = (
+                    f"Imported from GitHub internship repository. "
+                    f"Repository-listed date: {date_text}."
+                )
+                detail_text = _fetch_detail_text(url, detail_timeout_seconds) if row["application_url"] else ""
+                detail_quality_status = "detail_complete" if detail_text else "summary_only"
                 results.append(
                     {
                         "source": self.name,
@@ -56,11 +91,15 @@ class GithubRepoSource(SourceConnector):
                         "company": company,
                         "location": location,
                         "posted_at": posted_at,
-                        "description": (
-                            f"Imported from GitHub internship repository. "
-                            f"Repository-listed date: {date_text}."
-                        ),
+                        "description": detail_text or listing_description,
                         "skills": [],
+                        "source_metadata": {
+                            "external_apply_url": row["application_url"],
+                            "detail_fetch_attempted": bool(row["application_url"]),
+                            "detail_quality_status": detail_quality_status,
+                            "description_provenance": "github_repo_detail" if detail_text else "github_repo_listing",
+                            "listing_description": listing_description,
+                        },
                     }
                 )
         return results
@@ -141,11 +180,48 @@ def _clean_cell(value: str) -> str:
 def _extract_url(value: str) -> str:
     markdown_match = MARKDOWN_LINK_RE.search(value)
     if markdown_match:
-        return markdown_match.group(1).strip()
+        return _clean_extracted_url(markdown_match.group(1))
     plain_match = HTTP_URL_RE.search(value)
     if plain_match:
-        return plain_match.group(0).strip()
+        return _clean_extracted_url(plain_match.group(0))
     return ""
+
+
+def _clean_extracted_url(value: str) -> str:
+    # Some repository rows append HTML badges immediately after a Markdown link.
+    url = html.unescape(value).strip()
+    url = re.split(r"[\s\"'<]", url, maxsplit=1)[0]
+    return url.rstrip(".,;")
+
+
+def _fetch_detail_text(url: str, timeout_seconds: int) -> str:
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+            content_type = str(resp.headers.get("Content-Type", "")).lower()
+            if "html" not in content_type:
+                return ""
+            document = resp.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        LOG.info("github_repo_detail_fetch_failed url=%s error=%s", url, exc)
+        return ""
+
+    parser = _VisibleTextParser()
+    try:
+        parser.feed(document)
+        parser.close()
+    except Exception as exc:
+        LOG.info("github_repo_detail_parse_failed url=%s error=%s", url, exc)
+        return ""
+
+    text = re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
+    return text if len(text) >= DETAIL_MIN_TEXT_LENGTH else ""
 
 
 def _normalize_posted_at(value: str) -> str | None:
@@ -166,6 +242,17 @@ def _normalize_posted_at(value: str) -> str | None:
     if parsed.month > now.month + 1:
         parsed = parsed.replace(year=year - 1)
     return parsed.replace(tzinfo=timezone.utc).isoformat()
+
+
+def _is_within_lookback(posted_at: str, max_posting_age_days: int) -> bool:
+    if max_posting_age_days <= 0:
+        return True
+    try:
+        posted_dt = datetime.fromisoformat(posted_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    age_seconds = (datetime.now(timezone.utc) - posted_dt).total_seconds()
+    return age_seconds <= max_posting_age_days * 86400
 
 
 def _fallback_external_id(readme_url: str, company: str, role: str, location: str, date_text: str) -> str:

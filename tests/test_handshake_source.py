@@ -7,6 +7,7 @@ from job_hunter.sources.handshake import (
     HandshakeAccessWallError,
     _build_row,
     _build_row_from_job_page,
+    _all_cards_are_stale,
     _discover_card_url,
     _dedupe_rows,
     _extract_cards_from_page_text,
@@ -572,6 +573,20 @@ class HandshakeSourceTests(unittest.TestCase):
             "freshness": "2wk ago",
         }
         self.assertTrue(_is_card_older_than_lookback(card, 7))
+
+    def test_stale_promoted_card_does_not_end_recent_page_scan(self) -> None:
+        cards = [
+            {"title": "Promoted old job", "freshness": "2mo ago"},
+            {"title": "Recent job", "freshness": "1d ago"},
+        ]
+        self.assertFalse(_all_cards_are_stale(cards, 7))
+
+    def test_all_stale_cards_end_recent_pagination(self) -> None:
+        cards = [
+            {"title": "Old job one", "freshness": "2mo ago"},
+            {"title": "Old job two", "freshness": "3wk ago"},
+        ]
+        self.assertTrue(_all_cards_are_stale(cards, 7))
 
     def test_card_within_lookback(self) -> None:
         card = {

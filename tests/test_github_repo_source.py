@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timedelta, timezone
 
-from job_hunter.sources.github_repo import _normalize_posted_at, _parse_markdown_table
+from job_hunter.sources.github_repo import _extract_url, _is_within_lookback, _normalize_posted_at, _parse_markdown_table
 
 
 SAMPLE_MARKDOWN = """
@@ -35,6 +36,22 @@ class GithubRepoSourceTests(unittest.TestCase):
         posted_at = _normalize_posted_at("May 22")
         self.assertIsNotNone(posted_at)
         self.assertTrue(str(posted_at).startswith("2026-05-22"))
+
+    def test_extract_url_removes_html_appended_after_markdown_link(self) -> None:
+        url = _extract_url(
+            '[Apply](https://www.janestreet.com/join-jane-street/position/8611307002/?utm_source=github-vansh-ouckah"><img)'
+        )
+        self.assertEqual(
+            url,
+            "https://www.janestreet.com/join-jane-street/position/8611307002/?utm_source=github-vansh-ouckah",
+        )
+
+    def test_lookback_excludes_stale_repository_rows_before_detail_fetch(self) -> None:
+        now = datetime.now(timezone.utc)
+        stale = (now - timedelta(days=8)).isoformat()
+        recent = (now - timedelta(days=1)).isoformat()
+        self.assertFalse(_is_within_lookback(stale, max_posting_age_days=7))
+        self.assertTrue(_is_within_lookback(recent, max_posting_age_days=7))
 
 
 if __name__ == "__main__":

@@ -99,7 +99,7 @@ US_CITY_STATE_RE = re.compile(
     flags=re.IGNORECASE,
 )
 NEGATED_SPONSORSHIP_REGEXES = {
-    "no_sponsorship": re.compile(r"\b(no|not|without)\s+(visa\s+)?sponsorship\b", flags=re.IGNORECASE),
+    "no_sponsorship": re.compile(r"\b(no|not|without)\s+(visa\s+)?sponsorships?\b", flags=re.IGNORECASE),
     "cannot_sponsor": re.compile(r"\b(cannot|can't|unable to)\s+sponsor\b", flags=re.IGNORECASE),
     "do_not_sponsor": re.compile(r"\b(do not|does not|don't|doesn't)\s+.*\bsponsor(ship)?\b", flags=re.IGNORECASE),
     "no_current_future_sponsorship": re.compile(
@@ -119,7 +119,8 @@ NEGATED_SPONSORSHIP_REGEXES = {
         flags=re.IGNORECASE,
     ),
     "sponsorship_not_available": re.compile(
-        r"\b(visa\s+)?sponsorship\s+is\s+not\s+available\b|\b(visa\s+)?sponsorship\s+unavailable\b",
+        r"\b(visa\s+)?sponsorships?\s+(?:is|are)\s+not\s+available\b|"
+        r"\b(visa\s+)?sponsorships?\s+unavailable\b",
         flags=re.IGNORECASE,
     ),
 }
@@ -190,7 +191,12 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
     if settings.use_rss and rss_feeds:
         sources.append(RssSource(feeds=rss_feeds))
     if settings.use_github_repos and github_repo_readmes:
-        sources.append(GithubRepoSource(readme_urls=github_repo_readmes))
+        sources.append(
+            GithubRepoSource(
+                readme_urls=github_repo_readmes,
+                max_posting_age_days=settings.max_posting_age_days,
+            )
+        )
     if settings.use_ashby and ashby_boards:
         sources.append(AshbySource(board_slugs=ashby_boards))
     if settings.use_handshake and handshake_search_urls:
@@ -665,6 +671,12 @@ def _evaluate_source_quality(job: JobRecord) -> tuple[str, list[str], bool]:
             return "missing_posted_at", ["linkedin_missing_posted_at"], False
         return "ok", [], True
 
+    if job.source == "github_repo":
+        status = str(job.source_metadata.get("detail_quality_status", "") or "").strip().lower()
+        if status != "detail_complete":
+            return "summary_only", ["github_repo_summary_only"], False
+        return "detail_complete", ["github_repo_detail_complete"], True
+
     if job.source != "handshake":
         return "ok", [], True
 
@@ -936,11 +948,13 @@ def _norm_token(value: str) -> str:
 
 
 def _dedupe_key(job: JobRecord) -> str:
+    external_apply_url = str(job.source_metadata.get("external_apply_url") or "").strip()
+    identity_url = external_apply_url or job.url
     base = "|".join(
         [
             _norm_token(job.company),
             _norm_token(job.title),
-            _canonical_url(job.url),
+            _canonical_url(identity_url),
         ]
     )
     if not base.strip("|"):

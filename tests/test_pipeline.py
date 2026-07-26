@@ -267,6 +267,25 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertIn("sponsorship_not_available", negative)
         self.assertEqual(positive, [])
 
+    def test_eligibility_rejects_plural_no_sponsorships_available(self) -> None:
+        job = JobRecord(
+            source="linkedin",
+            external_id="4b-plural",
+            url="https://example.com/4b-plural",
+            title="AI/ML Data Engineering Intern",
+            company="Example",
+            location="St. Louis, MO",
+            is_internship=True,
+            posted_at="2026-07-25",
+            description="No sponsorships available.",
+            ingested_at="2026-07-25T00:00:00+00:00",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("no_sponsorship", negative)
+        self.assertEqual(positive, [])
+
     def test_eligibility_rejects_us_work_authorization_required_even_with_visa_sponsorship(self) -> None:
         job = JobRecord(
             source="handshake",
@@ -671,6 +690,36 @@ class PipelineUnitTests(unittest.TestCase):
             ingested_at="now",
         )
         self.assertEqual(_dedupe_key(j1), _dedupe_key(j2))
+
+    def test_dedupe_key_uses_external_apply_url_for_reposted_listings(self) -> None:
+        first = JobRecord(
+            source="linkedin",
+            external_id="111",
+            url="https://www.linkedin.com/jobs/view/111",
+            title="AI Engineer Intern",
+            company="Jobright.ai",
+            location="United States",
+            is_internship=True,
+            posted_at="2026-07-22",
+            description="AI internship",
+            ingested_at="now",
+            source_metadata={"external_apply_url": "https://jobright.ai/jobs/info/abc?utm_source=linkedin"},
+        )
+        repost = JobRecord(
+            source="linkedin",
+            external_id="222",
+            url="https://www.linkedin.com/jobs/view/222",
+            title="AI Engineer Intern",
+            company="Jobright.ai",
+            location="United States",
+            is_internship=True,
+            posted_at="2026-07-25",
+            description="AI internship",
+            ingested_at="now",
+            source_metadata={"external_apply_url": "https://jobright.ai/jobs/info/abc?utm_source=repost"},
+        )
+
+        self.assertEqual(_dedupe_key(first), _dedupe_key(repost))
 
 
 class PipelineIntegrationTests(unittest.TestCase):
@@ -1428,6 +1477,25 @@ class PipelineIntegrationTests(unittest.TestCase):
         status, reasons, notify_allowed = _evaluate_source_quality(job)
         self.assertEqual(status, "missing_posted_at")
         self.assertEqual(reasons, ["linkedin_missing_posted_at"])
+        self.assertFalse(notify_allowed)
+
+    def test_github_summary_only_job_is_not_notifiable(self) -> None:
+        job = JobRecord(
+            source="github_repo",
+            external_id="github-summary-only-1",
+            url="https://example.com/job",
+            title="Machine Learning Engineer Intern",
+            company="Example",
+            location="United States",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Imported from GitHub internship repository.",
+            ingested_at=datetime.now(timezone.utc).isoformat(),
+            source_metadata={"detail_quality_status": "summary_only"},
+        )
+        status, reasons, notify_allowed = _evaluate_source_quality(job)
+        self.assertEqual(status, "summary_only")
+        self.assertEqual(reasons, ["github_repo_summary_only"])
         self.assertFalse(notify_allowed)
 
     def test_query_level_run_logs_record_linkedin_search_url_stats(self) -> None:
