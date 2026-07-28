@@ -189,6 +189,17 @@ class ApplicationService:
         finally:
             session.close()
 
+    def _should_keep_manual_gate_open(self, result: SubmitResult) -> bool:
+        """Keep session-bound ATS authentication alive across user checkpoints."""
+        return bool(
+            result.status == "blocked"
+            and result.blocker is not None
+            and result.blocker.reason in {
+                "manual_checkpoint_required",
+                "candidate_account_bootstrap_required",
+            }
+        )
+
     def handoff_job(
         self,
         *,
@@ -402,21 +413,38 @@ class ApplicationService:
                 increment_attempt_count=True,
                 output_dir=str(output_dir),
             )
-            submit_started_at = datetime.now(timezone.utc)
-            result = adapter.submit(page=page, resolver=resolver, context=context)
-            result = self._maybe_complete_email_verification(
-                adapter_name=adapter_name,
-                adapter=adapter,
-                page=page,
-                result=result,
-                context=context,
-                resolver=resolver,
-                recipient_email=profile.identity.email,
-                submit_started_at=submit_started_at,
-            )
-            self._persist_result(run_id=run_id, result=result, output_dir=output_dir, page=page)
-            self._maybe_notify(job=job, run_id=run_id, result=result)
-            return self._run_record(run_id)
+            while True:
+                submit_started_at = datetime.now(timezone.utc)
+                result = adapter.submit(page=page, resolver=resolver, context=context)
+                result = self._maybe_complete_email_verification(
+                    adapter_name=adapter_name,
+                    adapter=adapter,
+                    page=page,
+                    result=result,
+                    context=context,
+                    resolver=resolver,
+                    recipient_email=profile.identity.email,
+                    submit_started_at=submit_started_at,
+                )
+                self._persist_result(run_id=run_id, result=result, output_dir=output_dir, page=page)
+                if not self._should_keep_manual_gate_open(result):
+                    self._maybe_notify(job=job, run_id=run_id, result=result)
+                    return self._run_record(run_id)
+
+                if notify is not None:
+                    checkpoint_row = self.store.get_application_run(run_id)
+                    if checkpoint_row is not None:
+                        notify(self._manual_checkpoint_message(checkpoint_row))
+                if wait_for_user is None:
+                    return self._run_record(run_id)
+                self.store.update_application_run(
+                    run_id,
+                    status="applying",
+                    blocked_reason=None,
+                    blocked_payload=None,
+                    increment_attempt_count=True,
+                )
+                wait_for_user()
         finally:
             session.close()
 

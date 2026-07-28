@@ -211,7 +211,7 @@ class AnswerResolver:
         if question.rstrip("*").strip() == "school":
             return "education.school"
         for patterns, key in _QUESTION_FIELD_MAP:
-            if any(pattern in question or pattern == field_name for pattern in patterns):
+            if any(_question_contains_pattern(question, pattern) or pattern == field_name for pattern in patterns):
                 return key
         return ""
 
@@ -228,7 +228,6 @@ class AnswerResolver:
                 continue
             return capability
         return None
-
     def _resolve_intent_value(
         self,
         *,
@@ -487,6 +486,11 @@ class AnswerResolver:
                     return AnswerResolution(answer=value, source=f"computed:{key}")
 
         return None
+
+
+def _question_contains_pattern(question: str, pattern: str) -> bool:
+    """Match field terms as words so `city` does not match `ethnicity`."""
+    return re.search(rf"(?<!\w){re.escape(pattern)}(?!\w)", question) is not None
 
 
 def _graduation_year(graduation_date: str) -> str:

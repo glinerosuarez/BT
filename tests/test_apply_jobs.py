@@ -471,6 +471,11 @@ class ApplyJobsTests(unittest.TestCase):
         with self.assertRaises(ResolutionError):
             resolver.resolve(question_text="What is your favorite database?")
 
+    def test_answer_resolver_does_not_match_city_inside_ethnicity(self) -> None:
+        resolver = self._resolver()
+        with self.assertRaises(ResolutionError):
+            resolver.resolve(question_text="Please select the ethnicity which most accurately describes how you identify yourself.*")
+
     def test_answer_resolver_computes_split_name_fields_when_structured_keys_are_absent(self) -> None:
         resolver = self._resolver()
         self.assertEqual(
@@ -1460,6 +1465,41 @@ class ApplyJobsTests(unittest.TestCase):
             "United States",
         )
 
+    def test_workday_listbox_verification_reads_selected_item_when_button_is_empty(self) -> None:
+        class Locator:
+            def __init__(self, *, present: bool, text: str = "", value: str = "") -> None:
+                self.present = present
+                self.text = text
+                self.value = value
+
+            @property
+            def first(self):
+                return self
+
+            def count(self) -> int:
+                return int(self.present)
+
+            def inner_text(self) -> str:
+                return self.text
+
+            def get_attribute(self, name: str) -> str | None:
+                return self.value if name == "value" else None
+
+        class Page:
+            def locator(self, selector: str):
+                if selector == 'button[name="countryRegion"]':
+                    return Locator(present=True)
+                if 'data-automation-id="selectedItem"' in selector:
+                    return Locator(present=True, text="California")
+                return Locator(present=False)
+
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._listbox_current_value(Page(), {"field_name": "countryRegion"}),
+            "California",
+        )
+
     def test_workday_listbox_options_use_the_opened_button_menu(self) -> None:
         class Locator:
             def __init__(self, *, count: int, controls_id: str = "") -> None:
@@ -1489,6 +1529,95 @@ class ApplyJobsTests(unittest.TestCase):
 
         self.assertEqual(options.count(), 1)
         self.assertTrue(page.selectors[0].startswith('[id="country-options"]'))
+
+    def test_workday_prompt_options_use_the_active_input_popup(self) -> None:
+        class Locator:
+            def __init__(self, *, count: int, controls_id: str = "") -> None:
+                self._count = count
+                self._controls_id = controls_id
+
+            def count(self) -> int:
+                return self._count
+
+            def get_attribute(self, name: str) -> str | None:
+                return self._controls_id if name == "aria-controls" else None
+
+        class Page:
+            def __init__(self) -> None:
+                self.selectors: list[str] = []
+
+            def locator(self, selector: str):
+                self.selectors.append(selector)
+                if selector.startswith('[id="source-options"]'):
+                    return Locator(count=1)
+                return Locator(count=3)
+
+        adapter = WorkdayAdapter()
+        page = Page()
+
+        options = adapter._prompt_options(
+            page,
+            {"container_id": "source-container"},
+            Locator(count=1, controls_id="source-options"),
+        )
+
+        self.assertEqual(options.count(), 1)
+        self.assertTrue(page.selectors[0].startswith('[id="source-options"]'))
+
+    def test_workday_prompt_selection_path_supports_nested_choices(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._prompt_selection_path("A Job Board > LinkedIn"),
+            ["A Job Board", "LinkedIn"],
+        )
+        self.assertEqual(adapter._prompt_selection_path("Yes"), ["Yes"])
+
+    def test_workday_prompt_multi_values_supports_explicit_skill_choices(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(adapter._prompt_multi_values("Python || SQL || PyTorch"), ["Python", "SQL", "PyTorch"])
+        self.assertEqual(adapter._prompt_multi_values("Yes"), ["Yes"])
+
+    def test_workday_degree_equivalence_accepts_workday_short_labels(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="degree",
+                current_value="Master",
+                desired_value="Master's Degree",
+            )
+        )
+        self.assertFalse(
+            adapter._is_effectively_same_value(
+                field_name="degree",
+                current_value="Bachelor",
+                desired_value="Master's Degree",
+            )
+        )
+
+    def test_workday_school_other_fallback_requires_portal_instruction(self) -> None:
+        class Page:
+            def locator(self, selector: str):
+                class Body:
+                    def inner_text(self, timeout: int = 0) -> str:
+                        return "Please type OTHER if your school is not listed."
+
+                return Body()
+
+        adapter = WorkdayAdapter()
+
+        self.assertTrue(
+            adapter._should_use_other_school(
+                Page(),
+                {"question_text": "School or University*"},
+                0,
+                ["University of Southern California"],
+            )
+        )
+        self.assertFalse(
+            adapter._should_use_other_school(Page(), {"question_text": "School"}, 1, ["A", "B"]))
 
     def test_workday_prompt_value_rejects_uncommitted_search_text(self) -> None:
         class Locator:
@@ -2346,6 +2475,28 @@ class ApplyJobsTests(unittest.TestCase):
 
         self.assertEqual(resumed.status, "submitted")
         self.assertIn("Handshake Fellow application steps", manual_gate_messages[0])
+
+    def test_manual_gate_keeps_session_open_for_manual_or_account_checkpoints(self) -> None:
+        service = self._service(FakePage(url="https://example.test", easy_apply=False, greenhouse=False))
+
+        self.assertTrue(
+            service._should_keep_manual_gate_open(
+                SubmitResult(
+                    status="blocked",
+                    current_url="https://example.test",
+                    blocker=Blocker(reason="candidate_account_bootstrap_required"),
+                )
+            )
+        )
+        self.assertFalse(
+            service._should_keep_manual_gate_open(
+                SubmitResult(
+                    status="blocked",
+                    current_url="https://example.test",
+                    blocker=Blocker(reason="missing_required_answer"),
+                )
+            )
+        )
 
     def test_resume_with_manual_gate_prefers_stored_current_url(self) -> None:
         class SubmittedICIMSAdapter(ICIMSAdapter):

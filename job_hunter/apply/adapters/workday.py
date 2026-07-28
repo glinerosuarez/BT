@@ -47,6 +47,19 @@ def _canonical_country(country: str) -> str:
     return lowered
 
 
+def _canonical_degree(degree: str) -> str:
+    normalized = re.sub(r"[^a-z]", "", (degree or "").lower())
+    if normalized in {"bachelor", "bachelors", "bachelorsdegree"}:
+        return "bachelor"
+    if normalized in {"master", "masters", "mastersdegree"}:
+        return "master"
+    if normalized in {"doctorate", "doctoral", "phd", "phddegree"}:
+        return "doctorate"
+    if normalized in {"associate", "associates", "associatesdegree"}:
+        return "associate"
+    return normalized
+
+
 class WorkdayAdapter:
     adapter_name = "workday"
 
@@ -60,8 +73,10 @@ class WorkdayAdapter:
 
     def submit(self, *, page, resolver, context: AdapterContext) -> SubmitResult:
         current_url = str(getattr(page, "url", "") or "")
+        account_sign_in_attempted = False
         for _ in range(6):
             self._wait_for_render(page)
+            self._accept_legal_notice(page)
             confirmation = self._extract_confirmation(page)
             if confirmation:
                 return SubmitResult(
@@ -114,6 +129,11 @@ class WorkdayAdapter:
                 )
 
             if self._has_account_gate(page):
+                if not account_sign_in_attempted:
+                    account_sign_in_attempted = True
+                    if self._sign_in_to_candidate_account(page=page, context=context):
+                        current_url = str(getattr(page, "url", "") or current_url)
+                        continue
                 return self._blocked(
                     "candidate_account_bootstrap_required",
                     page,
@@ -136,6 +156,47 @@ class WorkdayAdapter:
             question_text="Unsupported Workday flow shape.",
             details={"current_url": current_url},
         )
+
+    def _sign_in_to_candidate_account(self, *, page, context: AdapterContext) -> bool:
+        """Use the local, host-scoped Workday credential only on an account gate."""
+        profile = context.profile
+        host = urlparse(str(getattr(page, "url", "") or "")).netloc.lower()
+        credential = profile.workday_credential_for_host(host) if profile is not None and host else None
+        if credential is None or not hasattr(page, "locator"):
+            return False
+        try:
+            email = page.locator('input[data-automation-id="email"]:visible').first
+            if email.count() == 0:
+                email_flow = page.locator('button[data-automation-id="SignInWithEmailButton"]:visible').first
+                if email_flow.count() == 0:
+                    header_sign_in = page.locator('[data-automation-id="utilityButtonSignIn"]:visible').first
+                    if header_sign_in.count() > 0:
+                        header_sign_in.click(force=True)
+                        self._wait(page, 500)
+                    email_flow = page.locator('button[data-automation-id="SignInWithEmailButton"]:visible').first
+                if email_flow.count() > 0:
+                    email_flow.click(force=True)
+                    # Some Workday tenants take several seconds to replace the
+                    # provider chooser with the email/password form.
+                    self._wait(page, 1000)
+            for _ in range(60):
+                email = page.locator('input[data-automation-id="email"]:visible').first
+                password = page.locator('input[data-automation-id="password"]:visible').first
+                submit = page.locator('[data-automation-id="click_filter"]:visible').first
+                if submit.count() == 0:
+                    submit = page.locator('button[data-automation-id="signInSubmitButton"]:visible').first
+                if email.count() > 0 and password.count() > 0 and submit.count() > 0:
+                    break
+                self._wait(page, 250)
+            if email.count() == 0 or password.count() == 0 or submit.count() == 0:
+                return False
+            email.fill(credential.email)
+            password.fill(credential.password)
+            submit.click(force=True)
+            self._wait(page, 6000)
+            return True
+        except Exception:
+            return False
 
     def _submit_form(self, *, page, resolver, context: AdapterContext) -> SubmitResult:
         steps: list[StepSnapshot] = []
@@ -401,6 +462,22 @@ class WorkdayAdapter:
             and not self._has_account_gate(page)
             and self._has_application_form_widgets(page)
         )
+
+    def _accept_legal_notice(self, page) -> bool:
+        """Dismiss Workday's cookie notice when it obscures the application flow."""
+        if not hasattr(page, "locator"):
+            return False
+        try:
+            accept = page.locator(
+                'button[data-automation-id="legalNoticeAcceptButton"]:visible'
+            ).first
+            if accept.count() == 0:
+                return False
+            accept.click(force=True)
+            self._wait(page, 300)
+            return True
+        except Exception:
+            return False
 
     def _extract_confirmation(self, page) -> dict[str, object]:
         text = self._page_text(page).lower()
@@ -1042,6 +1119,8 @@ class WorkdayAdapter:
             desired_value=desired_value,
         ):
             return True
+        if field_name.strip().lower() == "degree":
+            return _canonical_degree(current_value) == _canonical_degree(desired_value)
         return current == desired
 
     def _is_us_state_equivalent(self, *, field_name: str, current_value: str, desired_value: str) -> bool:
@@ -1058,6 +1137,29 @@ class WorkdayAdapter:
 
     def _normalize_option_text(self, value: str) -> str:
         return " ".join((value or "").strip().lower().split())
+
+    def _prompt_selection_path(self, value: str) -> list[str]:
+        """Split an explicit Workday hierarchy while preserving ordinary answers."""
+        path = [part.strip() for part in value.split(">")]
+        return [part for part in path if part] or [value.strip()]
+
+    def _prompt_multi_values(self, value: str) -> list[str]:
+        """Allow answer rules to express a sequence of Workday multi-select choices."""
+        values = [part.strip() for part in value.split("||")]
+        return [part for part in values if part] or [value.strip()]
+
+    def _should_use_other_school(
+        self,
+        page,
+        field: dict[str, object],
+        path_index: int,
+        selection_path: list[str],
+    ) -> bool:
+        question = str(field.get("question_text") or field.get("field_name") or "").lower()
+        if path_index != 0 or len(selection_path) != 1 or not any(token in question for token in ("school", "university")):
+            return False
+        page_text = self._page_text_once(page).lower()
+        return "type other" in page_text and "school is not listed" in page_text
 
     def _listbox_option_match_score(self, *, field_name: str, target: str, candidate: str) -> int:
         normalized_target = self._normalize_option_text(target)
@@ -1129,14 +1231,14 @@ class WorkdayAdapter:
             self._wait(page, 200)
             return
         if field_type == "prompt-input":
+            prompt_values = self._prompt_multi_values(value)
+            if len(prompt_values) > 1:
+                for prompt_value in prompt_values:
+                    self._select_multi_prompt_value(page, field, prompt_value)
+                return
             locator = page.locator(selector).first
-            locator.fill("")
-            locator.fill(value)
-            self._wait(page, 500)
-            options = page.locator('[role="option"], [data-automation-id="promptOption"]')
-            normalized_target = self._normalize_option_text(value)
-            option_locator = None
-            best_match_score = 0
+            selection_path = self._prompt_selection_path(value)
+            expected_target = selection_path[-1]
             field_name = str(field.get("field_name") or "")
             selected_country = ""
             if "countryphonecode" in field_name.lower():
@@ -1147,35 +1249,71 @@ class WorkdayAdapter:
                     )
                 except Exception:
                     selected_country = ""
-            for _ in range(20):
-                for index in range(options.count()):
-                    candidate = options.nth(index)
-                    try:
-                        if not candidate.is_visible():
+            for path_index, target in enumerate(selection_path):
+                if path_index == 0:
+                    locator.click(force=True)
+                    locator.fill("")
+                    locator.fill(target)
+                    self._wait(page, 750)
+                options = self._prompt_options(page, field, locator)
+                option_locator = None
+                best_match_score = 0
+                for _ in range(20):
+                    for index in range(options.count()):
+                        candidate = options.nth(index)
+                        try:
+                            if not candidate.is_visible():
+                                continue
+                        except Exception:
+                            pass
+                        match_score = self._prompt_option_match_score(
+                            field_name=field_name,
+                            target=target,
+                            candidate=str(candidate.inner_text() or ""),
+                            selected_country=selected_country,
+                        )
+                        if match_score == 0:
                             continue
-                    except Exception:
-                        pass
-                    match_score = self._prompt_option_match_score(
-                        field_name=field_name,
-                        target=value,
-                        candidate=str(candidate.inner_text() or ""),
-                        selected_country=selected_country,
-                    )
-                    if match_score > best_match_score:
-                        option_locator = candidate
-                        best_match_score = match_score
-                    if match_score == 4:
+                        if match_score > best_match_score:
+                            option_locator = candidate
+                            best_match_score = match_score
+                        if match_score == 4:
+                            break
+                    if option_locator is not None:
                         break
-                if option_locator is not None:
-                    break
-                self._wait(page, 150)
-            if option_locator is not None:
-                option_locator.click()
-            else:
-                locator.press("ArrowDown")
-                self._wait(page, 150)
-                locator.press("Enter")
-            self._wait(page, 300)
+                    self._wait(page, 150)
+                if option_locator is None:
+                    exact_match = page.get_by_text(target, exact=True)
+                    for index in range(exact_match.count()):
+                        candidate = exact_match.nth(index)
+                        try:
+                            if candidate.is_visible():
+                                candidate.click()
+                                option_locator = candidate
+                                break
+                        except Exception:
+                            continue
+                    if option_locator is None:
+                        if self._should_use_other_school(page, field, path_index, selection_path):
+                            locator.fill("OTHER")
+                            locator.press("Enter")
+                            expected_target = "OTHER"
+                            self._wait(page, 400)
+                            continue
+                        raise RuntimeError(f"prompt option not found for {target!r}")
+                if path_index < len(selection_path) - 1:
+                    branch = option_locator.locator('xpath=ancestor-or-self::*[@role="option"][1]')
+                    side_charm = branch.locator(
+                        '[data-uxi-multiselectlistitem-hassidecharm="true"] > div'
+                    ).last
+                    if side_charm.count() == 0:
+                        raise RuntimeError(f"prompt option has no nested choices for {target!r}")
+                    side_charm.click(force=True)
+                else:
+                    option_locator.click()
+                self._wait(page, 300)
+                if path_index < len(selection_path) - 1:
+                    self._wait(page, 300)
             current_value = self._prompt_current_value(page, field)
             if not current_value or self._prompt_is_invalid(page, field):
                 locator = page.locator(selector).first
@@ -1193,17 +1331,32 @@ class WorkdayAdapter:
                     break
                 self._wait(page, 100)
             if (
-                normalized_target not in self._normalize_option_text(current_value)
+                self._normalize_option_text(expected_target) not in self._normalize_option_text(current_value)
                 or self._prompt_is_invalid(page, field)
             ):
                 raise RuntimeError(
                     "prompt selection was not committed: "
-                    f"current={current_value!r}, desired={value!r}, "
+                    f"current={current_value!r}, desired={expected_target!r}, "
                     f"invalid={self._prompt_is_invalid(page, field)}"
                 )
             return
         if field_type == "listbox-button":
             locator = page.locator(selector).first
+
+            def verify_selection() -> None:
+                current_value = self._normalized_current_value(
+                    field_type=field_type,
+                    current_value=self._listbox_current_value(page, field),
+                )
+                if not self._is_effectively_same_value(
+                    field_name=str(field.get("field_name") or ""),
+                    current_value=current_value,
+                    desired_value=value,
+                ):
+                    raise RuntimeError(
+                        f"listbox selected unexpected value: current={current_value!r}, desired={value!r}"
+                    )
+
             try:
                 locator.click(force=True)
                 self._wait(page, 250)
@@ -1231,18 +1384,7 @@ class WorkdayAdapter:
                     option_locator.click(force=True)
                     self._wait(page, 400)
                     self._wait_for_render(page)
-                    current_value = self._normalized_current_value(
-                        field_type=field_type,
-                        current_value=self._listbox_current_value(page, field),
-                    )
-                    if not self._is_effectively_same_value(
-                        field_name=field_name,
-                        current_value=current_value,
-                        desired_value=value,
-                    ):
-                        raise RuntimeError(
-                            f"listbox selected unexpected value: current={current_value!r}, desired={value!r}"
-                        )
+                    verify_selection()
                     self._wait(page, 400)
                     return
                 keyboard = getattr(page, "keyboard", None)
@@ -1254,6 +1396,7 @@ class WorkdayAdapter:
                     self._wait(page, 150)
                     sibling_input.press("Enter")
                     self._wait(page, 400)
+                    verify_selection()
                     return
                 try:
                     keyboard.press("Home")
@@ -1266,6 +1409,7 @@ class WorkdayAdapter:
                     self._wait(page, 100)
                     keyboard.press("Enter")
                     self._wait(page, 400)
+                    verify_selection()
                     return
                 except Exception:
                     sibling_input = page.locator(f"{selector} + input[type=\"text\"]").first
@@ -1275,6 +1419,7 @@ class WorkdayAdapter:
                     self._wait(page, 150)
                     sibling_input.press("Enter")
                     self._wait(page, 400)
+                    verify_selection()
                     return
             except Exception as exc:
                 raise RuntimeError(f"listbox selection failed: {exc}") from exc
@@ -1360,6 +1505,67 @@ class WorkdayAdapter:
                 raise RuntimeError("select failed") from exc
         raise RuntimeError(f"unsupported field type: {field_type}")
 
+    def _select_multi_prompt_value(self, page, field: dict[str, object], value: str) -> None:
+        """Add one Workday multi-select value without toggling existing selections.
+
+        Workday skills pickers render result rows asynchronously and use a checkbox
+        inside each row. Clicking the row itself is unreliable: it can focus the
+        search input or toggle an already selected item. Target the checkbox after
+        the exact result has rendered instead.
+        """
+        if self._prompt_has_selected_value(page, field, value):
+            return
+        selector = str(field.get("selector") or "")
+        if not selector:
+            raise RuntimeError("missing multi-select prompt selector")
+        search = page.locator(selector).first
+        search.click(force=True)
+        search.fill(value)
+
+        option_locator = None
+        for _ in range(30):
+            options = self._prompt_options(page, field, search)
+            for index in range(options.count()):
+                candidate = options.nth(index)
+                try:
+                    if not candidate.is_visible():
+                        continue
+                    candidate_text = str(candidate.inner_text() or "")
+                except Exception:
+                    continue
+                if self._normalize_option_text(candidate_text) != self._normalize_option_text(value):
+                    continue
+                option_locator = candidate
+                break
+            if option_locator is not None:
+                break
+            self._wait(page, 250)
+        if option_locator is None:
+            raise RuntimeError(f"multi-select option not found for {value!r}")
+
+        checkbox = option_locator.locator('input[type="checkbox"]').first
+        if checkbox.count() > 0:
+            try:
+                if not checkbox.is_checked():
+                    checkbox.check(force=True)
+            except Exception:
+                checkbox.click(force=True)
+        else:
+            checkbox = option_locator.locator('[role="checkbox"]').first
+            if checkbox.count() == 0:
+                raise RuntimeError(f"multi-select checkbox not found for {value!r}")
+            checked = str(checkbox.get_attribute("aria-checked") or "").lower() == "true"
+            if not checked:
+                checkbox.click(force=True)
+
+        for _ in range(20):
+            if self._prompt_has_selected_value(page, field, value):
+                search.fill("")
+                self._wait(page, 200)
+                return
+            self._wait(page, 150)
+        raise RuntimeError(f"multi-select value was not committed: {value!r}")
+
     def _listbox_current_value(self, page, field: dict[str, object]) -> str:
         """Read from a stable Workday selector after React replaces the opened button."""
         field_name = str(field.get("field_name") or "").strip()
@@ -1367,9 +1573,47 @@ class WorkdayAdapter:
             escaped_name = field_name.replace("\\", "\\\\").replace('"', '\\"')
             stable_locator = page.locator(f'button[name="{escaped_name}"]').first
             if stable_locator.count() > 0:
-                return str(stable_locator.inner_text() or "")
+                value = self._locator_value(stable_locator)
+                if value:
+                    return value
+                # Some Workday dropdowns keep the selected text in a sibling
+                # input or form-field selected-item node instead of the button.
+                selected_selectors = (
+                    f'button[name="{escaped_name}"] ~ input[type="hidden"]',
+                    f'button[name="{escaped_name}"] ~ input[type="text"]',
+                    (
+                        f'[data-automation-id^="formField-"]:has(button[name="{escaped_name}"]) '
+                        '[data-automation-id="selectedItem"]'
+                    ),
+                )
+                for selector in selected_selectors:
+                    try:
+                        selected_value = self._locator_value(page.locator(selector).first)
+                    except Exception:
+                        continue
+                    if selected_value:
+                        return selected_value
         selector = str(field.get("selector") or "")
-        return str(page.locator(selector).first.inner_text() or "")
+        return self._locator_value(page.locator(selector).first)
+
+    def _locator_value(self, locator) -> str:
+        try:
+            if locator.count() == 0:
+                return ""
+        except Exception:
+            return ""
+        for reader in (
+            lambda: locator.inner_text(),
+            lambda: locator.get_attribute("value"),
+            lambda: locator.get_attribute("aria-label"),
+        ):
+            try:
+                value = str(reader() or "").strip()
+            except Exception:
+                continue
+            if value:
+                return value
+        return ""
 
     def _prompt_current_value(self, page, field: dict[str, object]) -> str:
         container_id = str(field.get("container_id") or "").strip()
@@ -1390,6 +1634,22 @@ class WorkdayAdapter:
             return label_text
         return ""
 
+    def _prompt_has_selected_value(self, page, field: dict[str, object], value: str) -> bool:
+        container_id = str(field.get("container_id") or "").strip()
+        if not container_id:
+            return False
+        escaped_id = container_id.replace("\\", "\\\\").replace('"', '\\"')
+        selected = page.locator(f'[id="{escaped_id}"] [data-automation-id="selectedItem"]')
+        target = self._normalize_option_text(value)
+        for index in range(selected.count()):
+            try:
+                text = self._normalize_option_text(str(selected.nth(index).inner_text() or ""))
+            except Exception:
+                continue
+            if text == target:
+                return True
+        return False
+
     def _prompt_is_invalid(self, page, field: dict[str, object]) -> bool:
         field_name = str(field.get("field_name") or "").strip()
         if not field_name:
@@ -1399,6 +1659,28 @@ class WorkdayAdapter:
         if input_locator.count() == 0:
             return False
         return str(input_locator.get_attribute("aria-invalid") or "").lower() == "true"
+
+    def _prompt_options(self, page, field: dict[str, object], input_locator):
+        """Prefer the popup owned by the active Workday prompt over global menus."""
+        option_selectors = '[role="option"], [data-automation-id="promptOption"]'
+        for attribute in ("aria-controls", "aria-owns"):
+            try:
+                popup_id = str(input_locator.get_attribute(attribute) or "").strip()
+            except Exception:
+                popup_id = ""
+            if not popup_id:
+                continue
+            escaped_id = popup_id.replace("\\", "\\\\").replace('"', '\\"')
+            scoped_options = page.locator(f'[id="{escaped_id}"] {option_selectors}')
+            if scoped_options.count() > 0:
+                return scoped_options
+        container_id = str(field.get("container_id") or "").strip()
+        if container_id:
+            escaped_id = container_id.replace("\\", "\\\\").replace('"', '\\"')
+            scoped_options = page.locator(f'[data-uxi-multiselect-id="{escaped_id}"] {option_selectors}')
+            if scoped_options.count() > 0:
+                return scoped_options
+        return page.locator(option_selectors)
 
     def _listbox_options(self, page, button_locator):
         """Limit option matching to the menu controlled by the selected Workday field."""

@@ -28,7 +28,33 @@ def load_application_inputs(profile_root: str, profile_name: str) -> tuple[Appli
         raise ProfileValidationError(f"Missing required profile file: {profile_path}")
     if not answers_path.exists():
         raise ProfileValidationError(f"Missing required profile file: {answers_path}")
-    return _parse_profile(_read_json(profile_path)), _parse_answers(_read_json(answers_path))
+    profile = _parse_profile(_read_json(profile_path))
+    profile.workday_credentials.extend(_load_workday_account_store(profile_dir))
+    return profile, _parse_answers(_read_json(answers_path))
+
+
+def _load_workday_account_store(profile_dir: Path) -> list[WorkdayCredential]:
+    account_path = profile_dir / "workday_accounts.json"
+    if not account_path.exists():
+        return []
+    try:
+        payload = json.loads(account_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ProfileValidationError(f"Invalid JSON in {account_path}: {exc}") from exc
+    if not isinstance(payload, list):
+        raise ProfileValidationError(f"Expected array in {account_path}")
+    credentials: list[WorkdayCredential] = []
+    for idx, item in enumerate(payload):
+        if not isinstance(item, dict):
+            raise ProfileValidationError(f"workday_accounts.json[{idx}] must be an object")
+        credentials.append(
+            WorkdayCredential(
+                host=_require_str(item, "host", section_name=f"workday_accounts.json[{idx}]"),
+                email=_require_str(item, "email", section_name=f"workday_accounts.json[{idx}]"),
+                password=_require_str(item, "password", section_name=f"workday_accounts.json[{idx}]"),
+            )
+        )
+    return credentials
 
 
 def _read_json(path: Path) -> dict[str, object]:
