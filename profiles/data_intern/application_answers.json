@@ -26,6 +26,31 @@
             "answer": "No"
         },
         {
+            "match_type": "exact",
+            "pattern": "start date month*",
+            "answer": "August"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "start date year*",
+            "answer": "2025"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "end date month*",
+            "answer": "December"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "end date year*",
+            "answer": "2027"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What motivates you to pursue an opportunity with Walleye Capital?*",
+            "answer": "I am interested in Walleye Capital because the role combines alternative data work, analytical rigor, and production workflows that directly support investment decisions. My background includes building high-volume data pipelines, improving data quality, and running quantitative analysis in production environments, and I am interested in applying that foundation in a setting where research, engineering, and real-world impact are tightly connected. I am also drawn to the chance to work closely with experienced data scientists and investors while contributing to systems and analyses that support real portfolio decisions."
+        },
+        {
             "match_type": "contains",
             "pattern": "this is your moment to wow us! note: answering this question fully is the most important part of our interview process. first example",
             "answer": "Built an agentic document extraction pipeline that ingests ESG data from more than 1,000 company reports using a LangChain orchestrator, fine-tuned vision-language models, OCR models, and PyTorch workflows. Designed the evaluation approach with custom datasets, Phoenix instrumentation, and OpenTelemetry traces to compare system versions rigorously. Improved extraction precision from 50% in the initial zero-shot system to 80% in the production RAG-based pipeline."
@@ -92,8 +117,43 @@
         },
         {
             "match_type": "contains",
+            "pattern": "what is your desired start date",
+            "answer": "06/01/2027"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "have you ever worked for copart",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "are you related to or know anyone that works or has worked at copart",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "please select the ethnicity which most accurately describes how you identify yourself",
+            "answer": "Hispanic or Latino"
+        },
+        {
+            "match_type": "contains",
             "pattern": "how did you hear about us",
             "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "address line 1",
+            "answer": "3030 Shrine Pl"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "postal code",
+            "answer": "90007"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "zip code",
+            "answer": "90007"
         },
         {
             "match_type": "contains",

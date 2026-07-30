@@ -1,0 +1,170 @@
+{
+  "question_overrides": [
+    {
+      "match_type": "exact",
+      "pattern": "What internship term(s) are you targeting? Please check all that apply*",
+      "answer": "Fall"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "What is the duration of internship you are available to work full time, 40 hours/week? *",
+      "answer": "6 Months"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Depending on the needs of the role, we may have openings in multiple locations. Please choose which locations you are open to working in/relocating to. (Select all that apply) *",
+      "answer": "Santa Clara, CA"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Are you willing and able to work in the office 5 days a week? *",
+      "answer": "Yes"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "How did you hear about the role?*",
+      "answer": "Other (please specify)"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "If you selected \"Other,\" please specify how you heard about us",
+      "answer": "JobRight"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "I have read and understand the Export Control statement included in the job description above.*",
+      "answer": "Yes"
+    },
+        {
+            "match_type": "exact",
+            "pattern": "How Did You Hear About Us?*",
+            "answer": "A Job Board > LinkedIn"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Have you previously worked for CCC?*",
+            "answer": "No"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Are you currently enrolled in an accredited academic program (Associate’s, Bachelor’s, Master’s, or PhD), and will you remain enrolled for the full duration of the internship?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Please select the veteran status which most accurately describes how you identify yourself.*",
+            "answer": "I am not a protected veteran"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Please select if you identify yourself as Hispanic or Latino.*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Have you completed at least one internship, apprenticeship, or comparable work experience in the field you are applying for? *",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Have you ever held, or do you currently hold, any leadership roles through employment, volunteer work, or university organizations such as clubs or societies? *",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Are you currently a member of any university organizations, such as clubs or societies?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Why are you interested in this specific role at Appian?*",
+            "answer": "I’m interested in Appian because the role combines production software engineering with AI-powered automation, technical rigor, and collaboration on a platform used for mission-critical enterprise work. My experience building and evaluating LLM/RAG systems, full-stack AI workflows, and scalable data pipelines aligns with Appian’s focus on reliable AI capabilities and high-quality engineering. I’m particularly excited to contribute to real engineering work, learn through code reviews and mentorship, and use AI coding tools responsibly to improve development speed while maintaining correctness and maintainability."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "current cumulative GPA",
+            "answer": "3.7 or Higher"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Primary Mailing Address *",
+            "answer": "3030 Shrine Pl, Los Angeles, CA, 90007, USA"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Type to Add Skills*",
+            "answer": "Python || C++ || SQL || PyTorch || Apache Spark || Airflow || AWS || Docker || Kubernetes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "are you willing to complete a background check?",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "hear about us",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "how did you hear about",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "regex",
+            "pattern": "pronouns?",
+            "answer": "He, him, his"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "bound by any agreements with a current or former employer",
+            "answer": "No"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "start date month*",
+            "answer": "August"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "start date year*",
+            "answer": "2025"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "end date month*",
+            "answer": "December"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "end date year*",
+            "answer": "2027"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What are your strongest programming languages and technical areas? Please list specific languages, frameworks, and technologies you're proficient in (e.g., Go, Python, React, Kubernetes, LLMs, etc.).",
+            "answer": "Python is my strongest language, especially for backend data and AI systems, LLM orchestration, RAG pipelines, PyTorch workflows, and evaluation infrastructure. I also work with Java, C++, and SQL, and have experience building production data and backend services with Apache Spark, Airflow, AWS, GCP, Docker, Kubernetes, OpenSearch, and CI/CD. My strongest technical areas are agentic workflows, tool-calling systems, ML observability, data quality, and scalable data pipelines."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Describe a product or system you built from scratch (0-to-1). Include: what you built, your specific contributions, the tech stack used, and the outcome or impact.",
+            "answer": "At Impatico, I built an agentic document-extraction system for ESG data from scratch. I designed the pipeline to ingest over 1,000 company reports and combined a LangChain-based LLM orchestrator on Google Agent Platform with OCR, fine-tuned vision-language models, and PyTorch workflows. I also built the evaluation approach: creating eval datasets, instrumenting agent calls with Phoenix and OpenTelemetry, and running experiments across versions. The result improved extraction precision from roughly 50% with the initial zero-shot approach to 80% with a RAG-based system, while making performance and failure modes much more observable."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Why are you interested in joining an early-stage startup like Serval, and what excites you about this specific role?",
+            "answer": "I am interested in an early-stage startup because I want to work close to the product and the engineering decisions that determine whether it succeeds. Serval's focus on agents that reason over real workflows and take action across systems strongly matches my experience building LLM orchestration, RAG, MCP tool-calling, evaluation, and production data systems. I am especially excited by the opportunity to contribute backend code that ships to customers while learning from a founding team building an AI-native automation platform."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What motivates you to pursue an opportunity with Walleye Capital?*",
+            "answer": "I am interested in Walleye Capital because the role combines large-scale data work, quantitative analysis, and infrastructure used in live decision-making. My background includes building anomaly detection systems, evaluation infrastructure, and high-volume data pipelines on AWS and Spark, and I am interested in applying that foundation in an environment where analytical rigor and fast iteration both matter. I am also drawn to the chance to work closely with experienced researchers and engineers while contributing to projects that support real trading and risk workflows."
+        }
+    ],
+    "field_defaults": {
+        "veteran_status": false,
+        "gender": "Male",
+        "race_ethnicity": "Hispanic or Latino",
+        "disability_status": false
+    }
+}
