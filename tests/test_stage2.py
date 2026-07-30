@@ -57,6 +57,19 @@ class Stage2Tests(unittest.TestCase):
         self.assertIn("mentions_quant", flags)
         self.assertIn("mentions_trading", flags)
 
+    def test_extract_job_flags_does_not_treat_inclusive_phd_degree_list_as_phd_only(self) -> None:
+        inclusive = extract_job_flags("Candidates may pursue a bachelor's, master's, or PhD in Computer Science.")
+        exclusive = extract_job_flags("PhD students only. Research internship.")
+        self.assertNotIn("mentions_phd", inclusive)
+        self.assertIn("mentions_phd", exclusive)
+
+    def test_extract_job_flags_detects_exclusive_undergraduate_requirement(self) -> None:
+        flags = extract_job_flags(
+            "We are searching for a motivated undergraduate student. "
+            "Undergraduate students in a STEM major are encouraged to apply."
+        )
+        self.assertIn("mentions_undergraduate_only", flags)
+
     def test_shadow_profile_scorer_returns_shadow_fields(self) -> None:
         job = JobRecord(
             source="fake",

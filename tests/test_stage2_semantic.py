@@ -284,6 +284,71 @@ class Stage2SemanticTests(unittest.TestCase):
         self.assertEqual(result.semantic_profile_id, "no_positive_match")
         self.assertIn("semantic_penalty_research_scientist_title", result.semantic_match_reason_codes)
 
+    def test_semantic_scorer_rejects_ml_researcher_role(self) -> None:
+        backend = FakeEmbeddingBackend()
+        scorer = SemanticShadowScorer(backend=backend)
+        job = JobRecord(
+            source="fake",
+            external_id="ml-researcher",
+            url="https://example.com/ml-researcher",
+            title="ML Researcher Internship",
+            company="Example Lab",
+            location="Palo Alto, CA",
+            is_internship=True,
+            posted_at="2026-07-28",
+            description=(
+                "Research mechanistic interpretability and novel model architectures. "
+                "Strong publication record and ability to develop research ideas are required."
+            ),
+            ingested_at="2026-07-28T00:00:00+00:00",
+        )
+        result = scorer.score(job)
+        self.assertEqual(result.semantic_match_label, "reject")
+        self.assertIn("semantic_penalty_ml_researcher_title", result.semantic_match_reason_codes)
+
+    def test_semantic_scorer_penalizes_manufacturing_systems_role(self) -> None:
+        backend = FakeEmbeddingBackend()
+        scorer = SemanticShadowScorer(backend=backend)
+        job = JobRecord(
+            source="fake",
+            external_id="manufacturing-systems",
+            url="https://example.com/manufacturing-systems",
+            title="Software Engineer Intern (Manufacturing Systems)",
+            company="Example",
+            location="Ohio",
+            is_internship=True,
+            posted_at="2026-07-28",
+            description=(
+                "Enterprise application development for manufacturing operations using C#, .NET, SQL, "
+                "and data engineering integration pipelines."
+            ),
+            ingested_at="2026-07-28T00:00:00+00:00",
+        )
+        result = scorer.score(job)
+        self.assertLess(result.semantic_match_score, result.semantic_base_score)
+        self.assertIn("semantic_penalty_manufacturing_systems_title", result.semantic_match_reason_codes)
+
+    def test_semantic_scorer_rejects_media_production_internship(self) -> None:
+        backend = FakeEmbeddingBackend()
+        scorer = SemanticShadowScorer(backend=backend)
+        job = JobRecord(
+            source="fake",
+            external_id="media-production",
+            url="https://example.com/media-production",
+            title="Production Internship",
+            company="Example Entertainment",
+            location="Los Angeles, CA",
+            is_internship=True,
+            posted_at="2026-07-28",
+            description=(
+                "Assist directors with music videos, commercials, on-set production, and content departments."
+            ),
+            ingested_at="2026-07-28T00:00:00+00:00",
+        )
+        result = scorer.score(job)
+        self.assertEqual(result.semantic_match_label, "reject")
+        self.assertIn("semantic_penalty_media_production_title", result.semantic_match_reason_codes)
+
     def test_semantic_scorer_penalizes_business_analyst_consulting_match(self) -> None:
         backend = FakeEmbeddingBackend()
         scorer = SemanticShadowScorer(backend=backend)

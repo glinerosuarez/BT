@@ -60,13 +60,13 @@ DETAIL_TEXT_SCRIPT = """
 }
 """
 EXPAND_MORE_SCRIPT = """
-() => {
+(restrictToDetailPane) => {
   let clicked = 0;
   for (const node of Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'))) {
     const text = (node.innerText || '').trim();
     if (text !== 'More') continue;
     const rect = node.getBoundingClientRect();
-    if (rect.left < window.innerWidth * 0.35) continue;
+    if (restrictToDetailPane && rect.left < window.innerWidth * 0.35) continue;
     if (rect.width === 0 || rect.height === 0) continue;
     node.click();
     clicked += 1;
@@ -138,6 +138,8 @@ class HandshakeSource(SourceConnector):
         profile_path.mkdir(parents=True, exist_ok=True)
         security_verification_blocked_count = 0
         item_results: list[dict[str, str]] = []
+        rows: list[dict] = []
+        headful_fallback_needed = False
 
         with sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
@@ -227,9 +229,31 @@ class HandshakeSource(SourceConnector):
                     "recent_sweep_page_limit": self.recent_pages,
                     "item_results": item_results,
                 }
-                return _dedupe_rows(results)
+                rows = _dedupe_rows(results)
+                if self.headless and security_verification_blocked_count:
+                    # Handshake can challenge a valid persistent session only when
+                    # Chrome is headless. Retry after this Playwright session exits.
+                    LOG.warning(
+                        "handshake_headless_security_fallback_started blocked_count=%s",
+                        security_verification_blocked_count,
+                    )
+                    headful_fallback_needed = True
             finally:
                 context.close()
+
+        if not headful_fallback_needed:
+            self._fetch_meta["headful_fallback_used"] = False
+            return rows
+
+        previous_headless = self.headless
+        self.headless = False
+        try:
+            fallback_rows = self.fetch(timeout_seconds)
+        finally:
+            self.headless = previous_headless
+        self._fetch_meta["headful_fallback_used"] = True
+        self._fetch_meta["headless_security_verification_blocked_count"] = security_verification_blocked_count
+        return fallback_rows
 
     def get_fetch_meta(self) -> dict[str, object]:
         return dict(self._fetch_meta)
@@ -314,7 +338,7 @@ class HandshakeSource(SourceConnector):
                         detail_click_succeeded = True
                         detail_fetch_mode = "panel_click"
                         page.wait_for_timeout(1500)
-                        expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
+                        expanded = int(page.evaluate(EXPAND_MORE_SCRIPT, True) or 0)
                         if expanded:
                             page.wait_for_timeout(750)
                         card_url = _resolve_job_url(page, title, card_url)
@@ -355,7 +379,7 @@ class HandshakeSource(SourceConnector):
     def _fetch_job_page(self, page, job_url: str) -> dict | None:
         self._goto_handshake_page(page, job_url, post_wait_ms=1500)
         _raise_for_auth_wall(page.url, context=f"job page url={job_url}")
-        expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
+        expanded = int(page.evaluate(EXPAND_MORE_SCRIPT, False) or 0)
         if expanded:
             page.wait_for_timeout(750)
         detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
@@ -375,7 +399,7 @@ class HandshakeSource(SourceConnector):
         try:
             self._goto_handshake_page(detail_page, job_url, post_wait_ms=1500)
             _raise_for_auth_wall(detail_page.url, context=f"job detail fallback url={job_url}")
-            expanded = int(detail_page.evaluate(EXPAND_MORE_SCRIPT) or 0)
+            expanded = int(detail_page.evaluate(EXPAND_MORE_SCRIPT, False) or 0)
             if expanded:
                 detail_page.wait_for_timeout(750)
             detail_text = str(detail_page.evaluate(DETAIL_TEXT_SCRIPT) or "")

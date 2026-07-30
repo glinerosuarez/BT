@@ -30,6 +30,9 @@ QUANT_RESEARCH_TITLE_PENALTY = 0.22
 ANALYST_PROGRAM_TITLE_PENALTY = 0.16
 PRODUCT_MANAGEMENT_TITLE_PENALTY = 0.28
 RESEARCH_SCIENTIST_TITLE_PENALTY = 0.20
+ML_RESEARCHER_TITLE_PENALTY = 0.28
+MANUFACTURING_SYSTEMS_TITLE_PENALTY = 0.10
+MEDIA_PRODUCTION_TITLE_PENALTY = 0.30
 WEB_DEVELOPMENT_TITLE_PENALTY = 0.12
 
 
@@ -199,7 +202,7 @@ _BUILDER_EVIDENCE_BUCKETS: dict[str, tuple[str, ...]] = {
         r"\bgcp\b",
         r"\bazure\b",
         r"\bdeployment\b",
-        r"\bproduction\b",
+        r"\bproduction\s+(?:ml|software|systems?|environment|services?|applications?)\b",
         r"\borchestration\b",
         r"\bterraform\b",
         r"\bkubernetes\b",
@@ -243,13 +246,15 @@ _GENERALIST_ANALYTICAL_PATTERNS: tuple[str, ...] = (
 _NEGATIVE_PROFILE_LEXICAL_PATTERNS: dict[str, tuple[str, ...]] = {
     "academic_research": (
         r"\bresearch scientist\b",
+        r"\b(?:ml|machine learning|ai) researcher\b",
         r"\boriginal research\b",
         r"\bresearch background\b",
         r"\bpublications?\b",
+        r"\bpublication record\b",
         r"\bresearch agenda\b",
         r"\bnovel (?:methods?|algorithms?)\b",
-        r"\bph\.?d\.?\b",
-        r"\bdoctoral\b",
+        r"\bmechanistic interpretability\b",
+        r"\bpretraining science\b",
     ),
     "business_analyst_consulting": (
         r"\bbusiness analyst\b",
@@ -286,6 +291,9 @@ _NEGATIVE_PROFILE_LEXICAL_PATTERNS: dict[str, tuple[str, ...]] = {
         r"\bcreator partnerships?\b",
         r"\btrendspotting\b",
         r"\bcommunications?\b",
+        r"\bon-set\b",
+        r"\bmusic videos?\b",
+        r"\bproduction (?:department|team|company|process|experience)\b",
     ),
     "web_frontend_product": (
         r"\bweb(?:site)?\b",
@@ -466,6 +474,8 @@ def _resolve_semantic_profile_id(
             "semantic_penalty_analyst_program_title",
             "semantic_penalty_quant_research_title",
             "semantic_penalty_research_scientist_title",
+            "semantic_penalty_ml_researcher_title",
+            "semantic_penalty_media_production_title",
             "semantic_penalty_web_development_title",
         )
     ):
@@ -543,7 +553,9 @@ def _has_negative_profile_lexical_support(job_text: str, profile_id: str) -> boo
     if not patterns:
         return False
     blob = job_text.lower()
-    return any(re.search(pattern, blob, flags=re.IGNORECASE) for pattern in patterns)
+    if any(re.search(pattern, blob, flags=re.IGNORECASE) for pattern in patterns):
+        return True
+    return profile_id == "academic_research" and "mentions_phd" in extract_job_flags(job_text)
 
 
 def _research_heaviness_adjustment(
@@ -572,6 +584,9 @@ def _research_heaviness_adjustment(
     if "mentions_phd" in flags:
         penalty += 0.30
         reasons.append("semantic_penalty_phd_signal")
+    if "mentions_undergraduate_only" in flags:
+        penalty += 0.30
+        reasons.append("semantic_penalty_undergraduate_only_signal")
     if "mentions_causal_inference" in flags:
         penalty += 0.10
         reasons.append("semantic_penalty_causal_inference")
@@ -601,11 +616,31 @@ def _research_heaviness_adjustment(
     if "research scientist" in title_blob:
         penalty += RESEARCH_SCIENTIST_TITLE_PENALTY
         reasons.append("semantic_penalty_research_scientist_title")
+    if re.search(r"\b(?:ml|machine learning|ai) researcher\b", title_blob):
+        penalty += ML_RESEARCHER_TITLE_PENALTY
+        reasons.append("semantic_penalty_ml_researcher_title")
+    if re.search(r"\bmanufacturing systems?\b|\bmanufacturing execution systems?\b|\bmes\b", title_blob):
+        penalty += MANUFACTURING_SYSTEMS_TITLE_PENALTY
+        reasons.append("semantic_penalty_manufacturing_systems_title")
+    if _has_media_production_title_signal(title_blob, blob):
+        penalty += MEDIA_PRODUCTION_TITLE_PENALTY
+        reasons.append("semantic_penalty_media_production_title")
     if _has_web_development_title_signal(title_blob):
         penalty += WEB_DEVELOPMENT_TITLE_PENALTY
         reasons.append("semantic_penalty_web_development_title")
 
     return min(penalty, 0.6), reasons
+
+
+def _has_media_production_title_signal(title_blob: str, blob: str) -> bool:
+    if not re.search(r"\bproduction\b.*\b(?:intern|internship)\b", title_blob):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:on-set|directors?|music videos?|commercials?|content departments?|production department)\b",
+            blob,
+        )
+    )
 
 
 def _research_profile_penalty(

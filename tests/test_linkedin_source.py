@@ -6,6 +6,7 @@ from job_hunter.sources.linkedin import (
     _build_row,
     _canonical_linkedin_job_url,
     _is_card_older_than_lookback,
+    _is_linkedin_closed,
     _normalize_search_url,
     _parse_card_text,
     _parse_detail_text,
@@ -517,6 +518,28 @@ Build backend systems and APIs with Python.
             detail_fetch_attempted=False,
         )
         self.assertIsNone(row)
+
+    def test_build_row_skips_reposted_card_without_parsable_age_line(self) -> None:
+        card = _parse_card_text(
+            """Deep Learning Engineer Intern
+Bot Auto
+Houston, TX
+Reposted recently
+Internship""",
+            fallback_url="https://www.linkedin.com/jobs/view/4436438186",
+        )
+        self.assertEqual(card["age_line"], "")
+        self.assertTrue(card["is_reposted"])
+        row = _build_row(
+            card=card,
+            detail_text="About the job\nDeep learning internship.",
+            search_url="https://www.linkedin.com/jobs/search-results/?keywords=ml+intern",
+            detail_fetch_attempted=True,
+        )
+        self.assertIsNone(row)
+
+    def test_closed_posting_patterns_cover_linkedin_unavailable_banner(self) -> None:
+        self.assertTrue(_is_linkedin_closed(["This job is no longer available."]))
 
     def test_build_row_skips_reposted_detail(self) -> None:
         card = _parse_card_text(

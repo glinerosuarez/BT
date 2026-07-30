@@ -110,6 +110,10 @@ LOCATION_HINT_RE = re.compile(
 )
 LINKEDIN_CLOSED_PATTERNS = (
     "no longer accepting applications",
+    "no longer accepting applicants",
+    "applications are no longer being accepted",
+    "this job is no longer available",
+    "this job has been closed",
     "ya no acepta solicitudes",
     "ya no se aceptan solicitudes",
 )
@@ -408,7 +412,10 @@ class LinkedInSource(SourceConnector):
                             job_url = _canonical_linkedin_job_url(str(selected_links[0].get("href") or ""))
                     if job_url:
                         card["url"] = job_url
-                        detail_text, external_apply_url = self._fetch_detail_text_from_job_url(page.context, job_url)
+                        detail_text, external_apply_url, is_closed = self._fetch_detail_text_from_job_url(page.context, job_url)
+                        if is_closed:
+                            LOG.info("linkedin_job_skipped_closed url=%s", job_url)
+                            continue
             parsed = _build_row(
                 card=card,
                 detail_text=detail_text,
@@ -462,9 +469,13 @@ class LinkedInSource(SourceConnector):
         expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
         if expanded:
             page.wait_for_timeout(750)
+        page_text = str(page.locator("body").inner_text() or "")
+        if _is_linkedin_closed(page_text.splitlines()):
+            LOG.info("linkedin_job_skipped_closed url=%s", job_url)
+            return None
         detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
         if not detail_text.strip():
-            detail_text = str(page.locator("body").inner_text() or "")
+            detail_text = page_text
         detail = _parse_detail_text(detail_text)
         if bool(detail.get("is_reposted")):
             LOG.info("linkedin_job_skipped_reposted url=%s", job_url)
@@ -488,25 +499,28 @@ class LinkedInSource(SourceConnector):
             external_apply_url=external_apply_url,
         )
 
-    def _fetch_detail_text_from_job_url(self, context, job_url: str) -> tuple[str, str]:
+    def _fetch_detail_text_from_job_url(self, context, job_url: str) -> tuple[str, str, bool]:
         detail_page = context.new_page()
         detail_page.set_default_timeout(self.page_timeout_seconds * 1000)
         detail_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
         try:
             self._goto_linkedin_page(detail_page, job_url)
             if _page_requires_login(detail_page.url):
-                return "", ""
+                return "", "", False
             expanded = int(detail_page.evaluate(EXPAND_MORE_SCRIPT) or 0)
             if expanded:
                 detail_page.wait_for_timeout(750)
+            page_text = str(detail_page.locator("body").inner_text() or "")
+            if _is_linkedin_closed(page_text.splitlines()):
+                return "", "", True
             detail_text = str(detail_page.evaluate(DETAIL_TEXT_SCRIPT) or "")
             if not detail_text.strip():
-                detail_text = str(detail_page.locator("body").inner_text() or "")
+                detail_text = page_text
             external_apply_url = _extract_external_apply_url_from_page(detail_page)
-            return detail_text, external_apply_url
+            return detail_text, external_apply_url, False
         except PlaywrightTimeoutError:
             LOG.warning("linkedin_direct_detail_timeout url=%s", job_url)
-            return "", ""
+            return "", "", False
         finally:
             detail_page.close()
 
@@ -617,7 +631,9 @@ def _parse_card_text(card_text: str, *, fallback_url: str) -> dict[str, str]:
         "url": _canonical_linkedin_job_url(fallback_url),
         "card_text": card_text.strip(),
         "age_line": age_line,
-        "is_reposted": _is_reposted_age_line(age_line),
+        # LinkedIn occasionally renders repost metadata in a card format that
+        # is not parsable as a relative age, so retain the raw-card fallback.
+        "is_reposted": _is_reposted_text(card_text),
     }
 
 
@@ -682,7 +698,7 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
         "description": description,
         "accepting_applications": accepting_applications,
         "posted_line": posted_line,
-        "is_reposted": _is_reposted_age_line(posted_line),
+        "is_reposted": _is_reposted_text(normalized_text),
     }
 
 
@@ -852,8 +868,17 @@ def _looks_like_age_line(value: str) -> bool:
 
 
 def _is_reposted_age_line(value: str) -> bool:
+    return _is_reposted_text(value)
+
+
+def _is_reposted_text(value: str) -> bool:
     lowered = value.lower()
-    return "reposted" in lowered or "compartido" in lowered
+    return bool(
+        re.search(
+            r"\b(?:reposted|compartido|se\s+volvi[oó]\s+a\s+publicar|vuelto\s+a\s+publicar)\b",
+            lowered,
+        )
+    )
 
 
 def _relative_age_to_iso(value: str) -> str | None:

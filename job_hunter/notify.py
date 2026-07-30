@@ -60,7 +60,7 @@ def _format_alert(job: JobRecord) -> str:
         f"Score: {job.relevance_score:.2f}\n"
         f"Eligibility: {job.eligibility_status} ({job.eligibility_confidence:.2f})\n"
         f"Sponsorship signals: {sponsor}\n"
-        f"Work-auth negatives: {work_auth}\n"
+        f"Work-authorization signals: {work_auth}\n"
         f"Keywords: {keywords}\n"
         f"Apply: {job.url}"
     )

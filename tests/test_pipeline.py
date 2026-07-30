@@ -159,7 +159,7 @@ class PipelineUnitTests(unittest.TestCase):
             "paid",
         )
 
-    def test_eligibility_negative_rule_excludes(self) -> None:
+    def test_eligibility_generic_authorized_to_work_requirement_is_ambiguous(self) -> None:
         job = JobRecord(
             source="x",
             external_id="1",
@@ -172,10 +172,10 @@ class PipelineUnitTests(unittest.TestCase):
             description="Must be authorized to work in the US.",
             ingested_at="2026-05-25T00:00:00+00:00",
         )
-        status, confidence, negative, _ = _evaluate_eligibility(job)
-        self.assertEqual(status, "reject")
-        self.assertEqual(confidence, 0.0)
-        self.assertTrue(negative)
+        status, confidence, signals, _ = _evaluate_eligibility(job)
+        self.assertEqual(status, "ambiguous")
+        self.assertEqual(confidence, 0.6)
+        self.assertIn("must_authorized_us", signals)
 
     def test_eligibility_rejects_current_or_future_sponsorship_block(self) -> None:
         job = JobRecord(
@@ -286,7 +286,47 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertIn("no_sponsorship", negative)
         self.assertEqual(positive, [])
 
-    def test_eligibility_rejects_us_work_authorization_required_even_with_visa_sponsorship(self) -> None:
+    def test_eligibility_does_not_treat_equal_opportunity_text_as_no_sponsorship(self) -> None:
+        job = JobRecord(
+            source="handshake",
+            external_id="optiver-style-1",
+            url="https://example.com/optiver-style-1",
+            title="Software Engineer Intern",
+            company="Example",
+            location="Austin, TX",
+            is_internship=True,
+            posted_at="2026-07-26",
+            description=(
+                "We do not discriminate based on protected characteristics. "
+                "The company is supportive of U.S. immigration sponsorship for this role."
+            ),
+            ingested_at="2026-07-26T00:00:00+00:00",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "sponsorship_friendly")
+        self.assertEqual(confidence, 0.95)
+        self.assertEqual(negative, [])
+        self.assertIn("visa_sponsorship", positive)
+
+    def test_eligibility_rejects_direct_company_does_not_sponsor_statement(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="no-sponsor-1",
+            url="https://example.com/no-sponsor-1",
+            title="Data Engineer Intern",
+            company="Example",
+            location="United States",
+            is_internship=True,
+            posted_at="2026-07-26",
+            description="The company does not sponsor visas for this position.",
+            ingested_at="2026-07-26T00:00:00+00:00",
+        )
+        status, confidence, negative, _ = _evaluate_eligibility(job)
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("do_not_sponsor", negative)
+
+    def test_eligibility_allows_cpt_or_sponsorship_despite_generic_us_work_auth_requirement(self) -> None:
         job = JobRecord(
             source="handshake",
             external_id="4c",
@@ -304,10 +344,29 @@ class PipelineUnitTests(unittest.TestCase):
             ingested_at="2026-07-14T00:00:00+00:00",
         )
         status, confidence, negative, positive = _evaluate_eligibility(job)
-        self.assertEqual(status, "reject")
-        self.assertEqual(confidence, 0.0)
+        self.assertEqual(status, "sponsorship_friendly")
+        self.assertEqual(confidence, 0.95)
         self.assertIn("us_work_auth_required", negative)
         self.assertIn("visa_sponsorship", positive)
+
+    def test_eligibility_marks_generic_us_work_auth_requirement_as_ambiguous(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="generic-auth-1",
+            url="https://example.com/generic-auth-1",
+            title="Data Engineering Intern",
+            company="Example",
+            location="United States",
+            is_internship=True,
+            posted_at="2026-07-26",
+            description="U.S. work authorization required. Internship with Python and SQL.",
+            ingested_at="2026-07-26T00:00:00+00:00",
+        )
+        status, confidence, signals, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "ambiguous")
+        self.assertEqual(confidence, 0.6)
+        self.assertIn("us_work_auth_required", signals)
+        self.assertEqual(positive, [])
 
     def test_eligibility_rejects_itar_us_person_requirement(self) -> None:
         job = JobRecord(
@@ -329,6 +388,28 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertEqual(status, "reject")
         self.assertEqual(confidence, 0.0)
         self.assertIn("itar_us_person_required", negative)
+        self.assertEqual(positive, [])
+
+    def test_eligibility_rejects_us_citizenship_required_for_security_clearance(self) -> None:
+        job = JobRecord(
+            source="linkedin",
+            external_id="citizenship-clearance-1",
+            url="https://example.com/citizenship-clearance-1",
+            title="Software Engineering Intern",
+            company="Example Defense",
+            location="State College, PA",
+            is_internship=True,
+            posted_at="2026-07-28",
+            description=(
+                "U.S. citizenship is required, as only U.S. citizens are eligible for a security clearance."
+            ),
+            ingested_at="2026-07-28T00:00:00+00:00",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("citizen_or_pr_required", negative)
+        self.assertIn("citizens_only_security_clearance", negative)
         self.assertEqual(positive, [])
 
     def test_internship_and_us_scope_filters(self) -> None:
@@ -530,6 +611,31 @@ class PipelineUnitTests(unittest.TestCase):
             )
         )
 
+    def test_data_role_gate_accepts_generic_software_engineer_intern_for_semantic_review(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="software-engineer-intern-1",
+            url="https://example.com/software-engineer-intern-1",
+            title="Software Engineer Intern (Summer 2027)",
+            company="Example",
+            location="Austin, TX",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Build production applications with a software engineering team.",
+            ingested_at="now",
+        )
+        self.assertTrue(
+            _passes_data_role_gate(
+                job,
+                data_role_title_regexes=[re.compile(r"\bdata engineer\b", re.IGNORECASE)],
+                non_data_role_title_regexes=[],
+                min_data_signal_count=2,
+            )
+        )
+        score, hits = _score_relevance(job)
+        self.assertGreaterEqual(score, 2.75)
+        self.assertIn("software_engineering", hits)
+
     def test_data_role_gate_accepts_full_stack_ai_software_intern_from_title(self) -> None:
         job = JobRecord(
             source="x",
@@ -608,6 +714,36 @@ class PipelineUnitTests(unittest.TestCase):
             )
         )
 
+    def test_policy_gate_allows_inclusive_bachelors_masters_or_phd_requirement(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="inclusive-degree-1",
+            url="https://example.com/inclusive-degree-1",
+            title="Software Engineer Intern",
+            company="Example",
+            location="Austin, TX",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="A student pursuing a bachelor's, master's, or PhD in Computer Science is eligible.",
+            ingested_at="now",
+        )
+        self.assertFalse(_fails_policy_gate(job, [re.compile(r"\bph\.?d\.?\b", re.IGNORECASE)]))
+
+    def test_policy_gate_rejects_phd_pursuit_requirement(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="phd-pursuit-1",
+            url="https://example.com/phd-pursuit-1",
+            title="AI Applied Intern",
+            company="Example",
+            location="Hillsboro, OR",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Minimum qualifications: Active student pursuing a PhD in Computer Science.",
+            ingested_at="now",
+        )
+        self.assertTrue(_fails_policy_gate(job, [re.compile(r"\bph\.?d\.?\b", re.IGNORECASE)]))
+
     def test_policy_gate_rejects_undergraduate_only_roles(self) -> None:
         job = JobRecord(
             source="x",
@@ -619,6 +755,24 @@ class PipelineUnitTests(unittest.TestCase):
             is_internship=True,
             posted_at=None,
             description="Currently enrolled as an undergraduate student at an accredited university. Undergraduate students only.",
+            ingested_at="now",
+        )
+        self.assertTrue(_fails_policy_gate(job, policy_reject_regexes=[]))
+
+    def test_policy_gate_rejects_undergraduate_candidate_requirement(self) -> None:
+        job = JobRecord(
+            source="x",
+            external_id="undergraduate-candidate-1",
+            url="https://example.com/undergraduate-candidate-1",
+            title="AI/ML Research Support Intern",
+            company="Example",
+            location="State College, PA",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description=(
+                "We are searching for a motivated undergraduate student. "
+                "Undergraduate students in a STEM major are encouraged to apply."
+            ),
             ingested_at="now",
         )
         self.assertTrue(_fails_policy_gate(job, policy_reject_regexes=[]))
@@ -637,7 +791,7 @@ class PipelineUnitTests(unittest.TestCase):
             ingested_at="now",
         )
         self.assertFalse(_fails_policy_gate(job, policy_reject_regexes=[]))
-        self.assertFalse(
+        self.assertTrue(
             _passes_data_role_gate(
                 job,
                 data_role_title_regexes=[re.compile(r"\bdata (science|scientist)\b", re.IGNORECASE)],
@@ -690,6 +844,28 @@ class PipelineUnitTests(unittest.TestCase):
             ingested_at="now",
         )
         self.assertEqual(_dedupe_key(j1), _dedupe_key(j2))
+
+    def test_dedupe_matches_branded_and_greenhouse_ats_urls(self) -> None:
+        common = {
+            "source": "github_repo",
+            "external_id": "appian-8041237",
+            "title": "Software Engineering Intern",
+            "company": "Appian",
+            "location": "McLean, VA",
+            "is_internship": True,
+            "posted_at": recent_posted_at(),
+            "description": "Software engineering internship.",
+            "ingested_at": "now",
+        }
+        greenhouse = JobRecord(
+            **common,
+            url="https://job-boards.greenhouse.io/appian/jobs/8041237?utm_source=github",
+        )
+        branded = JobRecord(
+            **common,
+            url="https://careers.appian.com/jobs/8041237-software-engineering-intern?utm_source=github",
+        )
+        self.assertEqual(_dedupe_key(greenhouse), _dedupe_key(branded))
 
     def test_dedupe_key_uses_external_apply_url_for_reposted_listings(self) -> None:
         first = JobRecord(

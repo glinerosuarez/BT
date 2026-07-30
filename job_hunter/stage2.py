@@ -31,7 +31,6 @@ _INLINE_SECTION_HEADINGS: tuple[str, ...] = (
 _INLINE_SECTION_HEADINGS_SORTED: tuple[str, ...] = tuple(sorted(_INLINE_SECTION_HEADINGS, key=len, reverse=True))
 
 _FLAG_PATTERNS: dict[str, re.Pattern[str]] = {
-    "mentions_phd": re.compile(r"\b(ph\.?d\.?|doctorate|doctoral)\b", re.IGNORECASE),
     "mentions_masters": re.compile(r"\b(master'?s|masters)\b", re.IGNORECASE),
     "mentions_economics": re.compile(r"\b(economics?|econometric)\b", re.IGNORECASE),
     "mentions_operations_research": re.compile(r"\boperations research\b", re.IGNORECASE),
@@ -42,12 +41,35 @@ _FLAG_PATTERNS: dict[str, re.Pattern[str]] = {
     "mentions_production_ml": re.compile(r"\bproduction ml\b|\bml systems\b|\bmodel deployment\b|\bdeployed models?\b", re.IGNORECASE),
     "mentions_trading": re.compile(r"\b(trading|market making|options theory|alpha generation)\b", re.IGNORECASE),
 }
+_PHD_EXCLUSIVE_REQUIREMENT_RE = re.compile(
+    r"\b(?:ph\.?d\.?|doctorate|doctoral)\b\s+(?:(?:students?|candidates?)\s+)?(?:only|required)\b|"
+    r"\b(?:only|must be|must have|requires?|require)\b.{0,50}\b(?:ph\.?d\.?|doctorate|doctoral)\b|"
+    r"\b(?:active\s+)?(?:student|candidate)\s+pursuing\s+(?:a\s+)?(?:ph\.?d\.?|doctorate|doctoral)\b|"
+    r"\bpursuing\s+(?:a\s+)?(?:ph\.?d\.?|doctorate|doctoral)\s+(?:degree|program)\b",
+    re.IGNORECASE,
+)
+_PHD_TITLE_RE = re.compile(
+    r"(?im)^(?:title:\s*)?.{0,80}\b(?:ph\.?d\.?|doctorate|doctoral)\b.{0,80}\b(?:intern|internship|research scientist)\b",
+)
+_UNDERGRADUATE_EXCLUSIVE_REQUIREMENT_RE = re.compile(
+    r"\b(?:undergraduate students?|undergraduates?)\s+only\b|"
+    r"\bonly\s+(?:open to\s+)?undergraduate students?\b|"
+    r"\bcurrently enrolled (?:as|in) an? undergraduate student\b|"
+    r"\bmust be currently enrolled in an undergraduate (?:program|degree)\b|"
+    r"\b(?:we\s+are\s+)?(?:searching|seeking|looking)\s+for\s+(?:a\s+)?(?:motivated\s+)?undergraduate student\b|"
+    r"\bundergraduate students?\s+in\s+(?:a\s+)?[\w /-]{0,60}\b(?:major|program|degree)\b",
+    re.IGNORECASE,
+)
 
 _BUILDER_SIGNAL_PATTERNS: dict[str, re.Pattern[str]] = {
     "builder_build_ship": re.compile(r"\b(build|building|ship|shipping|builder)\b", re.IGNORECASE),
     "builder_automation": re.compile(r"\b(automation|automate|workflow|workflows|agentic)\b", re.IGNORECASE),
     "builder_data_platform": re.compile(r"\b(etl|pipeline|pipelines|data lakehouse|data platform|data engineering)\b", re.IGNORECASE),
-    "builder_deploy": re.compile(r"\b(deploy|deployment|deploying|production)\b", re.IGNORECASE),
+    "builder_deploy": re.compile(
+        r"\b(deploy|deployment|deploying)\b|"
+        r"\bproduction\s+(?:ml|software|systems?|environment|services?|applications?)\b",
+        re.IGNORECASE,
+    ),
 }
 
 _RESEARCH_HEAVY_PATTERNS: dict[str, re.Pattern[str]] = {
@@ -151,6 +173,10 @@ def build_job_text_v1(job: JobRecord) -> str:
 
 def extract_job_flags(text: str) -> list[str]:
     found = [name for name, pattern in _FLAG_PATTERNS.items() if pattern.search(text)]
+    if _PHD_EXCLUSIVE_REQUIREMENT_RE.search(text) or _PHD_TITLE_RE.search(text):
+        found.append("mentions_phd")
+    if _UNDERGRADUATE_EXCLUSIVE_REQUIREMENT_RE.search(text):
+        found.append("mentions_undergraduate_only")
     return sorted(found)
 
 
@@ -171,6 +197,9 @@ def _score_shadow_rules(job: JobRecord, job_text: str, flags: list[str]) -> tupl
     if "mentions_phd" in flags:
         score -= 0.35
         reasons.append("flag_phd")
+    if "mentions_undergraduate_only" in flags:
+        score -= 0.35
+        reasons.append("flag_undergraduate_only")
     if "mentions_research" in flags:
         score -= 0.20
         reasons.append("flag_research")

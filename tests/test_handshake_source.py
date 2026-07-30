@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from job_hunter.sources.handshake import (
+    EXPAND_MORE_SCRIPT,
     HandshakeAccessWallError,
     _build_row,
     _build_row_from_job_page,
@@ -216,6 +217,10 @@ Company: GreenPoint Global
 
 
 class HandshakeSourceTests(unittest.TestCase):
+    def test_expand_more_script_can_scope_to_search_detail_pane(self) -> None:
+        self.assertIn("restrictToDetailPane", EXPAND_MORE_SCRIPT)
+        self.assertIn("restrictToDetailPane && rect.left", EXPAND_MORE_SCRIPT)
+
     def test_resolve_job_url_prefers_direct_jobs_link(self) -> None:
         class FakeLocator:
             def evaluate_all(self, script, arg):

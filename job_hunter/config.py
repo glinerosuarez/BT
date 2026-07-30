@@ -78,6 +78,18 @@ DEFAULT_APPLE_QUERIES = [
     "applied scientist intern",
     "data platform intern",
 ]
+DEFAULT_HIRING_CAFE_SEARCH_URLS = [
+    "https://hiring.cafe/jobs/machine-learning-intern-united-states",
+    "https://hiring.cafe/jobs/ai-research-intern-united-states",
+    "https://hiring.cafe/jobs/applied-ml-intern-united-states",
+    "https://hiring.cafe/jobs/data-engineer-intern-united-states",
+    "https://hiring.cafe/jobs/data-intern-united-states",
+    "https://hiring.cafe/jobs/analytics-engineer-intern-united-states",
+    "https://hiring.cafe/jobs/software-engineer-intern-ai-united-states",
+    "https://hiring.cafe/jobs/backend-engineer-intern-united-states",
+    "https://hiring.cafe/jobs/ml-intern-united-states",
+    "https://hiring.cafe/jobs/data-platform-intern-united-states",
+]
 DEFAULT_TITLE_BLACKLIST_PATTERNS = [
     r"\brecruiter\b",
     r"\brecruiting\b",
@@ -246,8 +258,12 @@ class Settings:
     apple_max_results: int = 25
     apple_headless: bool = True
     apple_page_timeout_seconds: int = 30
+    use_hiring_cafe: bool = False
+    hiring_cafe_search_urls: list[str] = field(default_factory=lambda: list(DEFAULT_HIRING_CAFE_SEARCH_URLS))
+    hiring_cafe_max_results: int = 20
     handshake_recent_pages: int = 10
     handshake_use_keyword_supplemental: bool = False
+    handshake_direct_job_urls: list[str] = field(default_factory=list)
 
 
 DEFAULT_DB_PATH = "job_hunter.db"
@@ -313,6 +329,8 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
     github_repo_readmes = _env_csv("JOB_HUNTER_GITHUB_REPO_READMES", DEFAULT_GITHUB_REPO_READMES)
     ashby_boards = _env_csv("JOB_HUNTER_ASHBY_BOARDS", DEFAULT_ASHBY_BOARDS)
     handshake_search_urls = _env_csv("JOB_HUNTER_HANDSHAKE_SEARCH_URLS", [])
+    handshake_direct_job_urls = _env_csv("JOB_HUNTER_HANDSHAKE_DIRECT_JOB_URLS", [])
+    hiring_cafe_search_urls = _env_csv("JOB_HUNTER_HIRING_CAFE_SEARCH_URLS", DEFAULT_HIRING_CAFE_SEARCH_URLS)
 
     return Settings(
         db_path=os.getenv("JOB_HUNTER_DB_PATH", DEFAULT_DB_PATH),
@@ -407,6 +425,10 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         apple_max_results=_env_int("JOB_HUNTER_APPLE_MAX_RESULTS", 25),
         apple_headless=_env_bool("JOB_HUNTER_APPLE_HEADLESS", True),
         apple_page_timeout_seconds=_env_int("JOB_HUNTER_APPLE_PAGE_TIMEOUT_SECONDS", 30),
+        use_hiring_cafe=_env_bool("JOB_HUNTER_SOURCE_HIRING_CAFE", False),
+        hiring_cafe_search_urls=hiring_cafe_search_urls,
+        hiring_cafe_max_results=_env_int("JOB_HUNTER_HIRING_CAFE_MAX_RESULTS", 20),
         handshake_recent_pages=_env_int("JOB_HUNTER_HANDSHAKE_RECENT_PAGES", 10),
         handshake_use_keyword_supplemental=_env_bool("JOB_HUNTER_HANDSHAKE_USE_KEYWORD_SUPPLEMENTAL", False),
+        handshake_direct_job_urls=handshake_direct_job_urls,
     )

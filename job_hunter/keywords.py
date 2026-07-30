@@ -93,21 +93,35 @@ US_LOCATION_HINTS = {
 }
 
 NEGATIVE_WORK_AUTH_PATTERNS = {
-    "must_authorized_us": r"\bmust be authorized to work in the (us|u\.s\.|united states)\b",
-    "authorized_us_required": r"\bauthorized to work in the (us|u\.s\.|united states)\b",
-    "requires_us_work_auth": r"\brequires?\s+(current\s+)?(us|u\.s\.|united states)\s+work authorization\b",
-    "us_work_auth_required": r"\b(current\s+)?(us|u\.s\.|united states)\s+work authorization\s+required\b",
-    "must_have_us_work_auth": r"\bmust have\s+(current\s+)?(us|u\.s\.|united states)\s+work authorization\b",
     "us_work_authorized_only": r"\b(indefinite\s+)?(us|u\.s\.|united states)\s+work authorized individuals only\b",
-    "citizen_or_pr_required": r"\b(us citizens?\s+only|must be a us citizen|must be (a )?permanent resident)\b",
+    "citizen_or_pr_required": (
+        r"\b(?:u\.?s\.?|united states)\s+citizens?\s+only\b|"
+        r"\bmust be (?:a )?(?:u\.?s\.?|united states) citizen\b|"
+        r"\b(?:u\.?s\.?|united states)\s+citizenship\s+(?:is\s+)?required\b|"
+        r"\bmust be (a )?permanent resident\b"
+    ),
+    "citizens_only_security_clearance": (
+        r"\bonly\s+(?:u\.?s\.?|united states)\s+citizens?\s+are\s+eligible\s+for\s+"
+        r"(?:a\s+)?(?:government(?:-issued)?\s+)?security clearance\b"
+    ),
     "itar_us_person_required": (
         r"\bitar requirements?\b(?s:.{0,700}?)"
         r"\b(?:u\.?s\.?\s+citizen|u\.?s\.?\s+lawful,?\s+permanent resident|green card holder)\b"
     ),
 }
 
+# CPT can satisfy these statements, so retain them as review signals rather
+# than treating them as evidence that an F-1 student is categorically ineligible.
+AMBIGUOUS_WORK_AUTH_PATTERNS = {
+    "must_authorized_us": r"\bmust be authorized to work in the (us|u\.s\.|united states)\b",
+    "authorized_us_required": r"\bauthorized to work in the (us|u\.s\.|united states)\b",
+    "requires_us_work_auth": r"\brequires?\s+(current\s+)?(us|u\.s\.|united states)\s+work authorization\b",
+    "us_work_auth_required": r"\b(current\s+)?(us|u\.s\.|united states)\s+work authorization\s+required\b",
+    "must_have_us_work_auth": r"\bmust have\s+(current\s+)?(us|u\.s\.|united states)\s+work authorization\b",
+}
+
 POSITIVE_SPONSORSHIP_PATTERNS = {
-    "visa_sponsorship": r"\bvisa sponsorship\b",
+    "visa_sponsorship": r"\b(?:visa|immigration) sponsorship\b",
     "sponsorship_available": r"\bsponsorship available\b",
     "cpt": r"\bcpt\b",
     "opt": r"\bopt\b",

@@ -11,9 +11,11 @@ import unicodedata
 from dataclasses import asdict
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import urlparse
 
 from job_hunter.config import Settings
 from job_hunter.keywords import (
+    AMBIGUOUS_WORK_AUTH_PATTERNS,
     BACKEND_ADJACENT_DESCRIPTION_PATTERNS,
     BACKEND_ADJACENT_TITLE_PATTERNS,
     DATA_ROLE_TITLE_PATTERNS,
@@ -36,6 +38,7 @@ from job_hunter.sources import (
     ArbeitnowSource,
     GithubRepoSource,
     HandshakeSource,
+    HiringCafeSource,
     InterstrideSource,
     GreenhouseSource,
     LeverSource,
@@ -90,6 +93,10 @@ NEGATIVE_WORK_AUTH_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
     for name, pattern in NEGATIVE_WORK_AUTH_PATTERNS.items()
 }
+AMBIGUOUS_WORK_AUTH_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in AMBIGUOUS_WORK_AUTH_PATTERNS.items()
+}
 POSITIVE_SPONSORSHIP_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
     for name, pattern in POSITIVE_SPONSORSHIP_PATTERNS.items()
@@ -101,7 +108,11 @@ US_CITY_STATE_RE = re.compile(
 NEGATED_SPONSORSHIP_REGEXES = {
     "no_sponsorship": re.compile(r"\b(no|not|without)\s+(visa\s+)?sponsorships?\b", flags=re.IGNORECASE),
     "cannot_sponsor": re.compile(r"\b(cannot|can't|unable to)\s+sponsor\b", flags=re.IGNORECASE),
-    "do_not_sponsor": re.compile(r"\b(do not|does not|don't|doesn't)\s+.*\bsponsor(ship)?\b", flags=re.IGNORECASE),
+    "do_not_sponsor": re.compile(
+        r"\b(?:we\s+)?(?:do not|does not|don't|doesn't)\s+"
+        r"(?:(?:currently|at this time)\s+)?(?:offer|provide|sponsor)\s+(?:visa\s+)?(?:sponsorship|visas?)\b",
+        flags=re.IGNORECASE,
+    ),
     "no_current_future_sponsorship": re.compile(
         r"\bwithout the need for current or future sponsorship\b",
         flags=re.IGNORECASE,
@@ -137,6 +148,11 @@ BUILTIN_POLICY_REJECT_REGEXES = {
         r"\b(currently enrolled (as|in) an? undergraduate student|must be currently enrolled in an undergraduate (program|degree))\b",
         flags=re.IGNORECASE,
     ),
+    "undergraduate_candidate_requirement": re.compile(
+        r"\b(?:we\s+are\s+)?(?:searching|seeking|looking)\s+for\s+(?:a\s+)?(?:motivated\s+)?undergraduate student\b|"
+        r"\bundergraduate students?\s+in\s+(?:a\s+)?[\w /-]{0,60}\b(?:major|program|degree)\b",
+        flags=re.IGNORECASE,
+    ),
     "undergraduate_coursework_required": re.compile(
         r"\b(at least\s+three\s+years\s+of\s+college\s+coursework|three\s+years\s+of\s+college\s+coursework)\b",
         flags=re.IGNORECASE,
@@ -146,6 +162,16 @@ BUILTIN_POLICY_REJECT_REGEXES = {
         flags=re.IGNORECASE,
     ),
 }
+PHD_TITLE_RE = re.compile(r"\b(ph\.?d\.?|doctoral)\b", flags=re.IGNORECASE)
+PHD_EXCLUSIVE_REQUIREMENT_RE = re.compile(
+    r"\b(?:ph\.?d\.?|doctoral)\b\s+(?:(?:students?|candidates?)\s+)?(?:only|required)\b|"
+    r"\b(?:only|must be|must have|requires?|require)\b.{0,50}\b(?:ph\.?d\.?|doctoral)\b|"
+    # A single-degree pursuit requirement is PhD-exclusive. This deliberately
+    # does not match inclusive lists such as "pursuing a Bachelor's, Master's, or PhD".
+    r"\b(?:active\s+)?(?:student|candidate)\s+pursuing\s+(?:a\s+)?(?:ph\.?d\.?|doctoral)\b|"
+    r"\bpursuing\s+(?:a\s+)?(?:ph\.?d\.?|doctoral)\s+(?:degree|program)\b",
+    flags=re.IGNORECASE,
+)
 
 
 def build_sources(settings: Settings, store: JobStore | None = None) -> list[SourceConnector]:
@@ -199,10 +225,11 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
         )
     if settings.use_ashby and ashby_boards:
         sources.append(AshbySource(board_slugs=ashby_boards))
-    if settings.use_handshake and handshake_search_urls:
+    handshake_direct_job_urls = getattr(settings, "handshake_direct_job_urls", [])
+    if settings.use_handshake and (handshake_search_urls or handshake_direct_job_urls):
         sources.append(
             HandshakeSource(
-                search_urls=handshake_search_urls,
+                search_urls=[*handshake_search_urls, *handshake_direct_job_urls],
                 profile_dir=settings.handshake_profile_dir,
                 headless=settings.handshake_headless,
                 max_results=settings.handshake_max_results,
@@ -244,6 +271,13 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 max_results=settings.apple_max_results,
                 headless=settings.apple_headless,
                 page_timeout_seconds=settings.apple_page_timeout_seconds,
+            )
+        )
+    if getattr(settings, "use_hiring_cafe", False) and getattr(settings, "hiring_cafe_search_urls", []):
+        sources.append(
+            HiringCafeSource(
+                search_urls=settings.hiring_cafe_search_urls,
+                max_results=settings.hiring_cafe_max_results,
             )
         )
 
@@ -499,12 +533,14 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
 
             outcome.passed_filter_count += 1
             if existing_dedupe_key:
-                if existing_dedupe_key not in pre_refreshed_dedupe_keys:
-                    refresh_meta = store.update_existing_job(job, existing_dedupe_key)
-                    if bool(refresh_meta.get("source_quality_recovered")):
-                        source_stats.recovered_source_quality_count += 1
-                        if query_stats is not None:
-                            query_stats.recovered_source_quality_count += 1
+                # Handshake refreshes raw detail before gating so quarantined rows can
+                # recover even if they are rejected later. Persist again here to retain
+                # the current scoring and eligibility results for rows that pass.
+                refresh_meta = store.update_existing_job(job, existing_dedupe_key)
+                if existing_dedupe_key not in pre_refreshed_dedupe_keys and bool(refresh_meta.get("source_quality_recovered")):
+                    source_stats.recovered_source_quality_count += 1
+                    if query_stats is not None:
+                        query_stats.recovered_source_quality_count += 1
                 outcome.duplicate_count += 1
                 source_stats.duplicate_count += 1
                 if query_stats is not None:
@@ -765,7 +801,13 @@ def _passes_data_role_gate(
 
     backend_adjacent_title = any(pattern.search(title) for pattern in DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES.values())
     if backend_adjacent_title:
+        if DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES["software_engineer_intern"].search(title) and DEFAULT_NON_DATA_ROLE_TITLE_REGEXES[
+            "frontend_mobile_only"
+        ].search(desc_blob):
+            return False
         if BACKEND_ADJACENT_TITLE_BOOST_REGEX.search(title):
+            return True
+        if DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES["software_engineer_intern"].search(title):
             return True
         backend_signal_hits = 0
         for pattern in BACKEND_ADJACENT_DESCRIPTION_REGEXES.values():
@@ -797,9 +839,22 @@ def _fails_policy_gate(job: JobRecord, policy_reject_regexes: list[re.Pattern[st
         if pattern.search(blob):
             return True
     for pattern in policy_reject_regexes:
+        if _is_generic_phd_pattern(pattern) and not _is_phd_exclusive(job):
+            continue
         if pattern.search(blob):
             return True
     return False
+
+
+def _is_generic_phd_pattern(pattern: re.Pattern[str]) -> bool:
+    normalized = pattern.pattern.lower().replace("\\", "")
+    return "ph" in normalized or "doctoral" in normalized
+
+
+def _is_phd_exclusive(job: JobRecord) -> bool:
+    title = job.title or ""
+    description = job.description or ""
+    return bool(PHD_TITLE_RE.search(title) or PHD_EXCLUSIVE_REQUIREMENT_RE.search(description))
 
 
 def _role_relevance_reason_codes(job: JobRecord) -> list[str]:
@@ -897,6 +952,7 @@ def _normalize_scope_text(value: str) -> str:
 def _evaluate_eligibility(job: JobRecord) -> tuple[str, float, list[str], list[str]]:
     blob = _job_blob(job)
     negative = [name for name, pattern in NEGATIVE_WORK_AUTH_REGEXES.items() if pattern.search(blob)]
+    ambiguous_work_auth = [name for name, pattern in AMBIGUOUS_WORK_AUTH_REGEXES.items() if pattern.search(blob)]
     negated_sponsorship = [name for name, pattern in NEGATED_SPONSORSHIP_REGEXES.items() if pattern.search(blob)]
     if negated_sponsorship:
         negative.extend(negated_sponsorship)
@@ -907,8 +963,8 @@ def _evaluate_eligibility(job: JobRecord) -> tuple[str, float, list[str], list[s
     if negative:
         return "reject", 0.0, negative, positive
     if positive:
-        return "sponsorship_friendly", 0.95, negative, positive
-    return "ambiguous", 0.6, negative, positive
+        return "sponsorship_friendly", 0.95, ambiguous_work_auth, positive
+    return "ambiguous", 0.6, ambiguous_work_auth, positive
 
 
 def _score_relevance(job: JobRecord) -> tuple[float, list[str]]:
@@ -922,6 +978,10 @@ def _score_relevance(job: JobRecord) -> tuple[float, list[str]]:
                 adjusted = weight * 0.5
             score += adjusted
             hits.append(keyword)
+
+    if DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES["software_engineer_intern"].search(job.title or ""):
+        score += 3.0
+        hits.append("software_engineering")
 
     if job.age_unknown:
         score -= 0.25
@@ -940,7 +1000,14 @@ def _score_relevance(job: JobRecord) -> tuple[float, list[str]]:
 
 def _canonical_url(url: str) -> str:
     url = url.strip().lower()
-    return re.sub(r"\?.*$", "", url)
+    url = re.sub(r"\?.*$", "", url)
+    # Greenhouse-hosted boards often expose the same ATS record through a
+    # branded careers domain. Preserve the provider job ID rather than host.
+    path = urlparse(url).path
+    match = re.search(r"/jobs/(\d{6,})(?:[-/]|$)", path)
+    if match:
+        return f"ats-job:{match.group(1)}"
+    return url
 
 
 def _norm_token(value: str) -> str:
