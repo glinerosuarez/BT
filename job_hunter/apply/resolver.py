@@ -28,7 +28,6 @@ _QUESTION_FIELD_MAP: list[tuple[tuple[str, ...], str]] = [
     (("linkedin",), "identity.linkedin_url"),
     (("github",), "identity.github_url"),
     (("portfolio", "website"), "identity.portfolio_url"),
-    (("university", "college", "institution"), "education.school"),
     (("degree",), "education.degree"),
     (("major", "field of study"), "education.major"),
     (("graduation", "graduate date"), "education.graduation_date"),
@@ -69,6 +68,13 @@ _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
             "require medpace inc. to commence",
         ),
     ),
+    (
+        "employment_eligibility_us",
+        (
+            "appropriate option describing your employment eligibility",
+            "employment eligibility",
+        ),
+    ),
     ("on_site_acknowledgement", ("requires me to work on-site", "requires me to work on site")),
     ("education_end_month", ("end date month",)),
     ("education_end_year", ("end date year", "what year will you graduate")),
@@ -87,7 +93,7 @@ _FIELD_CAPABILITIES: tuple[FieldCapability, ...] = (
     FieldCapability(
         portal="workday",
         widget_types=("radio-group", "select-one", "listbox-button"),
-        intents=("work_auth_us", "future_sponsorship_us"),
+        intents=("work_auth_us", "future_sponsorship_us", "employment_eligibility_us"),
         resolver_mode="structured_boolean_yes_no",
         submit_policy="safe_autofill",
     ),
@@ -170,6 +176,13 @@ class AnswerResolver:
                 details={"normalized_question": normalized_question},
             )
         )
+
+    def explicit_override(self, *, question_text: str) -> AnswerResolution | None:
+        normalized_question = " ".join(question_text.lower().split())
+        for rule in self.answers.question_overrides:
+            if _rule_matches(rule.match_type, rule.pattern, normalized_question):
+                return AnswerResolution(answer=rule.answer, source=f"override:{rule.match_type}", matched_rule=rule.pattern)
+        return None
 
     def classify_intent(self, *, question_text: str, field_name: str = "") -> str | None:
         normalized_question = " ".join(question_text.lower().split())
@@ -262,6 +275,18 @@ class AnswerResolver:
             if degree:
                 return AnswerResolution(answer=degree, source="computed:education.degree")
 
+        if "currently pursuing a major" in question and "following disciplines" in question:
+            major = self._structured.get("education.major", "").lower()
+            recognized_disciplines = ("computer science", "computer engineering")
+            if major:
+                is_listed = any(
+                    discipline in question and discipline in major for discipline in recognized_disciplines
+                )
+                return AnswerResolution(
+                    answer="Yes" if is_listed else "No",
+                    source="computed:education.major_eligibility",
+                )
+
         if (
             forced_intent == "consent_required"
             or "provide your consent" in question
@@ -321,6 +346,25 @@ class AnswerResolver:
             if sponsorship in {"false", "no", "0"}:
                 return AnswerResolution(answer="No", source="computed:work_authorization.requires_future_sponsorship")
 
+        if forced_intent == "employment_eligibility_us":
+            authorized = self._structured.get("work_authorization.us_work_authorized", "").strip().lower()
+            sponsorship = self._structured.get("work_authorization.requires_future_sponsorship", "").strip().lower()
+            if authorized in {"true", "yes", "1"} and sponsorship in {"false", "no", "0"}:
+                return AnswerResolution(
+                    answer="__work_auth_us_no_sponsorship__",
+                    source="computed:work_authorization.employment_eligibility",
+                )
+            if authorized in {"true", "yes", "1"} and sponsorship in {"true", "yes", "1"}:
+                return AnswerResolution(
+                    answer="__work_auth_us_sponsorship_required__",
+                    source="computed:work_authorization.employment_eligibility",
+                )
+            if authorized in {"false", "no", "0"}:
+                return AnswerResolution(
+                    answer="__work_auth_us_not_authorized__",
+                    source="computed:work_authorization.employment_eligibility",
+                )
+
         if forced_intent == "on_site_acknowledgement" or "requires me to work on-site" in question or "requires me to work on site" in question:
             return AnswerResolution(answer="Yes", source="computed:preferences.on_site_acknowledgement")
 
@@ -364,6 +408,34 @@ class AnswerResolver:
 
         if "are you over 18" in question:
             return AnswerResolution(answer="Yes", source="computed:identity.over_18")
+
+        if "hispanic or latino" in question:
+            race_ethnicity = str(self.answers.field_defaults.get("race_ethnicity", "")).strip().lower()
+            if "hispanic" in race_ethnicity or "latino" in race_ethnicity:
+                return AnswerResolution(answer="Yes", source="computed:self_identify.hispanic_or_latino")
+            if race_ethnicity:
+                return AnswerResolution(answer="No", source="computed:self_identify.hispanic_or_latino")
+
+        if "veteran status" in question:
+            veteran_status = str(self.answers.field_defaults.get("veteran_status", "")).strip().lower()
+            if veteran_status in {"false", "no", "0"}:
+                return AnswerResolution(
+                    answer="I am not a protected veteran.",
+                    source="computed:self_identify.veteran_status",
+                )
+
+        if "disabilitystatus" in normalized_field_name:
+            disability_status = str(self.answers.field_defaults.get("disability_status", "")).strip().lower()
+            if disability_status in {"false", "no", "0"}:
+                return AnswerResolution(
+                    answer="No",
+                    source="computed:self_identify.disability_status",
+                )
+            if disability_status in {"true", "yes", "1"}:
+                return AnswerResolution(
+                    answer="Yes",
+                    source="computed:self_identify.disability_status",
+                )
 
         if "previously" in question and "employ" in question:
             return AnswerResolution(answer="No", source="computed:employment.previously_employed_by_company")

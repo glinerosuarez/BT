@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from urllib.parse import urljoin, urlparse
 
 from job_hunter.apply.adapters.base import AdapterContext
 from job_hunter.apply.resolver import ResolutionError
-from job_hunter.apply.types import Blocker, StepSnapshot, SubmitResult
+from job_hunter.apply.types import AnswerResolution, Blocker, StepSnapshot, SubmitResult
 
 _CONFIRMATION_MARKERS = (
     "application submitted",
@@ -72,6 +73,15 @@ class WorkdayAdapter:
         return "careers at" in content and "workday" in content
 
     def submit(self, *, page, resolver, context: AdapterContext) -> SubmitResult:
+        # Workday often leaves stale or hidden controls in the DOM. Keep each
+        # Playwright operation bounded so a failed selector becomes a persisted
+        # checkpoint instead of holding an application run indefinitely.
+        set_default_timeout = getattr(page, "set_default_timeout", None)
+        if callable(set_default_timeout):
+            try:
+                set_default_timeout(5_000)
+            except Exception:
+                pass
         current_url = str(getattr(page, "url", "") or "")
         account_sign_in_attempted = False
         for _ in range(6):
@@ -91,6 +101,16 @@ class WorkdayAdapter:
                 page.goto(apply_url, wait_until="domcontentloaded")
                 current_url = str(getattr(page, "url", "") or apply_url)
                 continue
+            if "/apply" not in current_url.lower() and not apply_url:
+                # Some tenants render the public job shell before its Apply
+                # link hydrates. For a known Workday job URL, the manual
+                # endpoint is stable and avoids treating that transient state
+                # as an unsupported portal.
+                direct_manual_url = self._direct_manual_apply_url(current_url)
+                if direct_manual_url:
+                    page.goto(direct_manual_url, wait_until="domcontentloaded")
+                    current_url = str(getattr(page, "url", "") or direct_manual_url)
+                    continue
 
             if self._is_public_job_page(page):
                 return self._blocked(

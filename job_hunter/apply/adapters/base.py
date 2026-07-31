@@ -15,6 +15,7 @@ class AdapterContext:
     output_dir: Path
     profile: ApplicationProfile | None = None
     workday_account_store_path: Path | None = None
+    transcript_path: str = ""
 
 
 class ApplyAdapter(Protocol):

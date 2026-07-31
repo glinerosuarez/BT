@@ -19,7 +19,7 @@ from job_hunter.apply.email_codes import extract_verification_code
 from job_hunter.apply.profile_loader import ProfileValidationError, load_application_inputs
 from job_hunter.apply.resolver import AnswerResolver, ResolutionError
 from job_hunter.apply.service import ApplicationService
-from job_hunter.apply.types import Blocker, SubmitResult
+from job_hunter.apply.types import Blocker, SubmitResult, WorkdayCredential
 from job_hunter.config import Settings
 from job_hunter.models import JobRecord
 from job_hunter.storage import JobStore
@@ -476,6 +476,41 @@ class ApplyJobsTests(unittest.TestCase):
         with self.assertRaises(ResolutionError):
             resolver.resolve(question_text="Please select the ethnicity which most accurately describes how you identify yourself.*")
 
+    def test_answer_resolver_does_not_use_school_for_university_organization_question(self) -> None:
+        resolver = self._resolver()
+        with self.assertRaises(ResolutionError):
+            resolver.resolve(
+                question_text="Have you held leadership roles through university organizations such as clubs or societies?*"
+            )
+
+    def test_answer_resolver_exposes_explicit_override_without_mutating_structured_profile(self) -> None:
+        resolver = self._resolver()
+        original_gpa = resolver.profile.education.gpa
+        resolver.answers.question_overrides.append(
+            type(resolver.answers.question_overrides[0])(
+                match_type="contains",
+                pattern="current cumulative GPA",
+                answer="3.7 or Higher",
+            )
+        )
+
+        resolution = resolver.explicit_override(question_text="What is your current cumulative GPA on a 4.0 scale?*")
+
+        self.assertIsNotNone(resolution)
+        self.assertEqual(resolution.answer, "3.7 or Higher")
+        self.assertEqual(resolver.profile.education.gpa, original_gpa)
+
+    def test_answer_resolver_computes_major_eligibility_from_structured_education(self) -> None:
+        resolver = self._resolver()
+
+        resolution = resolver.resolve(
+            question_text="Are you currently pursuing a Major in one of the following disciplines: Computer Science or Computer Engineering*",
+            field_type="select-one",
+        )
+
+        self.assertEqual(resolution.answer, "Yes")
+        self.assertEqual(resolution.source, "computed:education.major_eligibility")
+
     def test_answer_resolver_computes_split_name_fields_when_structured_keys_are_absent(self) -> None:
         resolver = self._resolver()
         self.assertEqual(
@@ -560,6 +595,125 @@ class ApplyJobsTests(unittest.TestCase):
         )
         self.assertEqual(sponsorship.answer, "No")
         self.assertEqual(sponsorship.source, "capability:workday:future_sponsorship_us:safe_autofill")
+        hispanic_or_latino = resolver.resolve(
+            question_text="Please indicate if you are Hispanic or Latino.*",
+            field_name="hispanicOrLatino",
+            field_type="listbox-button",
+        )
+        self.assertEqual(hispanic_or_latino.answer, "Yes")
+        self.assertEqual(hispanic_or_latino.source, "computed:self_identify.hispanic_or_latino")
+        veteran_status = resolver.resolve(
+            question_text="Please select the veteran status which most accurately describes your status.*",
+            field_name="veteranStatus",
+            field_type="listbox-button",
+        )
+        self.assertEqual(veteran_status.answer, "I am not a protected veteran.")
+        self.assertEqual(veteran_status.source, "computed:self_identify.veteran_status")
+        disability_status = resolver.resolve(
+            question_text="Please check one of the boxes below:*",
+            field_name="selfIdentifiedDisabilityData--disabilityStatus",
+            field_type="checkbox-group",
+        )
+        self.assertEqual(disability_status.answer, "No")
+        self.assertEqual(disability_status.source, "computed:self_identify.disability_status")
+        eligibility = resolver.resolve_for_portal(
+            portal="workday",
+            question_text="Please select the appropriate option describing your employment eligibility.*",
+            field_name="employment-eligibility",
+            field_type="listbox-button",
+        )
+        self.assertEqual(eligibility.answer, "__work_auth_us_no_sponsorship__")
+        self.assertEqual(
+            eligibility.source,
+            "capability:workday:employment_eligibility_us:safe_autofill",
+        )
+
+    def test_workday_splits_complete_date_override_for_date_spinbuttons(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._date_component_value(
+                field={"field_name": "primaryQuestionnaire--start-dateSectionMonth-input"},
+                value="06/01/2027",
+            ),
+            "06",
+        )
+        self.assertEqual(
+            adapter._date_component_value(
+                field={"field_name": "primaryQuestionnaire--start-dateSectionDay-input"},
+                value="06/01/2027",
+            ),
+            "01",
+        )
+        self.assertEqual(
+            adapter._date_component_value(
+                field={"field_name": "primaryQuestionnaire--start-dateSectionYear-input"},
+                value="06/01/2027",
+            ),
+            "2027",
+        )
+
+    def test_workday_fills_explicit_self_identification_signed_date(self) -> None:
+        resolution = WorkdayAdapter()._signed_attestation_date_resolution(
+            field_name="selfIdentifiedDisabilityData--dateSignedOn-dateSectionMonth-input",
+            question_text="Date*",
+        )
+
+        self.assertIsNotNone(resolution)
+        assert resolution is not None
+        self.assertEqual(resolution.answer, datetime.now().strftime("%m/%d/%Y"))
+        self.assertEqual(
+            resolution.source,
+            "capability:workday:self_identify_date_signed:current_date",
+        )
+        self.assertIsNone(
+            WorkdayAdapter()._signed_attestation_date_resolution(
+                field_name="education--graduationDate-dateSectionMonth-input",
+                question_text="Graduation date",
+            )
+        )
+
+    def test_workday_blocks_assessment_checkpoint_without_opening_it(self) -> None:
+        page = FakePage(url="https://example.myworkdayjobs.com/apply", easy_apply=False)
+        page.evaluate = lambda _script: True
+
+        self.assertTrue(WorkdayAdapter()._has_assessment_stage(page))
+
+    def test_workday_employment_eligibility_only_matches_explicit_sponsorship_labels(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertGreater(
+            adapter._listbox_option_match_score(
+                field_name="employment-eligibility",
+                target="__work_auth_us_no_sponsorship__",
+                candidate="Authorized to work in the United States and will not require sponsorship",
+            ),
+            0,
+        )
+        self.assertGreater(
+            adapter._listbox_option_match_score(
+                field_name="employment-eligibility",
+                target="__work_auth_us_no_sponsorship__",
+                candidate="I am authorized to work permanently in the country.",
+            ),
+            0,
+        )
+        self.assertEqual(
+            adapter._listbox_option_match_score(
+                field_name="employment-eligibility",
+                target="__work_auth_us_no_sponsorship__",
+                candidate="United States Citizen",
+            ),
+            0,
+        )
+        self.assertEqual(
+            adapter._listbox_option_match_score(
+                field_name="employment-eligibility",
+                target="__work_auth_us_no_sponsorship__",
+                candidate="I have an active temporary work permit.",
+            ),
+            0,
+        )
 
     def test_workday_country_equivalence_treats_united_states_of_america_as_united_states(self) -> None:
         adapter = WorkdayAdapter()
@@ -568,6 +722,16 @@ class ApplyJobsTests(unittest.TestCase):
                 field_name="country",
                 current_value="United States of America",
                 desired_value="United States",
+            )
+        )
+
+    def test_workday_veteran_status_equivalence_ignores_case_and_punctuation(self) -> None:
+        adapter = WorkdayAdapter()
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="veteranStatus",
+                current_value="I AM NOT A PROTECTED VETERAN",
+                desired_value="I am not a protected veteran.",
             )
         )
 
@@ -586,6 +750,28 @@ class ApplyJobsTests(unittest.TestCase):
                 candidate="United States Minor Outlying Islands",
             ),
         )
+
+    def test_workday_source_prompt_uses_job_site_hierarchy_for_linkedin(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._prompt_selection_path(
+                "LinkedIn",
+                field={"question_text": "How Did You Hear About Us?*"},
+            ),
+            ["Job Sites", "LinkedIn"],
+        )
+
+    def test_workday_builds_direct_manual_endpoint_for_concrete_job_url(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._direct_manual_apply_url(
+                "https://copart.wd12.myworkdayjobs.com/Copart/job/Dallas-TX/Data-Engineering-Intern_JR110075"
+            ),
+            "https://copart.wd12.myworkdayjobs.com/Copart/job/Dallas-TX/Data-Engineering-Intern_JR110075/apply/applyManually",
+        )
+        self.assertEqual(adapter._direct_manual_apply_url("https://example.com/job/1"), "")
 
     def test_workday_state_listbox_prefers_full_state_name_over_partial_country_match(self) -> None:
         adapter = WorkdayAdapter()
@@ -990,6 +1176,59 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(result.status, "submitted")
         self.assertEqual(result.confirmation_payload["application_id"], "gh-123")
 
+    def test_greenhouse_adapter_blocks_unknown_required_uploads(self) -> None:
+        adapter = GreenhouseAdapter()
+        page = FakePage(
+            url="https://boards.greenhouse.io/acme/jobs/1",
+            fields=[
+                {
+                    "field_name": "question_transcript",
+                    "question_text": "Upload an unofficial undergraduate transcript",
+                    "field_type": "file",
+                    "required": True,
+                }
+            ],
+            easy_apply=False,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "unsupported_required_document")
+        self.assertFalse(page.submitted)
+
+    def test_greenhouse_adapter_uses_configured_transcript_upload(self) -> None:
+        adapter = GreenhouseAdapter()
+        page = FakePage(
+            url="https://boards.greenhouse.io/acme/jobs/1",
+            fields=[
+                {
+                    "field_name": "question_transcript",
+                    "question_text": "Upload an unofficial undergraduate transcript",
+                    "field_type": "file",
+                    "required": True,
+                }
+            ],
+            confirmation={"application_id": "gh-transcript"},
+            easy_apply=False,
+        )
+        context = self._adapter_context()
+        context.transcript_path = "/tmp/transcript.pdf"
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=context)
+
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(page.values["question_transcript"], "/tmp/transcript.pdf")
+
+    def test_greenhouse_select_value_matching_handles_expected_graduation_dates(self) -> None:
+        self.assertTrue(GreenhouseAdapter._select_values_match(expected="2027-05", actual="May 2027"))
+        self.assertTrue(GreenhouseAdapter._select_values_match(expected="2027-05", actual="Spring 2027"))
+        self.assertTrue(GreenhouseAdapter._select_values_match(expected="Computer Science", actual="Computer Science"))
+        self.assertFalse(GreenhouseAdapter._select_values_match(expected="2027-05", actual="June 2027"))
+        self.assertTrue(GreenhouseAdapter._country_option_matches(expected="United States", actual="United States +1"))
+        self.assertEqual(GreenhouseAdapter._select_search_value("2027-05"), "Spring 2027")
+        self.assertEqual(GreenhouseAdapter._select_search_value("2027-10"), "Fall 2027")
+
     def test_handshake_adapter_uploads_documents_and_confirms(self) -> None:
         adapter = HandshakeAdapter()
         page = FakePage(
@@ -1030,6 +1269,76 @@ class ApplyJobsTests(unittest.TestCase):
 
         self.assertEqual(result.status, "submitted")
         self.assertEqual(result.confirmation_payload["source"], "handshake")
+
+    def test_workday_sign_in_targets_foreground_dialog_not_background_create_account_form(self) -> None:
+        class Locator:
+            def __init__(self, *, children=None, count=1) -> None:
+                self.children = children or {}
+                self._count = count
+                self.values: list[str] = []
+                self.clicked = False
+                self.evaluated: list[str] = []
+
+            @property
+            def first(self):
+                return self
+
+            def locator(self, selector: str):
+                return self.children.get(selector, Locator(count=0))
+
+            def count(self) -> int:
+                return self._count
+
+            def fill(self, value: str) -> None:
+                self.values.append(value)
+
+            def click(self, **_kwargs) -> None:
+                self.clicked = True
+
+            def evaluate(self, script: str) -> None:
+                self.evaluated.append(script)
+
+        dialog_email = Locator()
+        dialog_password = Locator()
+        dialog_submit = Locator()
+        dialog_form = Locator()
+        dialog = Locator(
+            children={
+                'input[data-automation-id="email"]:visible': dialog_email,
+                'input[data-automation-id="password"]:visible': dialog_password,
+                '[data-automation-id="click_filter"]:visible': dialog_submit,
+                'button[data-automation-id="signInSubmitButton"]:visible': Locator(count=0),
+                'form[data-automation-id="signInFormo"]:visible': dialog_form,
+            }
+        )
+        background_submit = Locator()
+
+        class SignInPage:
+            url = "https://tenant.wd1.myworkdayjobs.com/en-US/Careers/login"
+
+            def locator(self, selector: str):
+                if selector == '[data-automation-id="popUpDialog"]:visible':
+                    return dialog
+                if selector == '[data-automation-id="click_filter"]:visible':
+                    return background_submit
+                return Locator(count=0)
+
+            def wait_for_timeout(self, _milliseconds: int) -> None:
+                return None
+
+        context = self._adapter_context()
+        context.profile.workday_credentials.append(
+            WorkdayCredential(host="tenant.wd1.myworkdayjobs.com", email="ada@example.com", password="test-password")
+        )
+
+        signed_in = WorkdayAdapter()._sign_in_to_candidate_account(page=SignInPage(), context=context)
+
+        self.assertTrue(signed_in)
+        self.assertEqual(dialog_email.values, ["ada@example.com"])
+        self.assertEqual(dialog_password.values, ["test-password"])
+        self.assertEqual(dialog_form.evaluated, [])
+        self.assertTrue(dialog_submit.clicked)
+        self.assertFalse(background_submit.clicked)
 
     def test_greenhouse_adapter_handles_required_choice_groups(self) -> None:
         adapter = GreenhouseAdapter()
@@ -1281,7 +1590,7 @@ class ApplyJobsTests(unittest.TestCase):
 
         confirmation = adapter._extract_confirmation(page)
 
-        self.assertIn("submitted successfully", confirmation["message"].lower())
+        self.assertIn("application submitted", confirmation["message"].lower())
         self.assertEqual(confirmation["source"], "icims")
 
     def test_icims_submit_short_circuits_on_confirmation_page(self) -> None:
@@ -1349,6 +1658,8 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(run.status, "blocked")
         self.assertEqual(shown["adapter_name"], "workday")
         self.assertTrue(shown["blocked_reason"] in {"apply_button_missing", "unsupported_widget"})
+        self.assertEqual(service.browser_manager.open_calls[-1], "workday")
+        self.assertFalse(service.browser_manager.headless_calls[-1])
 
     def test_workday_adapter_fills_form_fields_uploads_artifacts_and_submits(self) -> None:
         adapter = WorkdayAdapter()
@@ -1719,7 +2030,7 @@ class ApplyJobsTests(unittest.TestCase):
             "United States of America (+1)",
         )
 
-    def test_workday_adapter_blocks_after_repeated_form_without_progress(self) -> None:
+    def test_workday_adapter_blocks_after_navigation_timeout(self) -> None:
         class StuckWorkdayPage(FakeWorkdayPage):
             def click_workday_navigation(self, action: str) -> bool:
                 self.clicked_actions.append(action)
@@ -1732,8 +2043,8 @@ class ApplyJobsTests(unittest.TestCase):
 
         self.assertEqual(result.status, "blocked")
         self.assertEqual(result.blocker.reason, "manual_checkpoint_required")
-        self.assertEqual(result.blocker.details["checkpoint"], "workday_no_progress")
-        self.assertEqual(page.clicked_actions, ["continue", "continue"])
+        self.assertEqual(result.blocker.details["checkpoint"], "workday_navigation_timeout")
+        self.assertEqual(page.clicked_actions, ["continue"])
 
     def test_workday_adapter_blocks_on_unknown_required_question(self) -> None:
         adapter = WorkdayAdapter()
@@ -2049,6 +2360,55 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(run.status, "submitted")
         self.assertEqual(shown["adapter_name"], "handshake")
 
+    def test_service_follows_started_handshake_external_application_in_ats_profile(self) -> None:
+        self.store.insert_job(
+            JobRecord(
+                source="handshake",
+                external_id="hs-started-external",
+                url="https://app.joinhandshake.com/jobs/558",
+                title="Data Internship",
+                company="Handshake Co",
+                location="Remote",
+                is_internship=True,
+                posted_at="2026-06-30T00:00:00+00:00",
+                description="Apply externally.",
+                ingested_at="2026-06-30T01:00:00+00:00",
+                profile_match_score=0.9,
+                profile_match_label="pass",
+                job_text_version="job_text_v1",
+                job_text_snapshot="TITLE: Data Internship",
+            ),
+            "handshake-started-external",
+        )
+        self.store._conn.commit()
+        handshake_job_id = int(
+            self.store._conn.execute("SELECT id FROM jobs WHERE dedupe_key = 'handshake-started-external'").fetchone()[0]
+        )
+
+        class StartedExternalHandshakePage(FakePage):
+            def extract_started_external_apply_url(self) -> str:
+                return "https://careers.example.com/job/data-intern/1"
+
+            def extract_workday_apply_url(self) -> str:
+                return "https://example.wd1.myworkdayjobs.com/en-US/Careers/job/Intern"
+
+        page = StartedExternalHandshakePage(
+            url="https://app.joinhandshake.com/jobs/558",
+            confirmation={"message": "Application submitted"},
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+        service = self._service(page)
+
+        run = service.submit_job(job_id=handshake_job_id, profile_name="default", force=True)
+        shown = service.show_run(run.application_run_id)
+
+        self.assertEqual(run.status, "blocked")
+        self.assertEqual(shown["adapter_name"], "workday")
+        self.assertEqual(shown["target_url"], "https://example.wd1.myworkdayjobs.com/en-US/Careers/job/Intern")
+        self.assertEqual(service.browser_manager.open_calls, ["handshake", "workday"])
+
     def test_service_ignores_previous_handshake_internal_target_when_resolving_native_flow(self) -> None:
         self.store.insert_job(
             JobRecord(
@@ -2193,9 +2553,9 @@ class ApplyJobsTests(unittest.TestCase):
         shown = service.show_run(run.application_run_id)
 
         self.assertEqual(run.status, "blocked")
-        self.assertEqual(shown["adapter_name"], "unsupported")
+        self.assertEqual(shown["adapter_name"], "handshake")
         self.assertEqual(shown["status"], "blocked")
-        self.assertEqual(shown["blocked_reason"], "handshake_native_unsupported")
+        self.assertEqual(shown["blocked_reason"], "ambiguous_confirmation")
 
     def test_service_classifies_handshake_fellow_as_specialized_unsupported_target(self) -> None:
         service = self._service(FakePage(url="https://app.joinhandshake.com/jobs/1", easy_apply=False, greenhouse=False, icims=False))
@@ -2675,7 +3035,7 @@ class ApplyJobsTests(unittest.TestCase):
         shown = service.show_run(run.application_run_id)
         self.assertEqual(run.status, "submitted")
         self.assertEqual(shown["current_url"], "https://boards.greenhouse.io/acme/jobs/1/application")
-        self.assertEqual(service.browser_manager.open_calls[-1], "linkedin")
+        self.assertEqual(service.browser_manager.open_calls[-1], "greenhouse")
         self.assertEqual(service.browser_manager.headless_calls[-1], False)
         self.assertIn("Live handoff opened in the browser", messages[0])
 
@@ -2918,7 +3278,12 @@ class ApplyJobsTests(unittest.TestCase):
                             "answer": "They/them",
                         },
                     ],
-                    "field_defaults": {},
+                    "field_defaults": {
+                        "gender": "Male",
+                        "race_ethnicity": "Hispanic or Latino",
+                        "veteran_status": False,
+                        "disability_status": False,
+                    },
                 }
             ),
             encoding="utf-8",

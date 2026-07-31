@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 from job_hunter.apply.resolver import AnswerResolver, ResolutionError
@@ -10,6 +11,20 @@ _CONFIRMATION_MARKERS = (
     "application submitted",
     "thank you for applying",
     "your application has been submitted",
+)
+_MONTH_NAMES = (
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
 )
 
 
@@ -38,6 +53,12 @@ class GreenhouseAdapter:
             if filled_count == 0:
                 break
         self._submit(page)
+        # Greenhouse may complete invisible reCAPTCHA and submit asynchronously
+        # after the button click. Keep the page alive long enough to observe the
+        # resulting confirmation state before treating it as ambiguous.
+        wait = getattr(page, "wait_for_timeout", None)
+        if callable(wait):
+            wait(5000)
         verification_blocker = self._detect_email_verification_blocker(page)
         if verification_blocker is not None:
             return self._blocked(
@@ -73,7 +94,20 @@ class GreenhouseAdapter:
             if not required:
                 continue
             if field_type == "file":
-                upload_path = context.cover_letter_pdf_path if "cover" in question_text.lower() else context.resume_pdf_path
+                upload_path = self._artifact_for_field(context=context, question_text=question_text, field_name=field_name)
+                if not upload_path:
+                    return (
+                        self._blocked(
+                            "unsupported_required_document",
+                            page,
+                            steps,
+                            field_name=field_name,
+                            field_type=field_type,
+                            question_text=question_text,
+                            details={"message": "A job-specific document is required and no safe upload artifact is available."},
+                        ),
+                        filled_count,
+                    )
                 self._set_field(page, field, upload_path)
                 steps.append(
                     StepSnapshot(
@@ -109,7 +143,21 @@ class GreenhouseAdapter:
                     ),
                     filled_count,
                 )
-            self._set_field(page, field, resolution.answer)
+            try:
+                self._set_field(page, field, resolution.answer)
+            except RuntimeError as exc:
+                return (
+                    self._blocked(
+                        "field_interaction_failed",
+                        page,
+                        steps,
+                        field_name=field_name,
+                        field_type=field_type,
+                        question_text=question_text,
+                        details={"message": str(exc)},
+                    ),
+                    filled_count,
+                )
             steps.append(
                 StepSnapshot(
                     step_key=f"field:{field_name or question_text}",
@@ -154,7 +202,7 @@ class GreenhouseAdapter:
                 el.setAttribute('data-jobhunter-field-index', String(counter));
                 const id = el.getAttribute('id') || '';
                 const label = id ? document.querySelector(`label[for="${id}"]`) : null;
-                const questionText = (label?.textContent || el.getAttribute('aria-label') || '').trim();
+                const questionText = (extra.questionText || label?.textContent || el.getAttribute('aria-label') || '').trim();
                 const currentValue = fieldType === 'select-one'
                   ? (
                       el.closest('.select__container')?.querySelector('.select__single-value')?.textContent ||
@@ -206,7 +254,12 @@ class GreenhouseAdapter:
                 if (type === 'hidden') continue;
                 if (type === 'file') {
                   const group = el.closest('[role="group"]');
-                  pushField(el, 'file', { required: group?.getAttribute('aria-required') === 'true' });
+                  const labelId = group?.getAttribute('aria-labelledby') || '';
+                  const groupLabel = labelId ? document.getElementById(labelId) : null;
+                  pushField(el, 'file', {
+                    required: group?.getAttribute('aria-required') === 'true',
+                    questionText: (groupLabel?.textContent || '').trim(),
+                  });
                   continue;
                 }
                 if (el.getAttribute('role') === 'combobox') {
@@ -274,10 +327,21 @@ class GreenhouseAdapter:
             locator = page.locator(selector)
             locator.click()
             locator.fill("")
-            locator.fill(value)
+            locator.fill(self._select_search_value(value))
             page.wait_for_timeout(500)
-            locator.press("Enter")
-            page.wait_for_timeout(500)
+            is_phone_country = str(field.get("field_name") or "").lower() == "country"
+            option = self._matching_select_option(page=page, value=value, allow_country_dial_code=is_phone_country)
+            if option is None:
+                raise RuntimeError(f"No matching select option for '{value}'")
+            option.click()
+            page.wait_for_timeout(300)
+            selected_value = self._selected_select_value(locator)
+            if not selected_value or (
+                not is_phone_country and not self._select_values_match(expected=value, actual=selected_value)
+            ):
+                raise RuntimeError(
+                    f"Select value was not committed for '{value}' (current value: '{selected_value or '<empty>'}')"
+                )
         elif field_type == "checkbox":
             desired = value.strip().lower() in {"1", "true", "yes", "on"}
             if bool(field.get("checked")) != desired:
@@ -304,6 +368,87 @@ class GreenhouseAdapter:
             raise RuntimeError(f"Unsupported choice-group value '{value}' for {field.get('field_name') or field.get('question_text')}")
         else:
             page.fill(selector, value)
+
+    def _artifact_for_field(self, *, context, question_text: str, field_name: str) -> str:
+        field_description = f"{question_text} {field_name}".lower()
+        if "transcript" in field_description:
+            return context.transcript_path
+        if any(token in field_description for token in ("resume", "curriculum vitae", "cv")):
+            return context.resume_pdf_path
+        if "cover" in field_description and "letter" in field_description:
+            return context.cover_letter_pdf_path
+        return ""
+
+    def _matching_select_option(self, *, page, value: str, allow_country_dial_code: bool = False):
+        for selector in ("[role='option']", "[id*='-option-']"):
+            options = page.locator(selector)
+            try:
+                option_count = options.count()
+            except Exception:
+                continue
+            for index in range(option_count):
+                option = options.nth(index)
+                try:
+                    if not option.is_visible():
+                        continue
+                    option_text = option.inner_text().strip()
+                except Exception:
+                    continue
+                if self._select_values_match(expected=value, actual=option_text) or (
+                    allow_country_dial_code and self._country_option_matches(expected=value, actual=option_text)
+                ):
+                    return option
+        return None
+
+    def _selected_select_value(self, locator) -> str:
+        try:
+            return str(
+                locator.evaluate(
+                    """
+                    (el) => (
+                      el.closest('.select__container')?.querySelector('.select__single-value')?.textContent || ''
+                    ).trim()
+                    """
+                )
+            ).strip()
+        except Exception:
+            return ""
+
+    @classmethod
+    def _select_values_match(cls, *, expected: str, actual: str) -> bool:
+        normalized_expected = cls._normalize_select_value(expected)
+        normalized_actual = cls._normalize_select_value(actual)
+        if not normalized_expected or not normalized_actual:
+            return False
+        if normalized_expected == normalized_actual:
+            return True
+        date_match = re.fullmatch(r"(\d{4})-(\d{1,2})", expected.strip())
+        if not date_match:
+            return False
+        year, month = date_match.groups()
+        terms = ("spring",) if int(month) <= 6 else ("fall",)
+        return year in normalized_actual.split() and (
+            _MONTH_NAMES[int(month) - 1] in normalized_actual.split() or any(term in normalized_actual.split() for term in terms)
+        )
+
+    @staticmethod
+    def _normalize_select_value(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+    @staticmethod
+    def _select_search_value(value: str) -> str:
+        date_match = re.fullmatch(r"(\d{4})-(\d{1,2})", value.strip())
+        if not date_match:
+            return value
+        year, month = date_match.groups()
+        term = "Spring" if int(month) <= 6 else "Fall"
+        return f"{term} {year}"
+
+    @classmethod
+    def _country_option_matches(cls, *, expected: str, actual: str) -> bool:
+        normalized_expected = cls._normalize_select_value(expected)
+        normalized_actual = cls._normalize_select_value(actual)
+        return bool(normalized_expected) and normalized_actual.startswith(f"{normalized_expected} ")
 
     def _submit(self, page) -> None:
         submitter = getattr(page, "submit_application", None)
@@ -349,7 +494,7 @@ class GreenhouseAdapter:
         checker = getattr(page, "detect_unsupported_widget", None)
         return bool(checker()) if callable(checker) else False
 
-    def complete_email_verification(self, *, page, code: str, steps: list[StepSnapshot]) -> SubmitResult:
+    def complete_email_verification(self, *, page, code: str, steps: list[StepSnapshot], context=None, resolver=None) -> SubmitResult:
         if hasattr(page, "fill_email_verification_code"):
             page.fill_email_verification_code(code)
         else:
@@ -426,6 +571,13 @@ class GreenhouseAdapter:
     def _resolve_field_value(self, *, resolver: AnswerResolver, question_text: str, field_name: str, field_type: str):
         lowered_question = question_text.lower()
         lowered_field = field_name.lower()
+        # Select controls sometimes expose value ranges rather than the exact
+        # structured value (for example GPA bands). An explicit user rule is
+        # the authoritative representation for that portal choice.
+        if field_type == "select-one":
+            override = resolver.explicit_override(question_text=question_text)
+            if override is not None:
+                return override
         if "bound by any agreements" in lowered_question:
             return resolver.resolve_for_portal(
                 portal=self.adapter_name,

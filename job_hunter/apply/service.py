@@ -80,7 +80,8 @@ class ApplicationService:
         tailoring_artifact = self._ensure_tailoring_artifact(job_id=job_id, profile_name=profile_name, force=force)
         context = self._build_adapter_context(profile, tailoring_artifact["output_dir"])
 
-        session = self.browser_manager.open(adapter_name=self._session_adapter_name_for_source(str(job["source"] or "")))
+        session_adapter_name = self._session_adapter_name_for_source(str(job["source"] or ""))
+        session = self.browser_manager.open(adapter_name=session_adapter_name)
         try:
             page = session.new_page()
             initial_target_url = self._initial_target_url(job)
@@ -129,6 +130,21 @@ class ApplicationService:
                 self._persist_result(run_id=run_id, result=result, output_dir=output_dir, page=page)
                 return self._run_record(run_id)
 
+            if adapter_name != session_adapter_name:
+                # External links discovered from an aggregator should use the ATS's
+                # persistent profile, not the profile used to inspect the source job.
+                session.close()
+                # Workday can render the form shell in headless Chromium while
+                # withholding its interactive controls. Always use a visible
+                # context once Workday is positively identified.
+                session = self.browser_manager.open(
+                    adapter_name=adapter_name,
+                    headless=False if adapter_name == "workday" else None,
+                )
+                session_adapter_name = adapter_name
+                page = session.new_page()
+                page.goto(target_url, wait_until="domcontentloaded")
+
             duplicate = self.store.find_application_run(
                 job_id=job_id,
                 profile_name=profile_name,
@@ -172,7 +188,22 @@ class ApplicationService:
                 output_dir=str(output_dir),
             )
             submit_started_at = datetime.now(timezone.utc)
-            result = adapter.submit(page=page, resolver=resolver, context=context)
+            try:
+                result = adapter.submit(page=page, resolver=resolver, context=context)
+            except Exception as exc:
+                result = SubmitResult(
+                    status="failed",
+                    current_url=str(getattr(page, "url", target_url) or target_url),
+                    blocker=Blocker(
+                        reason="adapter_execution_error",
+                        question_text="Application automation",
+                        field_name="adapter.submit",
+                        field_type="internal",
+                        details={"adapter_name": adapter_name, "error": str(exc)},
+                    ),
+                    adapter_name=adapter_name,
+                    target_url=target_url,
+                )
             result = self._maybe_complete_email_verification(
                 adapter_name=adapter_name,
                 adapter=adapter,
@@ -220,10 +251,8 @@ class ApplicationService:
         tailoring_artifact = self._ensure_tailoring_artifact(job_id=job_id, profile_name=profile_name, force=force)
         context = self._build_adapter_context(profile, tailoring_artifact["output_dir"])
 
-        session = self.browser_manager.open(
-            adapter_name=self._session_adapter_name_for_source(str(job["source"] or "")),
-            headless=False,
-        )
+        session_adapter_name = self._session_adapter_name_for_source(str(job["source"] or ""))
+        session = self.browser_manager.open(adapter_name=session_adapter_name, headless=False)
         try:
             page = session.new_page()
             initial_target_url = self._initial_target_url(job)
@@ -271,6 +300,13 @@ class ApplicationService:
                 )
                 self._persist_result(run_id=run_id, result=result, output_dir=output_dir, page=page)
                 return self._run_record(run_id)
+
+            if adapter_name != session_adapter_name:
+                session.close()
+                session = self.browser_manager.open(adapter_name=adapter_name, headless=False)
+                session_adapter_name = adapter_name
+                page = session.new_page()
+                page.goto(target_url, wait_until="domcontentloaded")
 
             duplicate = self.store.find_application_run(
                 job_id=job_id,
@@ -620,12 +656,16 @@ class ApplicationService:
                 cover_letter_pdf_path = Path(fallback)
         if not resume_pdf_path.exists() or not cover_letter_pdf_path.exists():
             raise RuntimeError("Tailored resume/cover letter PDFs are required for apply flows.")
+        transcript_path = profile.uploads.get("transcript", "")
+        if transcript_path and not Path(transcript_path).is_file():
+            raise RuntimeError("Configured transcript upload path does not exist.")
         return AdapterContext(
             resume_pdf_path=str(resume_pdf_path),
             cover_letter_pdf_path=str(cover_letter_pdf_path),
             output_dir=output_dir,
             profile=profile,
             workday_account_store_path=None,
+            transcript_path=transcript_path,
         )
 
     def _resolve_adapter(self, job, page, target_url: str):
@@ -653,13 +693,23 @@ class ApplicationService:
         elif source == "handshake":
             self._prepare_handshake_page(page)
             current_url = str(getattr(page, "url", target_url) or target_url)
+            started_external_url = self._handshake_started_external_apply_url(page)
+            if started_external_url:
+                page.goto(started_external_url, wait_until="domcontentloaded")
+                target_url = started_external_url
+                current_url = str(getattr(page, "url", target_url) or target_url)
             if self.handshake_adapter.is_handshake_target(current_url, page=page):
                 return "handshake", self.handshake_adapter, current_url
-            allow_click_discovery = not self.handshake_adapter.is_handshake_target(target_url, page=page)
-            external_url = self._discover_external_apply_url(job, page, target_url, allow_click=allow_click_discovery)
-            if external_url:
-                page.goto(external_url, wait_until="domcontentloaded")
-                target_url = external_url
+            if not started_external_url:
+                allow_click_discovery = not self.handshake_adapter.is_handshake_target(target_url, page=page)
+                external_url = self._discover_external_apply_url(job, page, target_url, allow_click=allow_click_discovery)
+                if external_url:
+                    page.goto(external_url, wait_until="domcontentloaded")
+                    target_url = external_url
+        workday_target_url = self._page_workday_apply_url(page)
+        if workday_target_url:
+            page.goto(workday_target_url, wait_until="domcontentloaded")
+            target_url = workday_target_url
         if self.greenhouse_adapter.is_greenhouse_target(target_url, page=page):
             return "greenhouse", self.greenhouse_adapter, target_url
         if self.icims_adapter.is_icims_target(target_url, page=page):
@@ -770,6 +820,63 @@ class ApplicationService:
         if callable(wait):
             wait(3000)
             wait(2000)
+
+    def _handshake_started_external_apply_url(self, page) -> str:
+        """Return Handshake's explicit continuation link after an external apply starts.
+
+        A generic outbound link may be an employer profile or a Fellow promotion. Only
+        the "View application" affordance represents the ATS application in progress.
+        """
+        extractor = getattr(page, "extract_started_external_apply_url", None)
+        if callable(extractor):
+            candidate = str(extractor() or "").strip()
+            if candidate:
+                return candidate
+        if not hasattr(page, "evaluate"):
+            return ""
+        try:
+            candidate = page.evaluate(
+                """
+                () => {
+                  const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                  for (const link of document.links) {
+                    if (normalize(link.innerText || link.textContent) !== 'view application') continue;
+                    const href = (link.href || '').trim();
+                    if (href) return href;
+                  }
+                  return '';
+                }
+                """
+            )
+        except Exception:
+            return ""
+        return str(candidate or "").strip()
+
+    def _page_workday_apply_url(self, page) -> str:
+        """Resolve the canonical Workday endpoint embedded by career-site wrappers."""
+        extractor = getattr(page, "extract_workday_apply_url", None)
+        if callable(extractor):
+            candidate = str(extractor() or "").strip()
+            if candidate:
+                return candidate
+        if not hasattr(page, "evaluate"):
+            return ""
+        try:
+            candidate = page.evaluate(
+                """
+                () => {
+                  const meta = document.querySelector('meta[name="search-job-apply-url"]');
+                  const metaUrl = (meta && meta.content || '').trim();
+                  if (metaUrl) return metaUrl;
+                  const link = document.querySelector('a[data-apply-url]');
+                  return (link && (link.getAttribute('data-apply-url') || link.href) || '').trim();
+                }
+                """
+            )
+        except Exception:
+            return ""
+        candidate = str(candidate or "").strip()
+        return candidate if self.workday_adapter.is_workday_target(candidate) else ""
 
     def _discover_external_apply_url_from_click(self, page, target_url: str) -> str:
         if not hasattr(page, "locator"):

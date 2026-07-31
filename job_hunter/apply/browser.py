@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Protocol
@@ -13,6 +14,10 @@ _DEFAULT_CHROME_USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/137.0.0.0 Safari/537.36"
 )
+
+
+class BrowserProfileInUseError(RuntimeError):
+    """Raised when a live Chromium instance owns an application profile."""
 
 
 class BrowserPage(Protocol):
@@ -34,11 +39,15 @@ class BrowserSession(Protocol):
 class PlaywrightBrowserSession:
     def __init__(self, context) -> None:
         self._context = context
+        self._closed = False
 
     def new_page(self):
         return self._context.new_page()
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self._context.close()
 
 
@@ -88,17 +97,31 @@ class BrowserManager:
         temp_profile_dir: Path | None = None
         try:
             context = self._launch_context(playwright, profile_dir, headless=headless)
-        except Exception:
-            if adapter_name not in {"handshake", "handshake_fellow"}:
+        except Exception as exc:
+            if self._is_profile_lock_error(exc):
+                if self._profile_is_in_use(profile_dir):
+                    playwright.stop()
+                    raise BrowserProfileInUseError(
+                        f"Browser profile is already in use: {profile_dir}. "
+                        "Close the existing Job Hunter browser window before retrying."
+                    ) from exc
+                self._clear_singleton_artifacts(profile_dir)
+                try:
+                    context = self._launch_context(playwright, profile_dir, headless=headless)
+                except Exception:
+                    playwright.stop()
+                    raise
+            elif adapter_name not in {"handshake", "handshake_fellow"}:
                 playwright.stop()
                 raise
-            temp_profile_dir = Path(tempfile.mkdtemp(prefix="job-hunter-handshake-", dir="/tmp"))
-            self._clone_profile_dir(profile_dir, temp_profile_dir)
-            try:
-                context = self._launch_context(playwright, temp_profile_dir, headless=headless)
-            except Exception:
-                playwright.stop()
-                raise
+            else:
+                temp_profile_dir = Path(tempfile.mkdtemp(prefix="job-hunter-handshake-", dir="/tmp"))
+                self._clone_profile_dir(profile_dir, temp_profile_dir)
+                try:
+                    context = self._launch_context(playwright, temp_profile_dir, headless=headless)
+                except Exception:
+                    playwright.stop()
+                    raise
         context.set_default_timeout(self.settings.apply_page_timeout_seconds * 1000)
         context.add_init_script(
             """
@@ -151,3 +174,37 @@ class BrowserManager:
         if adapter_name in {"handshake", "handshake_fellow"}:
             return Path(self.settings.handshake_profile_dir).expanduser()
         return Path(self.settings.apply_browser_profile_dir).expanduser()
+
+    def _is_profile_lock_error(self, exc: Exception) -> bool:
+        message = str(exc)
+        return (
+            "ProcessSingleton" in message
+            or "SingletonLock" in message
+            or "Opening in existing browser session" in message
+        )
+
+    def _profile_is_in_use(self, profile_dir: Path) -> bool:
+        """Avoid removing Chromium's singleton files while a browser owns them."""
+        try:
+            result = subprocess.run(
+                ["ps", "-axo", "pid=,command="],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except (OSError, subprocess.SubprocessError):
+            # If process inspection is unavailable, fail closed and preserve
+            # the profile rather than risk corrupting an active browser.
+            return True
+        profile_flag = f"--user-data-dir={profile_dir}"
+        return any(profile_flag in line for line in result.stdout.splitlines())
+
+    def _clear_singleton_artifacts(self, profile_dir: Path) -> None:
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            target = profile_dir / name
+            try:
+                if target.is_symlink() or target.exists():
+                    target.unlink()
+            except FileNotFoundError:
+                continue
