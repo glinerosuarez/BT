@@ -915,6 +915,32 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.store.close()
         self.temp_dir.cleanup()
 
+    def test_linkedin_description_identity_dedupes_distinct_listing_ids(self) -> None:
+        first = JobRecord(
+            source="linkedin",
+            external_id="listing-1",
+            url="https://www.linkedin.com/jobs/view/listing-1",
+            title="Data Engineering Intern",
+            company="Staffline Solutions",
+            location="United States",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Build ETL pipelines with Python and SQL. Set alert for similar jobs. Applicants: 115.",
+            ingested_at="2026-07-30T00:00:00+00:00",
+        )
+        first_key = _dedupe_key(first)
+        self.assertTrue(self.store.insert_job(first, first_key))
+
+        duplicate_key = self.store.resolve_existing_dedupe_key(
+            source="linkedin",
+            dedupe_key="different-listing-key",
+            url="https://www.linkedin.com/jobs/view/listing-2",
+            title="Data Engineering Intern",
+            company="Staffline Solutions",
+            description="Build ETL pipelines with Python and SQL. Set alert for similar jobs. Applicants: 111.",
+        )
+        self.assertEqual(duplicate_key, first_key)
+
     def test_end_to_end_and_idempotency(self) -> None:
         payload = [
             {

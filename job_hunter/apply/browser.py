@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -41,6 +42,20 @@ class PlaywrightBrowserSession:
         self._context.close()
 
 
+class AttachedBrowserSession:
+    """A browser session controlled through an existing local CDP endpoint."""
+
+    def __init__(self, context) -> None:
+        self._context = context
+
+    def new_page(self):
+        return self._context.new_page()
+
+    def close(self) -> None:
+        # The user owns this browser process; only detach Playwright from it.
+        return None
+
+
 class BrowserManager:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -51,9 +66,25 @@ class BrowserManager:
         except ModuleNotFoundError as exc:
             raise RuntimeError("Playwright is not installed. Run `pip install -e .`.") from exc
 
+        playwright = sync_playwright().start()
+        cdp_url = os.getenv("JOB_HUNTER_APPLY_CDP_URL", "").strip()
+        if cdp_url:
+            browser = playwright.chromium.connect_over_cdp(cdp_url)
+            if not browser.contexts:
+                playwright.stop()
+                raise RuntimeError(f"No browser context is available at {cdp_url}.")
+            context = browser.contexts[0]
+            context.set_default_timeout(self.settings.apply_page_timeout_seconds * 1000)
+            session = AttachedBrowserSession(context)
+
+            def _close_attached() -> None:
+                playwright.stop()
+
+            session.close = _close_attached  # type: ignore[method-assign]
+            return session
+
         profile_dir = self._profile_dir(adapter_name)
         profile_dir.mkdir(parents=True, exist_ok=True)
-        playwright = sync_playwright().start()
         temp_profile_dir: Path | None = None
         try:
             context = self._launch_context(playwright, profile_dir, headless=headless)

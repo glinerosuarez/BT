@@ -411,6 +411,9 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 source=job.source,
                 dedupe_key=dedupe_key,
                 url=job.url,
+                title=job.title,
+                company=job.company,
+                description=job.description,
             )
             if job.source == "handshake" and existing_dedupe_key:
                 refresh_meta = store.update_existing_job(job, existing_dedupe_key)

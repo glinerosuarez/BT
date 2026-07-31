@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -24,6 +25,12 @@ HANDSHAKE_QUALITY_STATUS_SCORES = {
     "detail_mismatch": 2,
     "detail_polluted": 1,
 }
+LINKEDIN_DYNAMIC_FOOTER_MARKERS = (
+    "set alert for similar jobs",
+    "see how you compare to other applicants",
+    "based on linkedin data",
+    "exclusive job seeker insights",
+)
 
 
 class JobStore:
@@ -369,7 +376,16 @@ class JobStore:
             return False
         return bool(row["notified"])
 
-    def resolve_existing_dedupe_key(self, *, source: str, dedupe_key: str, url: str) -> str:
+    def resolve_existing_dedupe_key(
+        self,
+        *,
+        source: str,
+        dedupe_key: str,
+        url: str,
+        title: str = "",
+        company: str = "",
+        description: str = "",
+    ) -> str:
         row = self._conn.execute(
             "SELECT dedupe_key FROM seen_events WHERE dedupe_key = ? LIMIT 1",
             (dedupe_key,),
@@ -390,6 +406,23 @@ class JobStore:
                 candidate_url = str(candidate["url"] or "").strip()
                 if _normalize_handshake_storage_url(candidate_url) == normalized_url:
                     return str(candidate["dedupe_key"])
+        if source == "linkedin" and title.strip() and company.strip() and description.strip():
+            identity = _linkedin_description_identity(description)
+            if identity:
+                rows = self._conn.execute(
+                    """
+                    SELECT dedupe_key, description
+                    FROM jobs
+                    WHERE source = 'linkedin'
+                      AND lower(trim(title)) = lower(trim(?))
+                      AND lower(trim(company)) = lower(trim(?))
+                    ORDER BY id DESC
+                    """,
+                    (title, company),
+                ).fetchall()
+                for candidate in rows:
+                    if _linkedin_description_identity(str(candidate["description"] or "")) == identity:
+                        return str(candidate["dedupe_key"])
         return ""
 
     def insert_job(self, job: JobRecord, dedupe_key: str) -> bool:
@@ -2283,6 +2316,15 @@ def _normalize_handshake_storage_url(url: str) -> str:
         normalized_query = urlencode(query_pairs, doseq=True)
         return urlunparse(parsed._replace(query=normalized_query, fragment=""))
     return value
+
+
+def _linkedin_description_identity(description: str) -> str:
+    text = description.lower()
+    for marker in LINKEDIN_DYNAMIC_FOOTER_MARKERS:
+        marker_index = text.find(marker)
+        if marker_index >= 0:
+            text = text[:marker_index]
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
 def _row_value(row: sqlite3.Row, key: str) -> object | None:

@@ -165,26 +165,79 @@ class WorkdayAdapter:
         if credential is None or not hasattr(page, "locator"):
             return False
         try:
-            email = page.locator('input[data-automation-id="email"]:visible').first
+            # Locate this outside a possible stale/hidden dialog. Workday
+            # renders it as either an anchor or a button depending on tenant.
+            existing_account = page.locator('[data-automation-id="signInLink"]').first
+            # Copart renders the create-account shell before this link becomes
+            # interactive. Wait for the existing-account control instead of
+            # mistaking its duplicated email/password IDs for a sign-in form.
+            for _ in range(36):
+                if existing_account.count() > 0:
+                    break
+                self._wait(page, 250)
+            if existing_account.count() > 0:
+                try:
+                    # Some tenants wire this through React without accepting a
+                    # forced pointer click. Trigger its native button handler.
+                    existing_account.evaluate("element => element.click()")
+                except Exception:
+                    existing_account.click(force=True)
+                self._wait(page, 1250)
+
+            # Create Account and Sign In reuse the same email/password field
+            # IDs. Never populate credentials while the switch is still on
+            # screen, otherwise a failed click can mutate the account-creation
+            # form instead of logging in.
+            for _ in range(36):
+                if page.locator('[data-automation-id="signInLink"]').first.count() == 0:
+                    break
+                self._wait(page, 250)
+            else:
+                return False
+
+            sign_in_form = page.locator('form[data-automation-id="signInFormo"]:visible').first
+            scope = sign_in_form if sign_in_form.count() > 0 else self._sign_in_scope(page)
+            email = scope.locator('input[data-automation-id="email"]:visible').first
             if email.count() == 0:
-                email_flow = page.locator('button[data-automation-id="SignInWithEmailButton"]:visible').first
+                # Some tenants initially show a create-account pane inside the
+                # sign-in dialog. Switch it to the existing-account form before
+                # looking for credentials.
+                existing_account = scope.locator('a:has-text("Sign In"):visible').first
+                if existing_account.count() == 0:
+                    existing_account = scope.locator('button:has-text("Sign In"):visible').first
+                if existing_account.count() > 0:
+                    existing_account.click(force=True)
+                    self._wait(page, 750)
+                    scope = self._sign_in_scope(page)
+                email_flow = scope.locator('button[data-automation-id="SignInWithEmailButton"]:visible').first
                 if email_flow.count() == 0:
                     header_sign_in = page.locator('[data-automation-id="utilityButtonSignIn"]:visible').first
                     if header_sign_in.count() > 0:
                         header_sign_in.click(force=True)
                         self._wait(page, 500)
-                    email_flow = page.locator('button[data-automation-id="SignInWithEmailButton"]:visible').first
+                    scope = self._sign_in_scope(page)
+                    email_flow = scope.locator('button[data-automation-id="SignInWithEmailButton"]:visible').first
                 if email_flow.count() > 0:
                     email_flow.click(force=True)
                     # Some Workday tenants take several seconds to replace the
                     # provider chooser with the email/password form.
                     self._wait(page, 1000)
             for _ in range(60):
-                email = page.locator('input[data-automation-id="email"]:visible').first
-                password = page.locator('input[data-automation-id="password"]:visible').first
-                submit = page.locator('[data-automation-id="click_filter"]:visible').first
+                sign_in_form = page.locator('form[data-automation-id="signInFormo"]:visible').first
+                scope = sign_in_form if sign_in_form.count() > 0 else self._sign_in_scope(page)
+                email = scope.locator('input[data-automation-id="email"]:visible').first
+                password = scope.locator('input[data-automation-id="password"]:visible').first
+                if email.count() == 0:
+                    email = scope.locator(
+                        'input[type="email"]:visible, input[autocomplete="username"]:visible, input[name*="email" i]:visible'
+                    ).first
+                if password.count() == 0:
+                    password = scope.locator('input[type="password"]:visible').first
+                submit = scope.locator('[data-automation-id="click_filter"]:visible').first
                 if submit.count() == 0:
-                    submit = page.locator('button[data-automation-id="signInSubmitButton"]:visible').first
+                    submit = scope.locator('button[data-automation-id="signInSubmitButton"]:visible').first
+                if submit.count() == 0:
+                    submit = scope.locator('button:has-text("Sign In"):visible').first
                 if email.count() > 0 and password.count() > 0 and submit.count() > 0:
                     break
                 self._wait(page, 250)
@@ -192,16 +245,40 @@ class WorkdayAdapter:
                 return False
             email.fill(credential.email)
             password.fill(credential.password)
-            submit.click(force=True)
+            # Workday's visible action is often a div over a hidden submit
+            # button. Use a normal click on the foreground control so tenant
+            # pointer handlers run without touching a background account form.
+            form = scope.locator('form[data-automation-id="signInFormo"]:visible').first
+            try:
+                submit.click()
+            except Exception:
+                try:
+                    password.press("Enter")
+                except Exception:
+                    if form.count() > 0 and hasattr(form, "evaluate"):
+                        form.evaluate("form => form.requestSubmit()")
+                    else:
+                        return False
             self._wait(page, 6000)
             return True
         except Exception:
             return False
 
+    def _sign_in_scope(self, page):
+        """Prefer the foreground sign-in dialog over a background create-account form."""
+        dialog = page.locator('[data-automation-id="popUpDialog"]:visible').first
+        try:
+            if dialog.count() > 0:
+                return dialog
+        except Exception:
+            pass
+        return page
+
     def _submit_form(self, *, page, resolver, context: AdapterContext) -> SubmitResult:
         steps: list[StepSnapshot] = []
         last_form_signature: tuple[tuple[str, ...], ...] | None = None
         repeated_form_signature = 0
+        transient_error_retries = 0
         for _ in range(20):
             self._wait_for_render(page)
             confirmation = self._extract_confirmation(page)
@@ -213,6 +290,19 @@ class WorkdayAdapter:
                     steps=steps,
                     adapter_name=self.adapter_name,
                 )
+            if self._has_transient_error_page(page):
+                if transient_error_retries >= 1 or not hasattr(page, "reload"):
+                    return self._blocked(
+                        "transient_portal_error",
+                        page,
+                        question_text="Workday returned a transient error page.",
+                        details={"provider": "workday", "stage": "transient_error"},
+                        steps=steps,
+                    )
+                transient_error_retries += 1
+                page.reload(wait_until="domcontentloaded")
+                self._wait(page, 1500)
+                continue
             if self._has_email_verification_gate(page):
                 return self._blocked(
                     "email_verification_required",
@@ -229,6 +319,16 @@ class WorkdayAdapter:
                     page,
                     question_text="Workday candidate account setup must be completed manually before automation can continue.",
                     details={"provider": "workday", "stage": "candidate_account_bootstrap"},
+                    steps=steps,
+                )
+            if self._has_assessment_stage(page):
+                return self._blocked(
+                    "assessment_required",
+                    page,
+                    question_text="Take Assessment",
+                    field_name="workday_assessment",
+                    field_type="assessment",
+                    details={"provider": "workday", "stage": "take_assessment"},
                     steps=steps,
                 )
             if not self._is_form_stage(page):
@@ -297,6 +397,23 @@ class WorkdayAdapter:
                     answer_value=action,
                 )
             )
+            if not self._wait_for_navigation_progress(
+                page,
+                previous_signature=form_signature,
+                previous_action=action,
+            ):
+                return self._blocked(
+                    "manual_checkpoint_required",
+                    page,
+                    question_text="Workday did not render the next application step after the selected form action.",
+                    details={
+                        "checkpoint": "workday_navigation_timeout",
+                        "checkpoint_label": "Workday form navigation did not complete",
+                        "action": action,
+                        "current_url": str(getattr(page, "url", "") or ""),
+                    },
+                    steps=steps,
+                )
         confirmation = self._extract_confirmation(page)
         if confirmation:
             return SubmitResult(
@@ -353,6 +470,16 @@ class WorkdayAdapter:
         if not raw:
             return ""
         return urljoin(str(getattr(page, "url", "") or ""), raw)
+
+    def _direct_manual_apply_url(self, url: str) -> str:
+        """Build the standard manual path only for a concrete Workday job URL."""
+        parsed = urlparse(url.strip())
+        if "workdayjobs.com" not in parsed.netloc.lower() or "/job/" not in parsed.path.lower():
+            return ""
+        path = parsed.path.rstrip("/")
+        if not path:
+            return ""
+        return parsed._replace(path=f"{path}/apply/applyManually", query="", fragment="").geturl()
 
     def _is_public_job_page(self, page) -> bool:
         current_url = str(getattr(page, "url", "") or "").lower()
@@ -463,6 +590,37 @@ class WorkdayAdapter:
             and self._has_application_form_widgets(page)
         )
 
+    def _has_assessment_stage(self, page) -> bool:
+        """Detect Workday's separate assessment checkpoint without opening it."""
+        if not hasattr(page, "evaluate"):
+            return False
+        try:
+            return bool(
+                page.evaluate(
+                    r"""
+                    () => {
+                      const visible = (el) => {
+                        if (!el) return false;
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+                      };
+                      const normalize = (value) => (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                      const activeStep = document.querySelector('[data-automation-id="progressBarActiveStep"]');
+                      if (normalize(activeStep?.textContent) === 'take assessment') return true;
+                      return Array.from(document.querySelectorAll('button'))
+                        .some((button) => visible(button) && normalize(button.textContent) === 'take assessment');
+                    }
+                    """
+                )
+            )
+        except Exception:
+            return False
+
+    def _has_transient_error_page(self, page) -> bool:
+        text = self._page_text_once(page).lower()
+        return "something went wrong" in text and "refresh the page" in text
+
     def _accept_legal_notice(self, page) -> bool:
         """Dismiss Workday's cookie notice when it obscures the application flow."""
         if not hasattr(page, "locator"):
@@ -536,7 +694,10 @@ class WorkdayAdapter:
     def _wait_for_render(self, page) -> None:
         last_form_signature: tuple[tuple[str, ...], ...] | None = None
         stable_form_observations = 0
-        for _ in range(45):
+        # Workday may take several seconds to hydrate controls, but a form
+        # that remains non-interactive for longer needs a persisted checkpoint
+        # rather than an unbounded browser worker.
+        for _ in range(20):
             current_url = str(getattr(page, "url", "") or "").lower()
             text = self._page_text_once(page).lower()
             if "/apply/applymanually" in current_url:
@@ -583,6 +744,29 @@ class WorkdayAdapter:
                 return
             self._wait(page, 1000)
 
+    def _wait_for_navigation_progress(
+        self,
+        page,
+        *,
+        previous_signature: tuple[tuple[str, ...], ...],
+        previous_action: str,
+    ) -> bool:
+        """Wait only for an observable Workday transition after a footer click."""
+        for _ in range(20):
+            if self._extract_confirmation(page):
+                return True
+            if self._has_account_gate(page) or self._has_email_verification_gate(page):
+                return True
+            if self._is_form_stage(page):
+                signature = self._form_content_signature(page)
+                if signature and signature != previous_signature:
+                    return True
+                next_action = self._next_form_action(page)
+                if next_action and next_action != previous_action:
+                    return True
+            self._wait(page, 1000)
+        return False
+
     def _is_apply_flow_loading(self, page) -> bool:
         """Workday renders form controls before its loading veil is removed."""
         if not hasattr(page, "evaluate"):
@@ -590,7 +774,7 @@ class WorkdayAdapter:
         try:
             return bool(
                 page.evaluate(
-                    """
+                    r"""
                     () => {
                       const el = document.querySelector('[data-automation-id="applyFlowLoadingPage"]');
                       if (!el) return false;
@@ -744,8 +928,10 @@ class WorkdayAdapter:
                         inputs = Array.from(inputs || []).filter((el) => choiceVisible(el) && !el.disabled);
                         if (!inputs.length) return;
                         const first = inputs[0];
+                        const ancestorFieldset = root?.parentElement?.closest('fieldset');
                         const groupLabel = normalize(
                           root?.querySelector('legend')?.textContent ||
+                          ancestorFieldset?.querySelector('legend')?.textContent ||
                           root?.getAttribute?.('aria-label') ||
                           first.closest('[data-automation-id="formField"]')?.querySelector('[data-automation-id="formLabel"]')?.textContent ||
                           questionTextFor(first)
@@ -770,7 +956,10 @@ class WorkdayAdapter:
                         });
                         fields.push({
                           selector: options[0]?.selector || '',
-                          field_name: first.getAttribute('name') || groupLabel,
+                          // Workday self-identification groups use a generic
+                          // legend, so retain the inner fieldset ID as the
+                          // stable semantic field name when there is no name.
+                          field_name: first.getAttribute('name') || root?.getAttribute?.('id') || groupLabel,
                           field_type: type === 'radio' ? 'radio-group' : 'checkbox-group',
                           question_text: groupLabel,
                           required,
@@ -780,7 +969,12 @@ class WorkdayAdapter:
                       };
                       const pushChoiceGroup = (root, type) => {
                         if (!visible(root)) return;
-                        const inputs = root.querySelectorAll(`input[type="${type}"]`);
+                        // Workday nests a visual fieldset inside the semantic
+                        // group fieldset. Only the innermost owner should emit
+                        // the inputs, otherwise each option becomes a duplicate
+                        // required group after React rerenders the form.
+                        const inputs = Array.from(root.querySelectorAll(`input[type="${type}"]`))
+                          .filter((el) => el.closest('fieldset') === root);
                         pushChoiceInputs(inputs, type, root);
                       };
 
@@ -941,26 +1135,31 @@ class WorkdayAdapter:
                 )
                 filled_count += 1
                 continue
-            try:
-                resolution = resolver.resolve_for_portal(
-                    portal=self.adapter_name,
-                    question_text=question_text,
-                    field_name=field_name,
-                    field_type=field_type,
-                )
-            except ResolutionError as exc:
-                return (
-                    self._blocked(
-                        exc.blocker.reason,
-                        page,
+            resolution = self._signed_attestation_date_resolution(
+                field_name=field_name,
+                question_text=question_text,
+            )
+            if resolution is None:
+                try:
+                    resolution = resolver.resolve_for_portal(
+                        portal=self.adapter_name,
                         question_text=question_text,
                         field_name=field_name,
                         field_type=field_type,
-                        details=exc.blocker.details,
-                        steps=steps,
-                    ),
-                    filled_count,
-                )
+                    )
+                except ResolutionError as exc:
+                    return (
+                        self._blocked(
+                            exc.blocker.reason,
+                            page,
+                            question_text=question_text,
+                            field_name=field_name,
+                            field_type=field_type,
+                            details=exc.blocker.details,
+                            steps=steps,
+                        ),
+                        filled_count,
+                    )
             if current_value and force_refresh and self._is_effectively_same_value(
                 field_name=field_name,
                 current_value=current_value,
@@ -1097,18 +1296,28 @@ class WorkdayAdapter:
             or normalized_field == "phonenumber"
             or normalized_question in {"country", "country*"}
             or "country phone code" in normalized_question
+            or "employment eligibility" in normalized_question
         )
 
     def _is_effectively_same_value(self, *, field_name: str, current_value: str, desired_value: str) -> bool:
         normalized_field = field_name.strip().lower()
         current = current_value.strip().lower()
         desired = desired_value.strip().lower()
+        if desired.startswith("__work_auth_us_"):
+            return self._employment_eligibility_match_score(
+                target=desired,
+                candidate=current,
+            ) > 0
         if normalized_field == "country":
             return current == desired or _canonical_country(current) == _canonical_country(desired)
         if "countryphonecode" in normalized_field:
             current_digits = "".join(ch for ch in current if ch.isdigit())
             desired_digits = "".join(ch for ch in desired if ch.isdigit())
             return bool(current_digits and desired_digits and current_digits == desired_digits)
+        if normalized_field == "veteranstatus":
+            normalized_current = "".join(ch for ch in current if ch.isalnum())
+            normalized_desired = "".join(ch for ch in desired if ch.isalnum())
+            return bool(normalized_current and normalized_current == normalized_desired)
         if normalized_field == "phonenumber":
             current_digits = "".join(ch for ch in current if ch.isdigit())
             desired_digits = "".join(ch for ch in desired if ch.isdigit())
@@ -1138,10 +1347,20 @@ class WorkdayAdapter:
     def _normalize_option_text(self, value: str) -> str:
         return " ".join((value or "").strip().lower().split())
 
-    def _prompt_selection_path(self, value: str) -> list[str]:
-        """Split an explicit Workday hierarchy while preserving ordinary answers."""
+    def _prompt_selection_path(self, value: str, *, field: dict[str, object] | None = None) -> list[str]:
+        """Split explicit hierarchies and normalize known Workday source trees."""
         path = [part.strip() for part in value.split(">")]
-        return [part for part in path if part] or [value.strip()]
+        path = [part for part in path if part] or [value.strip()]
+        question = str((field or {}).get("question_text") or "").lower()
+        if (
+            len(path) == 1
+            and path[0].strip().lower() == "linkedin"
+            and "how did you hear" in question
+        ):
+            # Workday tenants commonly group LinkedIn beneath Job Sites
+            # instead of presenting it as a top-level option.
+            return ["Job Sites", "LinkedIn"]
+        return path
 
     def _prompt_multi_values(self, value: str) -> list[str]:
         """Allow answer rules to express a sequence of Workday multi-select choices."""
@@ -1166,6 +1385,12 @@ class WorkdayAdapter:
         normalized_candidate = self._normalize_option_text(candidate)
         if not normalized_target or not normalized_candidate:
             return 0
+        eligibility_score = self._employment_eligibility_match_score(
+            target=normalized_target,
+            candidate=normalized_candidate,
+        )
+        if eligibility_score:
+            return eligibility_score
         if normalized_candidate == normalized_target:
             return 3
         if self._is_us_state_equivalent(field_name=field_name, current_value=candidate, desired_value=target):
@@ -1178,6 +1403,44 @@ class WorkdayAdapter:
             return 2
         if normalized_target in normalized_candidate or normalized_candidate in normalized_target:
             return 1
+        return 0
+
+    def _employment_eligibility_match_score(self, *, target: str, candidate: str) -> int:
+        """Match only explicit Workday work-authorization wording.
+
+        A profile can state whether sponsorship is required, but it does not
+        establish citizenship or permanent-residency status.  The special
+        tokens below therefore only accept dropdown labels that explicitly
+        describe authorization and sponsorship, preserving a manual checkpoint
+        for legal-status-only option sets.
+        """
+        if not target.startswith("__work_auth_us_"):
+            return 0
+        requires_sponsorship = any(
+            phrase in candidate
+            for phrase in ("require sponsorship", "requires sponsorship", "need sponsorship", "will need sponsorship")
+        )
+        no_sponsorship = any(
+            phrase in candidate
+            for phrase in (
+                "do not require sponsorship",
+                "does not require sponsorship",
+                "will not require sponsorship",
+                "without sponsorship",
+                "no sponsorship required",
+                "authorized to work permanently",
+            )
+        )
+        not_authorized = any(
+            phrase in candidate
+            for phrase in ("not authorized", "not eligible", "not permitted")
+        )
+        if target == "__work_auth_us_no_sponsorship__":
+            return 2 if no_sponsorship and not not_authorized else 0
+        if target == "__work_auth_us_sponsorship_required__":
+            return 2 if requires_sponsorship and not no_sponsorship else 0
+        if target == "__work_auth_us_not_authorized__":
+            return 2 if not_authorized else 0
         return 0
 
     def _prompt_option_match_score(
@@ -1227,7 +1490,9 @@ class WorkdayAdapter:
             raise RuntimeError("Workday file upload did not reach a successful state")
             return
         if field_type == "text":
-            page.locator(selector).first.fill(value)
+            locator = page.locator(selector).first
+            date_component_value = self._date_component_value(field=field, value=value)
+            locator.fill(date_component_value)
             self._wait(page, 200)
             return
         if field_type == "prompt-input":
@@ -1237,7 +1502,7 @@ class WorkdayAdapter:
                     self._select_multi_prompt_value(page, field, prompt_value)
                 return
             locator = page.locator(selector).first
-            selection_path = self._prompt_selection_path(value)
+            selection_path = self._prompt_selection_path(value, field=field)
             expected_target = selection_path[-1]
             field_name = str(field.get("field_name") or "")
             selected_country = ""
@@ -1358,9 +1623,27 @@ class WorkdayAdapter:
                     )
 
             try:
-                locator.click(force=True)
-                self._wait(page, 250)
+                # Workday's listbox buttons often ignore forced clicks: the
+                # component needs focus and a normal pointer event to mount
+                # its popup. Do that first, then retain force as a fallback
+                # for overlays that occasionally cover the control.
+                try:
+                    locator.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                try:
+                    locator.click()
+                except Exception:
+                    locator.click(force=True)
                 options = self._listbox_options(page, locator)
+                # Workday frequently mounts the option list after the button
+                # click animation. The adjacent input is an internal hidden
+                # value mirror, never a user-editable search field.
+                for _ in range(20):
+                    if options.count() > 0:
+                        break
+                    self._wait(page, 150)
+                    options = self._listbox_options(page, locator)
                 normalized_target = self._normalize_option_text(value)
                 field_name = str(field.get("field_name") or "")
                 option_locator = None
@@ -1387,18 +1670,31 @@ class WorkdayAdapter:
                     verify_selection()
                     self._wait(page, 400)
                     return
-                keyboard = getattr(page, "keyboard", None)
-                if keyboard is None:
-                    sibling_input = page.locator(f"{selector} + input[type=\"text\"]").first
-                    sibling_input.fill(value)
-                    self._wait(page, 150)
-                    sibling_input.press("ArrowDown")
-                    self._wait(page, 150)
-                    sibling_input.press("Enter")
-                    self._wait(page, 400)
-                    verify_selection()
-                    return
+                if normalized_target.startswith("__work_auth_us_"):
+                    # Do not let keyboard navigation select the first legal
+                    # status option when no explicit sponsorship match exists.
+                    available_options: list[str] = []
+                    for index in range(options.count()):
+                        try:
+                            option_text = str(options.nth(index).inner_text() or "").strip()
+                        except Exception:
+                            continue
+                        if option_text:
+                            available_options.append(option_text)
+                    try:
+                        locator.press("Escape")
+                    except Exception:
+                        pass
+                    raise RuntimeError(
+                        "employment-eligibility dropdown has no explicit authorization/sponsorship match; "
+                        f"available options: {available_options!r}"
+                    )
                 try:
+                    locator.focus()
+                except Exception:
+                    pass
+                keyboard = getattr(page, "keyboard", None)
+                if keyboard is not None:
                     keyboard.press("Home")
                     self._wait(page, 100)
                     for char in value:
@@ -1411,16 +1707,18 @@ class WorkdayAdapter:
                     self._wait(page, 400)
                     verify_selection()
                     return
-                except Exception:
-                    sibling_input = page.locator(f"{selector} + input[type=\"text\"]").first
-                    sibling_input.fill(value)
-                    self._wait(page, 150)
-                    sibling_input.press("ArrowDown")
-                    self._wait(page, 150)
-                    sibling_input.press("Enter")
-                    self._wait(page, 400)
-                    verify_selection()
-                    return
+                locator.press("Home")
+                self._wait(page, 100)
+                for char in value:
+                    if char.isalnum():
+                        locator.press(char.upper() if len(char) == 1 else char)
+                        self._wait(page, 50)
+                locator.press("ArrowDown")
+                self._wait(page, 100)
+                locator.press("Enter")
+                self._wait(page, 400)
+                verify_selection()
+                return
             except Exception as exc:
                 raise RuntimeError(f"listbox selection failed: {exc}") from exc
         if field_type == "checkbox":
@@ -1443,7 +1741,154 @@ class WorkdayAdapter:
                 label = str(option.get("label") or option.get("value") or "").strip().lower()
                 if label == target or target in label or label in target:
                     option_selector = str(option.get("selector") or "")
-                    option_locator = page.locator(option_selector).first
+                    option_value = str(option.get("value") or "")
+                    option_locator = self._choice_option_locator(
+                        page,
+                        field=field,
+                        option_label=label,
+                        fallback_selector=option_selector,
+                    )
+
+                    def is_selected() -> bool:
+                        # Check a freshly-resolved locator first. Workday can
+                        # replace its controlled inputs after a state update.
+                        candidates = [
+                            self._choice_option_locator(
+                                page,
+                                field=field,
+                                option_label=label,
+                                fallback_selector=option_selector,
+                            ),
+                            option_locator,
+                        ]
+                        field_name = str(field.get("field_name") or "").strip()
+                        if field_name and option_value:
+                            escaped_name = field_name.replace("\\", "\\\\").replace('"', '\\"')
+                            escaped_value = option_value.replace("\\", "\\\\").replace('"', '\\"')
+                            candidates.insert(
+                                0,
+                                page.locator(
+                                    f'input[name="{escaped_name}"][value="{escaped_value}"]'
+                                ).first,
+                            )
+                        for candidate in candidates:
+                            try:
+                                if candidate.is_checked():
+                                    return True
+                            except Exception:
+                                pass
+                        return False
+
+                    if field_type == "checkbox-group":
+                        try:
+                            # Workday's voluntary self-ID controls are rendered
+                            # as virtualized checkbox rows. Clicking the input
+                            # can temporarily change its DOM property without
+                            # notifying Workday's state model; the visible label
+                            # dispatches the supported interaction instead.
+                            option_id = str(option_locator.get_attribute("id") or "")
+                            if option_id:
+                                escaped_id = option_id.replace("\\", "\\\\").replace('"', '\\"')
+                                page.locator(f'label[for="{escaped_id}"]').first.click(force=True)
+                                self._wait(page, 600)
+                                if is_selected():
+                                    return
+                        except Exception:
+                            pass
+                    try:
+                        # Let Playwright use the native radio semantics before
+                        # falling back to Workday's custom visual controls.
+                        option_locator.check(timeout=1_000)
+                        self._wait(page, 200)
+                        if is_selected():
+                            return
+                    except Exception:
+                        pass
+                    if field_type == "checkbox-group":
+                        try:
+                            # A DOM-native click performs the checkbox default
+                            # action even when Workday's zero-size input cannot
+                            # receive a Playwright pointer click.
+                            option_locator.evaluate("element => element.click()")
+                            self._wait(page, 350)
+                            if is_selected():
+                                return
+                        except Exception:
+                            pass
+                        try:
+                            # Voluntary-disclosure groups are virtualized grids
+                            # in some tenants. The change handler is attached to
+                            # the visible row, not to the nested checkbox shell.
+                            row = option_locator.locator(
+                                "xpath=ancestor-or-self::*[@role='row'][1]"
+                            ).first
+                            if row.count() > 0:
+                                row.click(force=True)
+                                self._wait(page, 350)
+                                if is_selected():
+                                    return
+                        except Exception:
+                            pass
+                        try:
+                            # Native checkbox keyboard semantics are a final
+                            # generic fallback for zero-size controlled inputs.
+                            option_locator.focus()
+                            option_locator.press("Space")
+                            self._wait(page, 350)
+                            if is_selected():
+                                return
+                        except Exception:
+                            pass
+                        try:
+                            # Some Workday tenants render a hidden native
+                            # checkbox while React owns the visible control.
+                            # Update the native property through its prototype
+                            # setter and bubble the form events React observes.
+                            # This is intentionally not a DOM attribute write:
+                            # attributes do not update the controlled value.
+                            option_locator.evaluate(
+                                """
+                                element => {
+                                  const checkedSetter = Object.getOwnPropertyDescriptor(
+                                    HTMLInputElement.prototype,
+                                    'checked'
+                                  )?.set;
+                                  if (!checkedSetter) throw new Error('native checkbox setter unavailable');
+                                  checkedSetter.call(element, true);
+                                  element.dispatchEvent(new Event('input', { bubbles: true }));
+                                  element.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                                """
+                            )
+                            self._wait(page, 500)
+                            if is_selected():
+                                return
+                        except Exception:
+                            pass
+                    try:
+                        indicator = option_locator.locator("xpath=following-sibling::span[1]").first
+                        try:
+                            indicator.click()
+                        except Exception:
+                            indicator.click(force=True)
+                        self._wait(page, 200)
+                        if is_selected():
+                            return
+                    except Exception:
+                        pass
+                    # Workday commonly binds the change handler to the visual
+                    # radio shell rather than the hidden input or its label.
+                    try:
+                        visual_control = option_locator.locator("xpath=..").first
+                        try:
+                            visual_control.click()
+                        except Exception:
+                            visual_control.click(force=True)
+                        self._wait(page, 200)
+                        if is_selected():
+                            return
+                    except Exception:
+                        pass
                     option_id = None
                     try:
                         option_id = option_locator.get_attribute("id")
@@ -1451,28 +1896,50 @@ class WorkdayAdapter:
                         option_id = None
                     if option_id:
                         try:
-                            page.locator(f'label[for="{option_id}"]').first.click(force=True)
+                            label_locator = page.locator(f'label[for="{option_id}"]').first
+                            # Workday keeps the native radio visually hidden;
+                            # a normal click on its label is what triggers the
+                            # tenant's controlled-state update.
+                            try:
+                                label_locator.click()
+                            except Exception:
+                                label_locator.click(force=True)
                             self._wait(page, 200)
-                            if option_locator.is_checked():
+                            if is_selected():
+                                return
+                            if field_type == "checkbox-group":
+                                # Workday's ethnic-origin group uses a hidden
+                                # checkbox behind a visual shell. Dispatch a
+                                # native label click to reach React's controlled
+                                # change handler when pointer clicks do not.
+                                try:
+                                    label_locator.dispatch_event("click")
+                                except Exception:
+                                    label_locator.evaluate("element => element.click()")
+                                self._wait(page, 350)
+                                if is_selected():
+                                    return
+                        except Exception:
+                            pass
+                    if field_type == "checkbox-group":
+                        try:
+                            option_locator.dispatch_event("click")
+                            self._wait(page, 350)
+                            if is_selected():
                                 return
                         except Exception:
                             pass
                     try:
                         option_locator.check(force=True)
                         self._wait(page, 200)
-                        if option_locator.is_checked():
+                        if is_selected():
                             return
                     except Exception:
                         pass
                     try:
                         option_locator.click(force=True)
                         self._wait(page, 200)
-                        checked = False
-                        try:
-                            checked = option_locator.is_checked()
-                        except Exception:
-                            checked = str(option_locator.get_attribute("aria-checked") or "").lower() == "true"
-                        if checked:
+                        if is_selected():
                             return
                     except Exception:
                         pass
@@ -1504,6 +1971,88 @@ class WorkdayAdapter:
             except Exception as exc:
                 raise RuntimeError("select failed") from exc
         raise RuntimeError(f"unsupported field type: {field_type}")
+
+    def _choice_option_locator(
+        self,
+        page,
+        *,
+        field: dict[str, object],
+        option_label: str,
+        fallback_selector: str,
+    ):
+        """Reacquire a Workday choice after React replaces a rendered row."""
+        if not hasattr(page, "evaluate") or not hasattr(page, "locator"):
+            return page.locator(fallback_selector).first
+        question_text = str(field.get("question_text") or "")
+        try:
+            option_id = str(
+                page.evaluate(
+                    r"""
+                    ({ questionText, optionLabel }) => {
+                      const normalize = (value) => (value || '')
+                        .replace(/\*+/g, '')
+                        .replace(/\s+/g, ' ')
+                        .trim()
+                        .toLowerCase();
+                      const question = normalize(questionText);
+                      const wanted = normalize(optionLabel);
+                      const scope = Array.from(document.querySelectorAll('fieldset')).find((fieldset) => {
+                        const legend = fieldset.querySelector('legend');
+                        return legend && normalize(legend.textContent) === question;
+                      });
+                      if (!scope || !wanted) return '';
+                      const label = Array.from(scope.querySelectorAll('label')).find((candidate) => {
+                        const text = normalize(candidate.textContent);
+                        return text === wanted || text.includes(wanted) || wanted.includes(text);
+                      });
+                      return label?.htmlFor || '';
+                    }
+                    """,
+                    {"questionText": question_text, "optionLabel": option_label},
+                )
+                or ""
+            ).strip()
+        except Exception:
+            option_id = ""
+        if option_id:
+            escaped_id = option_id.replace("\\", "\\\\").replace('"', '\\"')
+            return page.locator(f'input[id="{escaped_id}"]').first
+        return page.locator(fallback_selector).first
+
+    def _date_component_value(self, *, field: dict[str, object], value: str) -> str:
+        """Split a complete date override across Workday's three spinbuttons."""
+        field_name = str(field.get("field_name") or "").lower()
+        if "datesection" not in field_name:
+            return value
+        normalized = value.strip()
+        try:
+            month, day, year = normalized.split("/")
+        except ValueError:
+            return value
+        components = {
+            "month-input": month.zfill(2),
+            "day-input": day.zfill(2),
+            "year-input": year,
+        }
+        for suffix, component_value in components.items():
+            if suffix in field_name:
+                return component_value
+        return value
+
+    def _signed_attestation_date_resolution(
+        self,
+        *,
+        field_name: str,
+        question_text: str,
+    ) -> AnswerResolution | None:
+        """Fill Workday's explicit signed-on date with the current local date."""
+        normalized = f"{field_name} {question_text}".lower()
+        if "datesignedon" not in normalized:
+            return None
+        return AnswerResolution(
+            answer=datetime.now().strftime("%m/%d/%Y"),
+            source="capability:workday:self_identify_date_signed:current_date",
+        )
 
     def _select_multi_prompt_value(self, page, field: dict[str, object], value: str) -> None:
         """Add one Workday multi-select value without toggling existing selections.
@@ -1694,7 +2243,16 @@ class WorkdayAdapter:
             scoped_options = page.locator(f'[id="{escaped_id}"] {option_selectors}')
             if scoped_options.count() > 0:
                 return scoped_options
-        return page.locator(option_selectors)
+        # A form can contain already selected multiselect items which also
+        # expose role=option. Only a visible popup is a valid listbox source.
+        visible_popup_options = page.locator(
+            f'[role="listbox"]:visible {option_selectors}, '
+            f'[data-automation-id="menu"]:visible {option_selectors}, '
+            f'[data-automation-id="promptOptions"]:visible {option_selectors}'
+        )
+        if visible_popup_options.count() > 0:
+            return visible_popup_options
+        return page.locator('[role="listbox"]:visible ' + option_selectors)
 
     def _next_form_action(self, page) -> str:
         extractor = getattr(page, "extract_workday_navigation_action", None)
@@ -1728,14 +2286,15 @@ class WorkdayAdapter:
         for selector in selectors:
             try:
                 locator = page.locator(selector)
+                exact_label = re.compile(rf"^\s*{re.escape(label)}\s*$", re.IGNORECASE)
                 if selector.startswith("[data-automation-id=") or selector.startswith("button[aria-label="):
                     if locator.count() > 0:
-                        if automation_id == "pageFooterNextButton":
-                            exact_label = re.compile(rf"^\s*{re.escape(label)}\s*$", re.IGNORECASE)
-                            return locator.filter(has_text=exact_label).count() > 0
-                        return True
+                        # Workday reuses automation ids for hidden actions and
+                        # for several footer labels. The visible label is the
+                        # reliable action discriminator.
+                        return locator.filter(has_text=exact_label).count() > 0
                     continue
-                if locator.filter(has_text=label).count() > 0:
+                if locator.filter(has_text=exact_label).count() > 0:
                     return True
             except Exception:
                 continue
@@ -1776,19 +2335,16 @@ class WorkdayAdapter:
         for selector in selectors:
             try:
                 locator = page.locator(selector)
+                exact_label = re.compile(rf"^\s*{re.escape(label)}\s*$", re.IGNORECASE)
                 if selector.startswith("[data-automation-id=") or selector.startswith("button[aria-label="):
                     if locator.count() == 0:
                         continue
-                    if automation_id == "pageFooterNextButton":
-                        exact_label = re.compile(rf"^\s*{re.escape(label)}\s*$", re.IGNORECASE)
-                        candidate = locator.filter(has_text=exact_label).first
-                    else:
-                        candidate = locator.first
+                    candidate = locator.filter(has_text=exact_label).first
                     if candidate.count() == 0:
                         continue
                     candidate.click(force=True, timeout=2000)
                     return True
-                candidate = locator.filter(has_text=label).first
+                candidate = locator.filter(has_text=exact_label).first
                 if candidate.count() == 0:
                     continue
                 candidate.click(force=True, timeout=2000)
