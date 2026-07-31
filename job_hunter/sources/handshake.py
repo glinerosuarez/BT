@@ -350,8 +350,14 @@ class HandshakeSource(SourceConnector):
                     if fallback_detail_text.strip():
                         detail_text = fallback_detail_text
                         detail_fetch_mode = "direct_page_fallback"
-            if not card_url:
-                card_url = _infer_card_url(page.url, search_url, title)
+            if not _is_direct_handshake_job_url(card_url):
+                LOG.warning(
+                    "handshake_card_skipped_unresolved_job_url search_url=%s card_index=%s title=%s",
+                    search_url,
+                    card_index,
+                    title,
+                )
+                continue
             parsed = _build_row(
                 card_text=card_text,
                 detail_text=detail_text,
@@ -770,6 +776,10 @@ def _job_search_url_to_jobs_url(url: str) -> str:
     if not match:
         return ""
     return urlunparse(parsed._replace(path=f"/jobs/{match.group(1)}", query=""))
+
+
+def _is_direct_handshake_job_url(url: str) -> bool:
+    return bool(re.match(r"^https?://[^/]+/jobs/\d+(?:[/?#]|$)", url.strip()))
 
 
 def _build_source_metadata(

@@ -13,6 +13,7 @@ from job_hunter.sources.handshake import (
     _dedupe_rows,
     _extract_cards_from_page_text,
     _is_card_older_than_lookback,
+    _is_direct_handshake_job_url,
     _job_search_url_to_jobs_url,
     _normalize_title_token,
     _normalize_search_url,
@@ -261,6 +262,10 @@ class HandshakeSourceTests(unittest.TestCase):
         fallback = "https://app.joinhandshake.com/job-search/11159981?query=data+engineer+intern"
         resolved = _resolve_job_url(FakePage(), "Software Intern", fallback)
         self.assertEqual(resolved, "https://app.joinhandshake.com/jobs/11159981")
+
+    def test_direct_handshake_job_url_excludes_search_results_urls(self) -> None:
+        self.assertTrue(_is_direct_handshake_job_url("https://app.joinhandshake.com/jobs/11120024?searchId=abc"))
+        self.assertFalse(_is_direct_handshake_job_url("https://app.joinhandshake.com/job-search/11120024?query=data"))
 
     def test_select_best_card_url_prefers_exact_title_match(self) -> None:
         candidates = [
