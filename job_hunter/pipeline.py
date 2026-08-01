@@ -411,6 +411,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 source=job.source,
                 dedupe_key=dedupe_key,
                 url=job.url,
+                application_url=str(job.source_metadata.get("external_apply_url") or job.url),
                 title=job.title,
                 company=job.company,
                 description=job.description,
@@ -706,6 +707,10 @@ def _evaluate_source_quality(job: JobRecord) -> tuple[str, list[str], bool]:
         accepting_applications = job.source_metadata.get("accepting_applications", True)
         if accepting_applications is False:
             return "closed", ["linkedin_closed"], False
+        detail_status = str(job.source_metadata.get("detail_quality_status", "") or "").strip().lower()
+        if detail_status == "card_only":
+            # Card text cannot reliably expose a later repost or closed banner.
+            return "card_only", ["linkedin_card_only"], False
         if not str(job.posted_at or "").strip():
             return "missing_posted_at", ["linkedin_missing_posted_at"], False
         return "ok", [], True

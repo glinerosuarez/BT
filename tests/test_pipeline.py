@@ -941,6 +941,35 @@ class PipelineIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(duplicate_key, first_key)
 
+    def test_cross_source_dedupe_uses_normalized_external_apply_url(self) -> None:
+        linkedin = JobRecord(
+            source="linkedin",
+            external_id="linkedin-1",
+            url="https://www.linkedin.com/jobs/view/123",
+            title="Data Engineering Internship (Summer 2027)",
+            company="Castleton Commodities International",
+            location="Stamford, CT",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Data engineering internship.",
+            ingested_at="2026-07-31T00:00:00+00:00",
+            source_metadata={
+                "external_apply_url": "https://osv-cci.wd1.myworkdayjobs.com/CCICareers/job/Stamford-CT/Data-Engineering-Internship--Summer-2027-_R1346?source=LinkedIn"
+            },
+        )
+        linkedin_key = _dedupe_key(linkedin)
+        self.assertTrue(self.store.insert_job(linkedin, linkedin_key))
+
+        existing_key = self.store.resolve_existing_dedupe_key(
+            source="github_repo",
+            dedupe_key="github-key",
+            url="https://osv-cci.wd1.myworkdayjobs.com/en-US/CCICareers/job/Stamford-CT/Data-Engineering-Internship--Summer-2027-_R1346?utm_source=github",
+            application_url="https://osv-cci.wd1.myworkdayjobs.com/en-US/CCICareers/job/Stamford-CT/Data-Engineering-Internship--Summer-2027-_R1346?utm_source=github",
+            title="Data Engineering Intern",
+            company="Castleton Commodities International",
+        )
+        self.assertEqual(existing_key, linkedin_key)
+
     def test_end_to_end_and_idempotency(self) -> None:
         payload = [
             {
@@ -1679,6 +1708,29 @@ class PipelineIntegrationTests(unittest.TestCase):
         status, reasons, notify_allowed = _evaluate_source_quality(job)
         self.assertEqual(status, "missing_posted_at")
         self.assertEqual(reasons, ["linkedin_missing_posted_at"])
+        self.assertFalse(notify_allowed)
+
+    def test_linkedin_card_only_job_is_quarantined(self) -> None:
+        job = JobRecord(
+            source="linkedin",
+            external_id="li-card-only-1",
+            url="https://www.linkedin.com/jobs/view/4411253060",
+            title="Software Engineering Intern",
+            company="Example",
+            location="United States",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Software engineering internship.",
+            ingested_at=datetime.now(timezone.utc).isoformat(),
+            source_metadata={
+                "detail_fetch_attempted": True,
+                "detail_quality_status": "card_only",
+                "accepting_applications": True,
+            },
+        )
+        status, reasons, notify_allowed = _evaluate_source_quality(job)
+        self.assertEqual(status, "card_only")
+        self.assertEqual(reasons, ["linkedin_card_only"])
         self.assertFalse(notify_allowed)
 
     def test_github_summary_only_job_is_not_notifiable(self) -> None:

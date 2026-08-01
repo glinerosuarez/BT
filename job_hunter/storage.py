@@ -382,6 +382,7 @@ class JobStore:
         source: str,
         dedupe_key: str,
         url: str,
+        application_url: str = "",
         title: str = "",
         company: str = "",
         description: str = "",
@@ -392,6 +393,16 @@ class JobStore:
         ).fetchone()
         if row is not None:
             return str(row["dedupe_key"])
+        normalized_application_url = _normalize_application_url(application_url or url)
+        if normalized_application_url:
+            rows = self._conn.execute(
+                "SELECT dedupe_key, url, source_metadata FROM jobs ORDER BY id DESC"
+            ).fetchall()
+            for candidate in rows:
+                candidate_application_url = _external_apply_url_from_metadata(candidate["source_metadata"])
+                candidate_identity = _normalize_application_url(candidate_application_url or str(candidate["url"] or ""))
+                if candidate_identity == normalized_application_url:
+                    return str(candidate["dedupe_key"])
         if source == "handshake" and url.strip():
             normalized_url = _normalize_handshake_storage_url(url)
             rows = self._conn.execute(
@@ -2325,6 +2336,29 @@ def _linkedin_description_identity(description: str) -> str:
         if marker_index >= 0:
             text = text[:marker_index]
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _external_apply_url_from_metadata(value: object) -> str:
+    if not value:
+        return ""
+    try:
+        metadata = json.loads(str(value))
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(metadata, dict):
+        return ""
+    return str(metadata.get("external_apply_url") or "").strip()
+
+
+def _normalize_application_url(url: str) -> str:
+    parsed = urlparse(url.strip().lower())
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    path_parts = [part for part in parsed.path.split("/") if part]
+    # Workday's locale segment changes between source URLs but not the requisition.
+    if "myworkdayjobs.com" in parsed.netloc and path_parts and re.fullmatch(r"[a-z]{2}-[a-z]{2}", path_parts[0]):
+        path_parts = path_parts[1:]
+    return f"{parsed.netloc}/{'/'.join(path_parts)}"
 
 
 def _row_value(row: sqlite3.Row, key: str) -> object | None:
