@@ -326,6 +326,31 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertEqual(confidence, 0.0)
         self.assertIn("do_not_sponsor", negative)
 
+    def test_eligibility_rejects_permanent_us_work_auth_and_opt_cpt_exclusion(self) -> None:
+        job = JobRecord(
+            source="linkedin",
+            external_id="jpmc-style-1",
+            url="https://example.com/jpmc-style-1",
+            title="Data & AI Summer Analyst",
+            company="Example",
+            location="United States",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description=(
+                "Authorized to work permanently in the United States. "
+                "We do not offer any type of employment-based immigration sponsorship for this program. "
+                "We will not provide any assistance or sign any documentation in support of optional practical training (OPT) "
+                "or curricular practical training (CPT)."
+            ),
+            ingested_at="now",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("permanent_us_work_authorization_required", negative)
+        self.assertIn("employment_sponsorship_opt_cpt_unavailable", negative)
+        self.assertEqual(positive, [])
+
     def test_eligibility_allows_cpt_or_sponsorship_despite_generic_us_work_auth_requirement(self) -> None:
         job = JobRecord(
             source="handshake",
@@ -410,6 +435,25 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertEqual(confidence, 0.0)
         self.assertIn("citizen_or_pr_required", negative)
         self.assertIn("citizens_only_security_clearance", negative)
+        self.assertEqual(positive, [])
+
+    def test_eligibility_rejects_github_tracker_us_citizenship_marker(self) -> None:
+        job = JobRecord(
+            source="github_repo",
+            external_id="github-citizens-only-1",
+            url="https://example.com/github-citizens-only-1",
+            title="Software Engineer Intern 🇺🇸",
+            company="Example",
+            location="United States",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Imported from GitHub internship repository.",
+            ingested_at="now",
+        )
+        status, confidence, negative, positive = _evaluate_eligibility(job)
+        self.assertEqual(status, "reject")
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("github_repo_us_citizens_only", negative)
         self.assertEqual(positive, [])
 
     def test_internship_and_us_scope_filters(self) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from job_hunter.sources.github_repo import _extract_url, _is_within_lookback, _normalize_posted_at, _parse_markdown_table
+from job_hunter.sources.github_repo import _extract_url, _is_generic_listing_url, _is_within_lookback, _normalize_posted_at, _parse_markdown_table
 
 
 SAMPLE_MARKDOWN = """
@@ -52,6 +52,18 @@ class GithubRepoSourceTests(unittest.TestCase):
         recent = (now - timedelta(days=1)).isoformat()
         self.assertFalse(_is_within_lookback(stale, max_posting_age_days=7))
         self.assertTrue(_is_within_lookback(recent, max_posting_age_days=7))
+
+    def test_generic_microsoft_careers_search_url_is_not_a_job_link(self) -> None:
+        self.assertTrue(
+            _is_generic_listing_url(
+                "https://apply.careers.microsoft.com/careers?query=intern&start=0&location=united+states"
+            )
+        )
+        self.assertFalse(
+            _is_generic_listing_url(
+                "https://apply.careers.microsoft.com/careers/job/1970393556951950?utm_source=linkedin"
+            )
+        )
 
 
 if __name__ == "__main__":

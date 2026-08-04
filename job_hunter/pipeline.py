@@ -134,6 +134,15 @@ NEGATED_SPONSORSHIP_REGEXES = {
         r"\b(visa\s+)?sponsorships?\s+unavailable\b",
         flags=re.IGNORECASE,
     ),
+    "permanent_us_work_authorization_required": re.compile(
+        r"\bauthorized\s+to\s+work\s+permanently\s+in\s+the\s+(?:u\.?s\.?|united states)\b",
+        flags=re.IGNORECASE,
+    ),
+    "employment_sponsorship_opt_cpt_unavailable": re.compile(
+        r"\b(?:do\s+not\s+offer|will\s+not\s+provide)\b(?s:.{0,500}?)"
+        r"\b(?:employment-based\s+immigration\s+sponsorship|optional\s+practical\s+training|curricular\s+practical\s+training|opt|cpt)\b",
+        flags=re.IGNORECASE,
+    ),
 }
 BUILTIN_POLICY_REJECT_REGEXES = {
     "undergraduate_title": re.compile(
@@ -960,6 +969,10 @@ def _normalize_scope_text(value: str) -> str:
 def _evaluate_eligibility(job: JobRecord) -> tuple[str, float, list[str], list[str]]:
     blob = _job_blob(job)
     negative = [name for name, pattern in NEGATIVE_WORK_AUTH_REGEXES.items() if pattern.search(blob)]
+    # The configured GitHub internship tracker uses this marker for U.S.
+    # citizenship-only roles. Treat it as source metadata, not a general emoji rule.
+    if job.source == "github_repo" and "🇺🇸" in job.title:
+        negative.append("github_repo_us_citizens_only")
     ambiguous_work_auth = [name for name, pattern in AMBIGUOUS_WORK_AUTH_REGEXES.items() if pattern.search(blob)]
     negated_sponsorship = [name for name, pattern in NEGATED_SPONSORSHIP_REGEXES.items() if pattern.search(blob)]
     if negated_sponsorship:

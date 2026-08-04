@@ -7,6 +7,7 @@ import re
 import urllib.request
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from urllib.parse import parse_qs, urlparse
 
 from job_hunter.sources.base import SourceConnector, USER_AGENT, clamp_bulk_source_timeout
 
@@ -65,6 +66,9 @@ class GithubRepoSource(SourceConnector):
                 location = row["location"]
                 date_text = row["date_posted"]
                 url = row["application_url"] or f"{readme_url}#row-{index}"
+                if row["application_url"] and _is_generic_listing_url(url):
+                    LOG.info("github_repo_row_skipped_generic_listing_url url=%s role=%s", url, role)
+                    continue
                 external_id = row["application_url"] or _fallback_external_id(
                     readme_url=readme_url,
                     company=company,
@@ -192,6 +196,16 @@ def _clean_extracted_url(value: str) -> str:
     url = html.unescape(value).strip()
     url = re.split(r"[\s\"'<]", url, maxsplit=1)[0]
     return url.rstrip(".,;")
+
+
+def _is_generic_listing_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.netloc.lower() != "apply.careers.microsoft.com":
+        return False
+    if parsed.path.rstrip("/").lower() != "/careers":
+        return False
+    query = parse_qs(parsed.query)
+    return bool(query.get("query") or query.get("start"))
 
 
 def _fetch_detail_text(url: str, timeout_seconds: int) -> str:
