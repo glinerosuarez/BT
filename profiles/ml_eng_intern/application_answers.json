@@ -2,6 +2,11 @@
   "question_overrides": [
     {
       "match_type": "exact",
+      "pattern": "Tell me about the most exciting project you've built (please type answer without AI)",
+      "answer": "Built an agentic document extraction pipeline to ingest ESG data from more than 1000 company reports, using a LangChain LLM orchestrator hosted on Google Agent Platform, fine-tuned vision-language models (VLMs), OCR models, and PyTorch-based deep learning workflows. Designed and deployed our evals approach, which included building eval datasets, using Phoenix to instrument agent calls with OpenTelemetry, computing metrics, and running experiments across versions to improve visibility into agent performance and make the system more truthful, increasing precision from 50% with our initial zero-shot approach to 80% with a RAG-based system."
+    },
+    {
+      "match_type": "exact",
       "pattern": "What internship term(s) are you targeting? Please check all that apply*",
       "answer": "Fall"
     },
@@ -92,6 +97,26 @@
         },
         {
             "match_type": "exact",
+            "pattern": "Address Line 1*",
+            "answer": "3030 Shrine Pl"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Postal Code*",
+            "answer": "90007"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "County*",
+            "answer": "Los Angeles"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Are you over the age of 18?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
             "pattern": "Type to Add Skills*",
             "answer": "Python || C++ || SQL || PyTorch || Apache Spark || Airflow || AWS || Docker || Kubernetes"
         },
@@ -119,6 +144,96 @@
             "match_type": "contains",
             "pattern": "bound by any agreements with a current or former employer",
             "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "signed any agreements with your current or former employer",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "will you also perform work (paid or unpaid) for any other company or entity",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "relatives or individuals with whom you have a close personal relationship employed by gdit",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "relatives or individuals with whom you have a close personal relationship in the organization to which you would be assigned",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "currently or formerly employed by a general dynamics company",
+            "answer": "none"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "currently providing services to any general dynamics information technology entity as an independent contractor",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "current, highest level of security clearance obtained",
+            "answer": "None"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "export control compliance information",
+            "answer": "No"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "are you willing to travel?*",
+            "answer": "75-100%"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "are you willing to relocate?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "what is your desired salary range?*",
+            "answer": "$50,000 - $65,000"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "have you ever worked for the u.s. government",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "worked in the last three (3) years for a foreign, state or local government agency",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "ever been debarred or suspended from participation in government contracting",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "ever been retained by the u.s. government",
+            "answer": "No"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "are you a resident of the state of maryland?*",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "consent to receive telephone calls and/or text messages from gdit",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "additional information about your current immigration status",
+            "answer": "F1-CPT"
         },
         {
             "match_type": "exact",

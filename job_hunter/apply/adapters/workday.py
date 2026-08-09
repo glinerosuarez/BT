@@ -1323,6 +1323,25 @@ class WorkdayAdapter:
         normalized_field = field_name.strip().lower()
         current = current_value.strip().lower()
         desired = desired_value.strip().lower()
+        if normalized_field == "source":
+            # Workday tenants use different source taxonomies. Treat only
+            # explicitly LinkedIn-labelled options as equivalent to a
+            # LinkedIn job-board answer; do not broaden other source values.
+            return "linkedin" in current and "linkedin" in desired
+        if normalized_field in {"phonetype", "devicetype", "phone-device-type"}:
+            # Workday tenants label the same option as either "Mobile" or
+            # "Mobile Phone". Both are the candidate's mobile device type.
+            return desired == "mobile" and "mobile" in current
+        if normalized_field == "ethnicity":
+            # Tenants may suffix ethnicity options with a country label.
+            # Preserve the explicit-negation guard to avoid matching "Not
+            # Hispanic or Latino" for the affirmative answer.
+            return desired in current and f"not {desired}" not in current
+        if desired in {"yes", "no"}:
+            # Some Workday tenants expand a binary answer with explanatory
+            # text, e.g. "No - I am not related ...". The leading standalone
+            # response is still the selected answer.
+            return current == desired or re.match(rf"^{re.escape(desired)}(?:\s|[-:,(])", current) is not None
         if desired.startswith("__work_auth_us_"):
             return self._employment_eligibility_match_score(
                 target=desired,
@@ -1337,6 +1356,11 @@ class WorkdayAdapter:
         if normalized_field == "veteranstatus":
             normalized_current = "".join(ch for ch in current if ch.isalnum())
             normalized_desired = "".join(ch for ch in desired if ch.isalnum())
+            if (
+                "notaveteran" in normalized_current
+                and "notaprotectedveteran" in normalized_desired
+            ):
+                return True
             return bool(normalized_current and normalized_current == normalized_desired)
         if normalized_field == "phonenumber":
             current_digits = "".join(ch for ch in current if ch.isdigit())
@@ -1382,6 +1406,19 @@ class WorkdayAdapter:
             return ["Job Sites", "LinkedIn"]
         return path
 
+    def _listbox_selection_path(self, value: str, *, field: dict[str, object] | None = None) -> list[str]:
+        """Split hierarchical Workday listbox answers into selectable menu levels."""
+        path = [part.strip() for part in value.split(">")]
+        path = [part for part in path if part] or [value.strip()]
+        question = str((field or {}).get("question_text") or "").lower()
+        if (
+            len(path) == 1
+            and path[0].strip().lower() == "linkedin"
+            and "how did you hear" in question
+        ):
+            return ["Job Sites", "LinkedIn"]
+        return path
+
     def _prompt_multi_values(self, value: str) -> list[str]:
         """Allow answer rules to express a sequence of Workday multi-select choices."""
         values = [part.strip() for part in value.split("||")]
@@ -1413,6 +1450,10 @@ class WorkdayAdapter:
             return eligibility_score
         if normalized_candidate == normalized_target:
             return 3
+        if f"not {normalized_target}" in normalized_candidate:
+            # Avoid a partial match selecting the explicit negation of the
+            # requested value, such as "Not Hispanic or Latino".
+            return 0
         if self._is_us_state_equivalent(field_name=field_name, current_value=candidate, desired_value=target):
             return 2
         if self._is_effectively_same_value(
@@ -1627,13 +1668,19 @@ class WorkdayAdapter:
             return
         if field_type == "listbox-button":
             locator = page.locator(selector).first
+            selection_path = self._listbox_selection_path(value, field=field)
 
             def verify_selection() -> None:
                 current_value = self._normalized_current_value(
                     field_type=field_type,
                     current_value=self._listbox_current_value(page, field),
                 )
-                if not self._is_effectively_same_value(
+                matches_selected_leaf = (
+                    len(selection_path) > 1
+                    and self._normalize_option_text(selection_path[-1])
+                    in self._normalize_option_text(current_value)
+                )
+                if not matches_selected_leaf and not self._is_effectively_same_value(
                     field_name=str(field.get("field_name") or ""),
                     current_value=current_value,
                     desired_value=value,
@@ -1664,33 +1711,87 @@ class WorkdayAdapter:
                         break
                     self._wait(page, 150)
                     options = self._listbox_options(page, locator)
-                normalized_target = self._normalize_option_text(value)
                 field_name = str(field.get("field_name") or "")
-                option_locator = None
-                best_match_score = 0
+                # Some tenants render the full source label as one option
+                # ("A Job Board > LinkedIn"), while others expose a nested
+                # menu. Prefer the exact flat option before traversing levels.
+                normalized_value = self._normalize_option_text(value)
                 for index in range(options.count()):
-                    candidate = options.nth(index)
-                    candidate_text = self._normalize_option_text(candidate.inner_text())
-                    if not candidate_text:
+                    try:
+                        candidate_text = self._normalize_option_text(options.nth(index).inner_text())
+                    except Exception:
                         continue
-                    match_score = self._listbox_option_match_score(
-                        field_name=field_name,
-                        target=value,
-                        candidate=candidate_text,
-                    )
-                    if match_score > best_match_score:
-                        option_locator = candidate
-                        best_match_score = match_score
-                    if match_score == 3:
+                    if candidate_text == normalized_value:
+                        selection_path = [value]
                         break
-                if option_locator is not None:
-                    option_locator.click(force=True)
-                    self._wait(page, 400)
-                    self._wait_for_render(page)
-                    verify_selection()
+                    if (
+                        field_name == "source"
+                        and "linkedin" in candidate_text
+                        and "linkedin" in normalized_value
+                    ):
+                        # This tenant's flat option is "Internet - LinkedIn".
+                        # Selecting it is equivalent to the requested LinkedIn
+                        # job-board source and can be verified by label.
+                        selection_path = ["LinkedIn"]
+                        break
+                selected_option = False
+                for path_index, target in enumerate(selection_path):
+                    if path_index:
+                        options = self._listbox_options(page, locator)
+                        for _ in range(20):
+                            if options.count() > 0:
+                                break
+                            self._wait(page, 150)
+                            options = self._listbox_options(page, locator)
+                    option_locator = None
+                    best_match_score = 0
+                    for index in range(options.count()):
+                        candidate = options.nth(index)
+                        candidate_text = self._normalize_option_text(candidate.inner_text())
+                        if not candidate_text:
+                            continue
+                        match_score = self._listbox_option_match_score(
+                            field_name=field_name,
+                            target=target,
+                            candidate=candidate_text,
+                        )
+                        if match_score > best_match_score:
+                            option_locator = candidate
+                            best_match_score = match_score
+                        if match_score == 3:
+                            break
+                    if option_locator is None:
+                        break
+                    # Forced clicks can bypass the pointer sequence Workday's
+                    # listbox uses to commit a value. Prefer a normal click,
+                    # retaining force only for a genuine overlay failure.
+                    try:
+                        option_locator.click()
+                    except Exception:
+                        option_locator.click(force=True)
+                    selected_option = True
+                    self._wait(page, 350)
+                    if path_index == len(selection_path) - 1:
+                        try:
+                            locator.press("Tab")
+                        except Exception:
+                            pass
+                if selected_option and option_locator is not None:
+                    # React commonly replaces both the popup and button after
+                    # choosing an option. Poll the stable field selector until
+                    # its selected value is observable before declaring the
+                    # control unresolved.
+                    for _ in range(24):
+                        try:
+                            verify_selection()
+                            break
+                        except RuntimeError:
+                            self._wait(page, 250)
+                    else:
+                        verify_selection()
                     self._wait(page, 400)
                     return
-                if normalized_target.startswith("__work_auth_us_"):
+                if value.startswith("__work_auth_us_"):
                     # Do not let keyboard navigation select the first legal
                     # status option when no explicit sponsorship match exists.
                     available_options: list[str] = []
@@ -1709,6 +1810,8 @@ class WorkdayAdapter:
                         "employment-eligibility dropdown has no explicit authorization/sponsorship match; "
                         f"available options: {available_options!r}"
                     )
+                if len(selection_path) > 1:
+                    raise RuntimeError(f"listbox hierarchy option not found for {selection_path!r}")
                 try:
                     locator.focus()
                 except Exception:

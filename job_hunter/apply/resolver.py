@@ -17,13 +17,11 @@ _QUESTION_FIELD_MAP: list[tuple[tuple[str, ...], str]] = [
     (("last name", "surname", "family name", "father's family name", "fathers family name"), "identity.last_name"),
     (("full name", "legal name", "name"), "identity.full_name"),
     (("email", "email address"), "identity.email"),
-    (("phone", "mobile"), "identity.phone"),
     (("sponsorship", "require visa"), "work_authorization.requires_future_sponsorship"),
     (("authorized to work", "work authorization"), "work_authorization.us_work_authorized"),
     (("cpt",), "work_authorization.cpt"),
     (("opt",), "work_authorization.opt"),
     (("city",), "identity.city"),
-    (("state", "region", "province"), "identity.region"),
     (("country",), "identity.country"),
     (("linkedin",), "identity.linkedin_url"),
     (("github",), "identity.github_url"),
@@ -32,10 +30,10 @@ _QUESTION_FIELD_MAP: list[tuple[tuple[str, ...], str]] = [
     (("major", "field of study"), "education.major"),
     (("graduation", "graduate date"), "education.graduation_date"),
     (("gpa",), "education.gpa"),
-    (("current company", "current employer", "employer"), "employment.current_company"),
+    (("current company", "current employer"), "employment.current_company"),
     (("current title", "job title", "title"), "employment.current_title"),
     (("years of experience",), "employment.years_experience"),
-    (("salary", "compensation"), "preferences.salary_min_usd"),
+    (("salary", "compensation expectation", "compensation expectations"), "preferences.salary_min_usd"),
     (("remote",), "preferences.remote_ok"),
     (("relocation",), "preferences.relocation_ok"),
 ]
@@ -56,6 +54,8 @@ _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
         (
             "legally authorized to work in the united states",
             "authorized to work in the united states",
+            "eligible to legally work in the united states",
+            "legally eligible to work in the u.s.",
             "legally permitted to work in the country where this job is located",
         ),
     ),
@@ -64,6 +64,7 @@ _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
         (
             "require employer sponsorship to work in the united states",
             "require sponsorship to work in the united states",
+            "require visa sponsorship for employment",
             "require datarobot sponsorship for a visa or work permit",
             "require medpace inc. to commence",
         ),
@@ -75,7 +76,19 @@ _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
             "employment eligibility",
         ),
     ),
-    ("on_site_acknowledgement", ("requires me to work on-site", "requires me to work on site")),
+    (
+        "on_site_acknowledgement",
+        (
+            "requires me to work on-site",
+            "requires me to work on site",
+            "able and willing to work",
+            "relocate if needed",
+            "able to work onsite in one of our offices",
+            "able to work on-site in one of our offices",
+            "comfortable being onsite",
+            "comfortable being on-site",
+        ),
+    ),
     ("education_end_month", ("end date month",)),
     ("education_end_year", ("end date year", "what year will you graduate")),
     ("identity_linkedin_url", ("linkedin profile",)),
@@ -119,6 +132,13 @@ _FIELD_CAPABILITIES: tuple[FieldCapability, ...] = (
         submit_policy="safe_autofill",
     ),
     FieldCapability(
+        portal="ashby",
+        widget_types=("yes-no",),
+        intents=("on_site_acknowledgement",),
+        resolver_mode="computed_yes",
+        submit_policy="safe_autofill",
+    ),
+    FieldCapability(
         portal="greenhouse",
         widget_types=("text",),
         intents=("identity_linkedin_url", "identity_additional_link", "current_location"),
@@ -145,6 +165,12 @@ class AnswerResolver:
         normalized_question = " ".join(question_text.lower().split())
         normalized_field_name = field_name.strip().lower()
 
+        # Exact question rules are deliberate, portal-specific corrections
+        # and must be able to supersede a generic computed fallback.
+        for rule in self.answers.question_overrides:
+            if rule.match_type == "exact" and _rule_matches(rule.match_type, rule.pattern, normalized_question):
+                return AnswerResolution(answer=rule.answer, source="override:exact", matched_rule=rule.pattern)
+
         computed = self._computed_answer(
             question=normalized_question,
             field_name=normalized_field_name,
@@ -164,6 +190,8 @@ class AnswerResolver:
             return AnswerResolution(answer=self.answers.field_defaults[default_key], source=f"default:{default_key}")
 
         for rule in self.answers.question_overrides:
+            if rule.match_type == "exact":
+                continue
             if _rule_matches(rule.match_type, rule.pattern, normalized_question):
                 return AnswerResolution(answer=rule.answer, source=f"override:{rule.match_type}", matched_rule=rule.pattern)
 
@@ -223,6 +251,16 @@ class AnswerResolver:
             return "education.school"
         if question.rstrip("*").strip() == "school":
             return "education.school"
+        if (
+            field_name in {"phone", "phone_number", "mobile"}
+            or question.rstrip("*").strip() in {"phone", "phone number", "mobile"}
+        ):
+            return "identity.phone"
+        if (
+            field_name in {"state", "state/province", "region", "province"}
+            or question.rstrip("*").strip() in {"state", "state/province", "region", "province"}
+        ):
+            return "identity.region"
         for patterns, key in _QUESTION_FIELD_MAP:
             if any(_question_contains_pattern(question, pattern) or pattern == field_name for pattern in patterns):
                 return key
@@ -270,7 +308,7 @@ class AnswerResolver:
             if last_name:
                 return AnswerResolution(answer=last_name, source="computed:identity.last_name")
 
-        if "degree" in question or field_name.startswith("degree"):
+        if "degree" in question or "highest level of education" in question or field_name.startswith("degree"):
             degree = _canonical_degree(self._structured.get("education.degree", ""))
             if degree:
                 return AnswerResolution(answer=degree, source="computed:education.degree")
@@ -365,7 +403,7 @@ class AnswerResolver:
                     source="computed:work_authorization.employment_eligibility",
                 )
 
-        if forced_intent == "on_site_acknowledgement" or "requires me to work on-site" in question or "requires me to work on site" in question:
+        if forced_intent == "on_site_acknowledgement":
             return AnswerResolution(answer="Yes", source="computed:preferences.on_site_acknowledgement")
 
         if "phone device type" in question:
@@ -416,7 +454,12 @@ class AnswerResolver:
             if race_ethnicity:
                 return AnswerResolution(answer="No", source="computed:self_identify.hispanic_or_latino")
 
-        if "veteran status" in question:
+        if "ethnicity" in question or normalized_field_name in {"ethnicity", "raceethnicity"}:
+            race_ethnicity = str(self.answers.field_defaults.get("race_ethnicity", "")).strip()
+            if race_ethnicity:
+                return AnswerResolution(answer=race_ethnicity, source="computed:self_identify.ethnicity")
+
+        if "veteran status" in question or "veteran's status" in question:
             veteran_status = str(self.answers.field_defaults.get("veteran_status", "")).strip().lower()
             if veteran_status in {"false", "no", "0"}:
                 return AnswerResolution(

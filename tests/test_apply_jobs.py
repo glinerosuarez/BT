@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from job_hunter.apply.adapters.ashby import AshbyAdapter
 from job_hunter.apply.adapters.greenhouse import GreenhouseAdapter
 from job_hunter.apply.adapters.handshake import HandshakeAdapter
 from job_hunter.apply.adapters.handshake_fellow import HandshakeFellowAdapter
@@ -43,13 +44,25 @@ class FakeProvider:
 
 
 class FakePage:
-    def __init__(self, *, url: str, fields=None, confirmation=None, easy_apply=True, greenhouse=True, icims=False) -> None:
+    def __init__(
+        self,
+        *,
+        url: str,
+        fields=None,
+        confirmation=None,
+        easy_apply=True,
+        greenhouse=True,
+        icims=False,
+        ashby=False,
+    ) -> None:
         self.url = url
         self._fields = list(fields or [])
         self._confirmation = dict(confirmation or {})
         self._easy_apply = easy_apply
         self._greenhouse = greenhouse
         self._icims = icims
+        self._ashby = ashby
+        self._content = ""
         self._login_wall = False
         self._captcha = False
         self._unsupported_widget = False
@@ -71,7 +84,7 @@ class FakePage:
         self.url = url
 
     def content(self) -> str:
-        return "easy apply" if self._easy_apply else "external apply"
+        return self._content or ("easy apply" if self._easy_apply else "external apply")
 
     def evaluate(self, script: str, *args):
         return None
@@ -104,6 +117,9 @@ class FakePage:
 
     def detect_icims(self) -> bool:
         return self._icims
+
+    def detect_ashby(self) -> bool:
+        return self._ashby
 
     def detect_candidate_profile(self) -> bool:
         return self._candidate_profile
@@ -473,8 +489,36 @@ class ApplyJobsTests(unittest.TestCase):
 
     def test_answer_resolver_does_not_match_city_inside_ethnicity(self) -> None:
         resolver = self._resolver()
-        with self.assertRaises(ResolutionError):
-            resolver.resolve(question_text="Please select the ethnicity which most accurately describes how you identify yourself.*")
+        resolution = resolver.resolve(
+            question_text="Please select the ethnicity which most accurately describes how you identify yourself.*"
+        )
+        self.assertEqual(resolution.source, "computed:self_identify.ethnicity")
+        self.assertNotEqual(resolution.answer, resolver.profile.identity.city)
+
+    def test_answer_resolver_uses_profile_ethnicity_for_direct_ethnicity_dropdown(self) -> None:
+        resolver = self._resolver()
+        resolver.answers.field_defaults["race_ethnicity"] = "Hispanic or Latino"
+
+        resolution = resolver.resolve(
+            question_text="Please select your Ethnicity from the list below:*",
+            field_name="ethnicity",
+            field_type="listbox-button",
+        )
+
+        self.assertEqual(resolution.answer, "Hispanic or Latino")
+        self.assertEqual(resolution.source, "computed:self_identify.ethnicity")
+
+    def test_answer_resolver_accepts_possessive_veteran_status_label(self) -> None:
+        resolver = self._resolver()
+        resolver.answers.field_defaults["veteran_status"] = False
+
+        resolution = resolver.resolve(
+            question_text="Please select your Veteran's Status from the list below:*",
+            field_name="veteranStatus",
+            field_type="listbox-button",
+        )
+
+        self.assertEqual(resolution.answer, "I am not a protected veteran.")
 
     def test_answer_resolver_does_not_use_school_for_university_organization_question(self) -> None:
         resolver = self._resolver()
@@ -482,6 +526,57 @@ class ApplyJobsTests(unittest.TestCase):
             resolver.resolve(
                 question_text="Have you held leadership roles through university organizations such as clubs or societies?*"
             )
+
+    def test_answer_resolver_does_not_treat_restrictive_agreement_prompt_as_employer_name(self) -> None:
+        resolver = self._resolver()
+        question = (
+            "Have you signed any agreements with your current or former employer(s) that could restrict "
+            "your ability to work for this company?*"
+        )
+
+        with self.assertRaises(ResolutionError):
+            resolver.resolve(question_text=question, field_type="radio-group")
+
+        resolver.answers.question_overrides.append(
+            type(resolver.answers.question_overrides[0])(
+                match_type="contains",
+                pattern="signed any agreements with your current or former employer",
+                answer="No",
+            )
+        )
+        resolution = resolver.resolve(question_text=question, field_type="radio-group")
+        self.assertEqual(resolution.answer, "No")
+        self.assertEqual(resolution.source, "override:contains")
+
+    def test_answer_resolver_does_not_treat_government_employment_disclosure_as_salary(self) -> None:
+        resolver = self._resolver()
+        question = (
+            "Have you ever worked for the U.S. Government, including military active duty, or as a civilian "
+            "employee? The company may be prohibited from offering employment or providing compensation.*"
+        )
+
+        with self.assertRaises(ResolutionError):
+            resolver.resolve(question_text=question, field_type="listbox-button")
+
+    def test_answer_resolver_does_not_treat_government_agency_disclosure_as_state(self) -> None:
+        resolver = self._resolver()
+        question = (
+            "Have you worked in the last three years for a foreign, state, or local government agency in which "
+            "you occupied a position of influence on procurement matters?*"
+        )
+
+        with self.assertRaises(ResolutionError):
+            resolver.resolve(question_text=question, field_type="listbox-button")
+
+    def test_answer_resolver_does_not_treat_phone_consent_as_phone_number(self) -> None:
+        resolver = self._resolver()
+        question = (
+            "I consent to receive telephone calls and text messages at any phone numbers I have provided for "
+            "employment-related purposes.*"
+        )
+
+        with self.assertRaises(ResolutionError):
+            resolver.resolve(question_text=question, field_type="listbox-button")
 
     def test_answer_resolver_exposes_explicit_override_without_mutating_structured_profile(self) -> None:
         resolver = self._resolver()
@@ -499,6 +594,21 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertIsNotNone(resolution)
         self.assertEqual(resolution.answer, "3.7 or Higher")
         self.assertEqual(resolver.profile.education.gpa, original_gpa)
+
+    def test_answer_resolver_override_precedes_computed_salary_fallback(self) -> None:
+        resolver = self._resolver()
+        resolver.answers.question_overrides.append(
+            type(resolver.answers.question_overrides[0])(
+                match_type="exact",
+                pattern="what is your desired salary range?*",
+                answer="$50,000 - $65,000",
+            )
+        )
+
+        resolution = resolver.resolve(question_text="What is your desired salary range?*")
+
+        self.assertEqual(resolution.answer, "$50,000 - $65,000")
+        self.assertEqual(resolution.source, "override:exact")
 
     def test_answer_resolver_computes_major_eligibility_from_structured_education(self) -> None:
         resolver = self._resolver()
@@ -734,6 +844,13 @@ class ApplyJobsTests(unittest.TestCase):
                 desired_value="I am not a protected veteran.",
             )
         )
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="veteranStatus",
+                current_value="I am not a veteran",
+                desired_value="I am not a protected veteran.",
+            )
+        )
 
     def test_workday_country_listbox_prefers_equivalent_country_over_partial_match(self) -> None:
         adapter = WorkdayAdapter()
@@ -751,6 +868,25 @@ class ApplyJobsTests(unittest.TestCase):
             ),
         )
 
+    def test_workday_ethnicity_listbox_does_not_match_explicit_negation(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._listbox_option_match_score(
+                field_name="ethnicity",
+                target="Hispanic or Latino",
+                candidate="American Indian or Alaska Native (Not Hispanic or Latino)",
+            ),
+            0,
+        )
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="ethnicity",
+                current_value="Hispanic or Latino (United States of America)",
+                desired_value="Hispanic or Latino",
+            )
+        )
+
     def test_workday_source_prompt_uses_job_site_hierarchy_for_linkedin(self) -> None:
         adapter = WorkdayAdapter()
 
@@ -760,6 +896,47 @@ class ApplyJobsTests(unittest.TestCase):
                 field={"question_text": "How Did You Hear About Us?*"},
             ),
             ["Job Sites", "LinkedIn"],
+        )
+
+    def test_workday_source_listbox_uses_explicit_job_board_hierarchy(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._listbox_selection_path(
+                "A Job Board > LinkedIn",
+                field={"question_text": "How Did You Hear About Us?*"},
+            ),
+            ["A Job Board", "LinkedIn"],
+        )
+
+    def test_workday_source_listbox_keeps_flat_source_answer_as_a_single_value(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertEqual(
+            adapter._listbox_selection_path(
+                "A Job Board - LinkedIn",
+                field={"question_text": "How Did You Hear About Us?*"},
+            ),
+            ["A Job Board - LinkedIn"],
+        )
+
+    def test_workday_source_accepts_tenant_specific_linkedin_label(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="source",
+                current_value="Internet - LinkedIn",
+                desired_value="A Job Board > LinkedIn",
+            )
+        )
+        self.assertGreater(
+            adapter._listbox_option_match_score(
+                field_name="source",
+                target="LinkedIn",
+                candidate="Internet - LinkedIn",
+            ),
+            0,
         )
 
     def test_workday_builds_direct_manual_endpoint_for_concrete_job_url(self) -> None:
@@ -845,6 +1022,18 @@ class ApplyJobsTests(unittest.TestCase):
             resolver.classify_intent(question_text="Are you currently authorized to work in the United States?"),
             "work_auth_us",
         )
+        self.assertEqual(
+            resolver.classify_intent(question_text="Are you currently eligible to legally work in the United States?"),
+            "work_auth_us",
+        )
+        self.assertEqual(
+            resolver.classify_intent(question_text="Are you legally eligible to work in the U.S.?"),
+            "work_auth_us",
+        )
+        self.assertEqual(
+            resolver.classify_intent(question_text="Are you able to work onsite in one of our offices, five days a week?"),
+            "on_site_acknowledgement",
+        )
 
     def test_answer_resolver_exposes_capability_matrix_rows(self) -> None:
         resolver = self._resolver()
@@ -907,6 +1096,10 @@ class ApplyJobsTests(unittest.TestCase):
         resolver = AnswerResolver(profile=profile, answers=answers)
         self.assertEqual(
             resolver.resolve(question_text="Degree*", field_name="degree--0").answer,
+            "Master's Degree",
+        )
+        self.assertEqual(
+            resolver.resolve(question_text="Highest Level of Education Obtained *").answer,
             "Master's Degree",
         )
         self.assertEqual(
@@ -1176,6 +1369,101 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(result.status, "submitted")
         self.assertEqual(result.confirmation_payload["application_id"], "gh-123")
 
+    def test_ashby_adapter_fills_standard_fields_uploads_tailored_resume_and_confirms(self) -> None:
+        adapter = AshbyAdapter()
+        page = FakePage(
+            url="https://jobs.ashbyhq.com/serval/job-id/application",
+            fields=[
+                {"field_name": "_systemfield_name", "question_text": "Name", "field_type": "text", "required": True},
+                {"field_name": "_systemfield_email", "question_text": "Email", "field_type": "text", "required": True},
+                {"field_name": "_systemfield_resume", "question_text": "Resume", "field_type": "file", "required": True},
+                {"field_name": "linkedin", "question_text": "LinkedIn", "field_type": "text", "required": True},
+                {
+                    "field_name": "onsite",
+                    "question_text": "Are you able and willing to work from our San Francisco HQ 5 days a week (or relocate if needed)?",
+                    "field_type": "yes-no",
+                    "required": True,
+                    "current_value": "",
+                },
+            ],
+            confirmation={"application_id": "ashby-123"},
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+            ashby=True,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertTrue(adapter.is_ashby_target(page.url, page=page))
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(page.values["_systemfield_name"], "Ada Lovelace")
+        self.assertEqual(page.values["_systemfield_email"], "ada@example.com")
+        self.assertEqual(page.values["_systemfield_resume"], self._adapter_context().resume_pdf_path)
+        self.assertEqual(page.values["linkedin"], "https://linkedin.com/in/ada")
+        self.assertEqual(page.values["onsite"], "Yes")
+        self.assertTrue(page.submitted)
+
+    def test_ashby_adapter_blocks_on_unanswered_required_long_form_prompt(self) -> None:
+        adapter = AshbyAdapter()
+        page = FakePage(
+            url="https://jobs.ashbyhq.com/serval/job-id/application",
+            fields=[
+                {
+                    "field_name": "technical_areas",
+                    "question_text": "What are your strongest programming languages and technical areas?",
+                    "field_type": "textarea",
+                    "required": True,
+                    "current_value": "",
+                }
+            ],
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+            ashby=True,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "missing_required_answer")
+        self.assertFalse(page.submitted)
+
+    def test_ashby_adapter_identifies_submission_spam_rejection(self) -> None:
+        adapter = AshbyAdapter()
+        page = FakePage(
+            url="https://jobs.ashbyhq.com/serval/job-id/application",
+            confirmation={},
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+            ashby=True,
+        )
+        page._content = "We couldn't submit your application. Your application submission was flagged as possible spam."
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "submission_flagged")
+        self.assertTrue(page.submitted)
+
+    def test_application_service_dispatches_ashby_target(self) -> None:
+        page = FakePage(
+            url="https://jobs.ashbyhq.com/Serval/d7fb089c-db8a-4877-a5f3-73a09e67f54b",
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+            ashby=True,
+        )
+        service = self._service(page)
+        job = self.store.get_job_for_application(1)
+
+        adapter_name, adapter, target_url = service._resolve_adapter(job, page, page.url)
+
+        self.assertEqual(adapter_name, "ashby")
+        self.assertIsInstance(adapter, AshbyAdapter)
+        self.assertEqual(target_url, page.url)
+
     def test_greenhouse_adapter_blocks_unknown_required_uploads(self) -> None:
         adapter = GreenhouseAdapter()
         page = FakePage(
@@ -1224,10 +1512,16 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertTrue(GreenhouseAdapter._select_values_match(expected="2027-05", actual="May 2027"))
         self.assertTrue(GreenhouseAdapter._select_values_match(expected="2027-05", actual="Spring 2027"))
         self.assertTrue(GreenhouseAdapter._select_values_match(expected="Computer Science", actual="Computer Science"))
+        self.assertTrue(GreenhouseAdapter._select_values_match(expected="Computer Science", actual="CS - Computer Science"))
+        self.assertIn(
+            GreenhouseAdapter._normalize_select_value("LinkedIn"),
+            GreenhouseAdapter._normalize_select_value("Job Board (e.g., Indeed, Glassdoor, LinkedIn)"),
+        )
         self.assertFalse(GreenhouseAdapter._select_values_match(expected="2027-05", actual="June 2027"))
         self.assertTrue(GreenhouseAdapter._country_option_matches(expected="United States", actual="United States +1"))
         self.assertEqual(GreenhouseAdapter._select_search_value("2027-05"), "Spring 2027")
         self.assertEqual(GreenhouseAdapter._select_search_value("2027-10"), "Fall 2027")
+        self.assertEqual(GreenhouseAdapter._select_search_values("2027-05"), ("Spring 2027", "2027"))
 
     def test_handshake_adapter_uploads_documents_and_confirms(self) -> None:
         adapter = HandshakeAdapter()
@@ -1809,6 +2103,35 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(
             adapter._listbox_current_value(Page(), {"field_name": "countryRegion"}),
             "California",
+        )
+
+    def test_workday_phone_device_type_accepts_mobile_phone_label(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="phoneType",
+                current_value="Mobile Phone",
+                desired_value="Mobile",
+            )
+        )
+
+    def test_workday_binary_listbox_answer_accepts_explanatory_label(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="gdit-relationship-disclosure",
+                current_value="No - I am not related to any individuals employed at GDIT",
+                desired_value="No",
+            )
+        )
+        self.assertFalse(
+            adapter._is_effectively_same_value(
+                field_name="gdit-relationship-disclosure",
+                current_value="Not applicable",
+                desired_value="No",
+            )
         )
 
     def test_workday_listbox_options_use_the_opened_button_menu(self) -> None:

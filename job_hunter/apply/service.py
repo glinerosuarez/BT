@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+from job_hunter.apply.adapters.ashby import AshbyAdapter
 from job_hunter.apply.adapters.greenhouse import GreenhouseAdapter
 from job_hunter.apply.adapters.handshake import HandshakeAdapter
 from job_hunter.apply.adapters.handshake_fellow import HandshakeFellowAdapter
@@ -52,6 +53,7 @@ class ApplicationService:
         greenhouse_adapter: GreenhouseAdapter | None = None,
         handshake_adapter: HandshakeAdapter | None = None,
         handshake_fellow_adapter: HandshakeFellowAdapter | None = None,
+        ashby_adapter: AshbyAdapter | None = None,
         icims_adapter: ICIMSAdapter | None = None,
         workday_adapter: WorkdayAdapter | None = None,
         email_code_client: GmailVerificationCodeClient | None = None,
@@ -64,6 +66,7 @@ class ApplicationService:
         self.greenhouse_adapter = greenhouse_adapter or GreenhouseAdapter()
         self.handshake_adapter = handshake_adapter or HandshakeAdapter()
         self.handshake_fellow_adapter = handshake_fellow_adapter or HandshakeFellowAdapter()
+        self.ashby_adapter = ashby_adapter or AshbyAdapter()
         self.icims_adapter = icims_adapter or ICIMSAdapter()
         self.workday_adapter = workday_adapter or WorkdayAdapter()
         self.email_code_client = email_code_client
@@ -712,6 +715,8 @@ class ApplicationService:
             target_url = workday_target_url
         if self.greenhouse_adapter.is_greenhouse_target(target_url, page=page):
             return "greenhouse", self.greenhouse_adapter, target_url
+        if self.ashby_adapter.is_ashby_target(target_url, page=page):
+            return "ashby", self.ashby_adapter, target_url
         if self.icims_adapter.is_icims_target(target_url, page=page):
             return "icims", self.icims_adapter, target_url
         if self.workday_adapter.is_workday_target(target_url, page=page):
@@ -766,6 +771,8 @@ class ApplicationService:
             return "linkedin"
         if source == "handshake":
             return "handshake"
+        if source == "ashby":
+            return "ashby"
         return "greenhouse"
 
     def _discover_external_apply_url(self, job, page, target_url: str, *, allow_click: bool = True) -> str:
@@ -950,6 +957,8 @@ class ApplicationService:
             return self.handshake_adapter
         if adapter_name == "handshake_fellow":
             return self.handshake_fellow_adapter
+        if adapter_name == "ashby":
+            return self.ashby_adapter
         if adapter_name == "icims":
             return self.icims_adapter
         if adapter_name == "workday":
