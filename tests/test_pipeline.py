@@ -1014,6 +1014,33 @@ class PipelineIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(existing_key, linkedin_key)
 
+    def test_interstride_summary_dedupes_exact_title_company_and_location(self) -> None:
+        linkedin = JobRecord(
+            source="linkedin",
+            external_id="linkedin-nvidia-1",
+            url="https://www.linkedin.com/jobs/view/4449317707",
+            title="Software Engineering Intern, Dynamo - Fall 2026",
+            company="NVIDIA",
+            location="Santa Clara, CA",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Full job description for the Dynamo internship.",
+            ingested_at="2026-08-06T00:00:00+00:00",
+        )
+        linkedin_key = _dedupe_key(linkedin)
+        self.assertTrue(self.store.insert_job(linkedin, linkedin_key))
+
+        existing_key = self.store.resolve_existing_dedupe_key(
+            source="interstride",
+            dedupe_key="interstride-key",
+            url="https://de.jobsyn.org/CFA8803F01E94E04982883748CC5E0B8206",
+            title="Software Engineering Intern, Dynamo - Fall 2026",
+            company="Nvidia",
+            location="Santa Clara, CA",
+            description="Interstride summary.",
+        )
+        self.assertEqual(existing_key, linkedin_key)
+
     def test_end_to_end_and_idempotency(self) -> None:
         payload = [
             {

@@ -385,6 +385,7 @@ class JobStore:
         application_url: str = "",
         title: str = "",
         company: str = "",
+        location: str = "",
         description: str = "",
     ) -> str:
         row = self._conn.execute(
@@ -402,6 +403,22 @@ class JobStore:
                 candidate_application_url = _external_apply_url_from_metadata(candidate["source_metadata"])
                 candidate_identity = _normalize_application_url(candidate_application_url or str(candidate["url"] or ""))
                 if candidate_identity == normalized_application_url:
+                    return str(candidate["dedupe_key"])
+        if source == "interstride" and title.strip() and company.strip() and location.strip():
+            rows = self._conn.execute(
+                """
+                SELECT dedupe_key, location
+                FROM jobs
+                WHERE source != 'interstride'
+                  AND lower(trim(title)) = lower(trim(?))
+                  AND lower(trim(company)) = lower(trim(?))
+                ORDER BY id DESC
+                """,
+                (title, company),
+            ).fetchall()
+            normalized_location = _normalize_location_identity(location)
+            for candidate in rows:
+                if _normalize_location_identity(str(candidate["location"] or "")) == normalized_location:
                     return str(candidate["dedupe_key"])
         if source == "handshake" and url.strip():
             normalized_url = _normalize_handshake_storage_url(url)
@@ -2359,6 +2376,10 @@ def _normalize_application_url(url: str) -> str:
     if "myworkdayjobs.com" in parsed.netloc and path_parts and re.fullmatch(r"[a-z]{2}-[a-z]{2}", path_parts[0]):
         path_parts = path_parts[1:]
     return f"{parsed.netloc}/{'/'.join(path_parts)}"
+
+
+def _normalize_location_identity(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
 
 def _row_value(row: sqlite3.Row, key: str) -> object | None:

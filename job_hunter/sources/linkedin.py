@@ -271,7 +271,11 @@ class LinkedInSource(SourceConnector):
             results: list[dict] = []
             search_urls, job_urls = _partition_linkedin_urls(self.search_urls)
             configured_query_keys = [_normalize_search_url(url) for url in search_urls]
-            self._fetch_meta = {"configured_query_keys": configured_query_keys}
+            item_results: list[dict[str, str]] = []
+            self._fetch_meta = {
+                "configured_query_keys": configured_query_keys,
+                "item_results": item_results,
+            }
             total_search_urls = len(search_urls)
             for index, search_url in enumerate(search_urls, start=1):
                 normalized_search_url = _normalize_search_url(search_url)
@@ -281,17 +285,24 @@ class LinkedInSource(SourceConnector):
                     total_search_urls,
                     normalized_search_url,
                 )
-                context = self._launch_context(playwright, profile_path)
+                context = None
+                query_page = None
                 try:
+                    context = self._launch_context(playwright, profile_path)
                     query_page = context.new_page()
                     query_page.set_default_timeout(self.page_timeout_seconds * 1000)
                     query_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
-                    try:
-                        rows = self._fetch_search_page(query_page, normalized_search_url)
-                    finally:
-                        query_page.close()
+                    rows = self._fetch_search_page(query_page, normalized_search_url)
+                except Exception as exc:
+                    item_results.append({"item": normalized_search_url, "status": "failure", "error": str(exc)})
+                    LOG.warning("linkedin_search_fetch_failed url=%s error=%s", normalized_search_url, exc)
+                    continue
                 finally:
-                    context.close()
+                    if query_page is not None:
+                        query_page.close()
+                    if context is not None:
+                        context.close()
+                item_results.append({"item": normalized_search_url, "status": "success", "error": ""})
                 LOG.info(
                     "linkedin_search_fetch_finished index=%s total=%s url=%s fetched_count=%s",
                     index,
@@ -301,19 +312,26 @@ class LinkedInSource(SourceConnector):
                 )
                 results.extend(rows)
             for job_url in job_urls:
-                context = self._launch_context(playwright, profile_path)
+                context = None
+                job_page = None
                 try:
+                    context = self._launch_context(playwright, profile_path)
                     job_page = context.new_page()
                     job_page.set_default_timeout(self.page_timeout_seconds * 1000)
                     job_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
-                    try:
-                        parsed = self._fetch_job_page(job_page, job_url)
-                        if parsed is not None:
-                            results.append(parsed)
-                    finally:
-                        job_page.close()
+                    parsed = self._fetch_job_page(job_page, job_url)
+                    if parsed is not None:
+                        results.append(parsed)
+                except Exception as exc:
+                    item_results.append({"item": job_url, "status": "failure", "error": str(exc)})
+                    LOG.warning("linkedin_job_fetch_failed url=%s error=%s", job_url, exc)
+                    continue
                 finally:
-                    context.close()
+                    if job_page is not None:
+                        job_page.close()
+                    if context is not None:
+                        context.close()
+                item_results.append({"item": job_url, "status": "success", "error": ""})
             return _dedupe_rows(results)
 
     def get_fetch_meta(self) -> dict[str, object]:

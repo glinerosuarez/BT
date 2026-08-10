@@ -423,6 +423,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 application_url=str(job.source_metadata.get("external_apply_url") or job.url),
                 title=job.title,
                 company=job.company,
+                location=job.location,
                 description=job.description,
             )
             if job.source == "handshake" and existing_dedupe_key:
