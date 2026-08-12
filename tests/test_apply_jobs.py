@@ -1091,6 +1091,10 @@ class ApplyJobsTests(unittest.TestCase):
             resolver.resolve(question_text="Discipline*", field_name="discipline--0").answer,
             "Computer Science",
         )
+        self.assertEqual(
+            resolver.resolve(question_text="School or University*", field_type="prompt-input").answer,
+            "Example University",
+        )
         profile, answers = load_application_inputs(str(self.profile_root), "default")
         profile.education.degree = "M.S."
         resolver = AnswerResolver(profile=profile, answers=answers)
@@ -1512,16 +1516,51 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertTrue(GreenhouseAdapter._select_values_match(expected="2027-05", actual="May 2027"))
         self.assertTrue(GreenhouseAdapter._select_values_match(expected="2027-05", actual="Spring 2027"))
         self.assertTrue(GreenhouseAdapter._select_values_match(expected="Computer Science", actual="Computer Science"))
+        self.assertTrue(GreenhouseAdapter._select_values_match(expected="Master's Degree", actual="Master of Science"))
         self.assertTrue(GreenhouseAdapter._select_values_match(expected="Computer Science", actual="CS - Computer Science"))
         self.assertIn(
             GreenhouseAdapter._normalize_select_value("LinkedIn"),
             GreenhouseAdapter._normalize_select_value("Job Board (e.g., Indeed, Glassdoor, LinkedIn)"),
+        )
+        self.assertTrue(
+            GreenhouseAdapter._select_values_match(
+                expected="Yes",
+                actual="Yes, I am legally authorized to work in the country where this role is based",
+            )
+        )
+        self.assertTrue(
+            GreenhouseAdapter._select_values_match(
+                expected="No",
+                actual="No, I do not require visa sponsorship",
+            )
+        )
+        self.assertTrue(
+            GreenhouseAdapter._select_values_match(
+                expected="He, him, his",
+                actual="He/Him",
+            )
+        )
+        self.assertTrue(
+            GreenhouseAdapter._select_values_match(
+                expected="I agree",
+                actual="Yes, I agree to the Privacy Policy",
+                allow_acknowledgement_equivalence=True,
+            )
+        )
+        self.assertFalse(
+            GreenhouseAdapter._select_values_match(
+                expected="I agree",
+                actual="Yes, I agree to the Privacy Policy",
+            )
         )
         self.assertFalse(GreenhouseAdapter._select_values_match(expected="2027-05", actual="June 2027"))
         self.assertTrue(GreenhouseAdapter._country_option_matches(expected="United States", actual="United States +1"))
         self.assertEqual(GreenhouseAdapter._select_search_value("2027-05"), "Spring 2027")
         self.assertEqual(GreenhouseAdapter._select_search_value("2027-10"), "Fall 2027")
         self.assertEqual(GreenhouseAdapter._select_search_values("2027-05"), ("Spring 2027", "2027"))
+        self.assertEqual(GreenhouseAdapter._select_search_values("He, him, his"), ("He, him, his", "He/Him"))
+        self.assertEqual(GreenhouseAdapter._select_search_values("Master's Degree"), ("Master's Degree", "Master"))
+        self.assertEqual(GreenhouseAdapter._select_search_values("I agree"), ("I agree", "Agree", "Accept", "Yes"))
 
     def test_handshake_adapter_uploads_documents_and_confirms(self) -> None:
         adapter = HandshakeAdapter()
@@ -2212,6 +2251,33 @@ class ApplyJobsTests(unittest.TestCase):
 
         self.assertEqual(adapter._prompt_multi_values("Python || SQL || PyTorch"), ["Python", "SQL", "PyTorch"])
         self.assertEqual(adapter._prompt_multi_values("Yes"), ["Yes"])
+        self.assertGreater(
+            adapter._prompt_option_match_score(
+                field_name="skills--skills",
+                target="Python",
+                candidate="Python (Programming Language)",
+            ),
+            0,
+        )
+        self.assertGreater(
+            adapter._prompt_option_match_score(
+                field_name="skills--skills",
+                target="AWS",
+                candidate="Amazon Web Services (AWS)",
+            ),
+            0,
+        )
+
+    def test_workday_listbox_treats_boolean_profile_values_as_yes_no(self) -> None:
+        adapter = WorkdayAdapter()
+
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="optional-practical-training",
+                current_value="No",
+                desired_value="False",
+            )
+        )
 
     def test_workday_degree_equivalence_accepts_workday_short_labels(self) -> None:
         adapter = WorkdayAdapter()

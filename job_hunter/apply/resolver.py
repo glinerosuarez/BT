@@ -249,7 +249,7 @@ class AnswerResolver:
             return field_name
         if field_name.startswith("school"):
             return "education.school"
-        if question.rstrip("*").strip() == "school":
+        if question.rstrip("*").strip() in {"school", "school or university"}:
             return "education.school"
         if (
             field_name in {"phone", "phone_number", "mobile"}

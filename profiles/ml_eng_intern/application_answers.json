@@ -2,6 +2,36 @@
   "question_overrides": [
     {
       "match_type": "exact",
+      "pattern": "Please select the ethnicity which most accurately describes how you identify yourself.*",
+      "answer": "I prefer not to answer"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "This is an on-site opportunity in Dallas, TX. Will you be able to report to this location?*",
+      "answer": "Yes"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Terms & Conditions*",
+      "answer": "I agree"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "What country do you currently reside in?*",
+      "answer": "United States"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Do you have relevant internship experience at a proprietary trading firm?*",
+      "answer": "No"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Please re-confirm the university you currently attend *",
+      "answer": "University of Southern California"
+    },
+    {
+      "match_type": "exact",
       "pattern": "Tell me about the most exciting project you've built (please type answer without AI)",
       "answer": "Built an agentic document extraction pipeline to ingest ESG data from more than 1000 company reports, using a LangChain LLM orchestrator hosted on Google Agent Platform, fine-tuned vision-language models (VLMs), OCR models, and PyTorch-based deep learning workflows. Designed and deployed our evals approach, which included building eval datasets, using Phoenix to instrument agent calls with OpenTelemetry, computing metrics, and running experiments across versions to improve visibility into agent performance and make the system more truthful, increasing precision from 50% with our initial zero-shot approach to 80% with a RAG-based system."
     },

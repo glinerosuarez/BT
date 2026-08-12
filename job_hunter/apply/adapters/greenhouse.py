@@ -327,17 +327,39 @@ class GreenhouseAdapter:
             locator = page.locator(selector)
             locator.click()
             locator.fill("")
-            locator.fill(self._select_search_value(value))
-            page.wait_for_timeout(500)
             is_phone_country = str(field.get("field_name") or "").lower() == "country"
-            option = self._matching_select_option(page=page, value=value, allow_country_dial_code=is_phone_country)
+            question_text = str(field.get("question_text") or "").lower()
+            is_source_question = "how did you hear" in question_text
+            is_consent_question = any(
+                phrase in question_text
+                for phrase in ("terms", "privacy policy", "consent")
+            )
+            option = None
+            for search_value in self._select_search_values(value):
+                locator.fill(search_value)
+                page.wait_for_timeout(500)
+                option = self._matching_select_option(
+                    page=page,
+                    value=value,
+                    allow_country_dial_code=is_phone_country,
+                    allow_contained_value=is_source_question,
+                    allow_acknowledgement_equivalence=is_consent_question,
+                )
+                if option is not None:
+                    break
             if option is None:
                 raise RuntimeError(f"No matching select option for '{value}'")
             option.click()
             page.wait_for_timeout(300)
             selected_value = self._selected_select_value(locator)
             if not selected_value or (
-                not is_phone_country and not self._select_values_match(expected=value, actual=selected_value)
+                not is_phone_country
+                and not is_source_question
+                and not self._select_values_match(
+                    expected=value,
+                    actual=selected_value,
+                    allow_acknowledgement_equivalence=is_consent_question,
+                )
             ):
                 raise RuntimeError(
                     f"Select value was not committed for '{value}' (current value: '{selected_value or '<empty>'}')"
@@ -379,7 +401,15 @@ class GreenhouseAdapter:
             return context.cover_letter_pdf_path
         return ""
 
-    def _matching_select_option(self, *, page, value: str, allow_country_dial_code: bool = False):
+    def _matching_select_option(
+        self,
+        *,
+        page,
+        value: str,
+        allow_country_dial_code: bool = False,
+        allow_contained_value: bool = False,
+        allow_acknowledgement_equivalence: bool = False,
+    ):
         for selector in ("[role='option']", "[id*='-option-']"):
             options = page.locator(selector)
             try:
@@ -394,8 +424,15 @@ class GreenhouseAdapter:
                     option_text = option.inner_text().strip()
                 except Exception:
                     continue
-                if self._select_values_match(expected=value, actual=option_text) or (
+                if self._select_values_match(
+                    expected=value,
+                    actual=option_text,
+                    allow_acknowledgement_equivalence=allow_acknowledgement_equivalence,
+                ) or (
                     allow_country_dial_code and self._country_option_matches(expected=value, actual=option_text)
+                ) or (
+                    allow_contained_value
+                    and self._normalize_select_value(value) in self._normalize_select_value(option_text)
                 ):
                     return option
         return None
@@ -415,12 +452,35 @@ class GreenhouseAdapter:
             return ""
 
     @classmethod
-    def _select_values_match(cls, *, expected: str, actual: str) -> bool:
+    def _select_values_match(
+        cls,
+        *,
+        expected: str,
+        actual: str,
+        allow_acknowledgement_equivalence: bool = False,
+    ) -> bool:
         normalized_expected = cls._normalize_select_value(expected)
         normalized_actual = cls._normalize_select_value(actual)
         if not normalized_expected or not normalized_actual:
             return False
         if normalized_expected == normalized_actual:
+            return True
+        if normalized_expected in {"yes", "no"} and normalized_actual.startswith(f"{normalized_expected} "):
+            return True
+        if allow_acknowledgement_equivalence and normalized_expected in {"i agree", "agree", "yes"}:
+            actual_words = set(normalized_actual.split())
+            if {"agree", "accept"} & actual_words or normalized_actual.startswith("yes"):
+                return True
+        for pronoun_prefix in ("he him", "she her", "they them"):
+            if normalized_expected.startswith(pronoun_prefix) and normalized_actual.startswith(pronoun_prefix):
+                return True
+        for degree_level in ("associate", "bachelor", "master", "doctor"):
+            if degree_level in normalized_expected.split() and degree_level in normalized_actual.split():
+                return True
+        if len(normalized_expected.split()) >= 2 and (
+            normalized_actual.startswith(f"{normalized_expected} ")
+            or normalized_actual.endswith(f" {normalized_expected}")
+        ):
             return True
         date_match = re.fullmatch(r"(\d{4})-(\d{1,2})", expected.strip())
         if not date_match:
@@ -443,6 +503,33 @@ class GreenhouseAdapter:
         year, month = date_match.groups()
         term = "Spring" if int(month) <= 6 else "Fall"
         return f"{term} {year}"
+
+    @classmethod
+    def _select_search_values(cls, value: str) -> tuple[str, ...]:
+        primary = cls._select_search_value(value)
+        normalized = cls._normalize_select_value(value)
+        for pronoun_prefix, search_value in (
+            ("he him", "He/Him"),
+            ("she her", "She/Her"),
+            ("they them", "They/Them"),
+        ):
+            if normalized.startswith(pronoun_prefix):
+                return (primary, search_value)
+        for degree_level, search_value in (
+            ("associate", "Associate"),
+            ("bachelor", "Bachelor"),
+            ("master", "Master"),
+            ("doctor", "Doctor"),
+        ):
+            if degree_level in normalized.split():
+                return (primary, search_value)
+        if normalized in {"i agree", "agree"}:
+            return (primary, "Agree", "Accept", "Yes")
+        date_match = re.fullmatch(r"(\d{4})-(\d{1,2})", value.strip())
+        if not date_match:
+            return (primary,)
+        year = date_match.group(1)
+        return (primary, year)
 
     @classmethod
     def _country_option_matches(cls, *, expected: str, actual: str) -> bool:

@@ -1323,6 +1323,10 @@ class WorkdayAdapter:
         normalized_field = field_name.strip().lower()
         current = current_value.strip().lower()
         desired = desired_value.strip().lower()
+        if desired in {"true", "1", "on"}:
+            desired = "yes"
+        elif desired in {"false", "0", "off"}:
+            desired = "no"
         if normalized_field == "source":
             # Workday tenants use different source taxonomies. Treat only
             # explicitly LinkedIn-labelled options as equivalent to a
@@ -1818,25 +1822,23 @@ class WorkdayAdapter:
                     pass
                 keyboard = getattr(page, "keyboard", None)
                 if keyboard is not None:
-                    keyboard.press("Home")
-                    self._wait(page, 100)
+                    # Workday's closed-list typeahead highlights the matching
+                    # option as characters are entered. Moving down afterward
+                    # can change a precise match (for example Hispanic) into
+                    # the adjacent option.
                     for char in value:
                         if char.isalnum():
                             keyboard.press(char.upper() if len(char) == 1 else char)
                             self._wait(page, 50)
-                    keyboard.press("ArrowDown")
                     self._wait(page, 100)
                     keyboard.press("Enter")
                     self._wait(page, 400)
                     verify_selection()
                     return
-                locator.press("Home")
-                self._wait(page, 100)
                 for char in value:
                     if char.isalnum():
                         locator.press(char.upper() if len(char) == 1 else char)
                         self._wait(page, 50)
-                locator.press("ArrowDown")
                 self._wait(page, 100)
                 locator.press("Enter")
                 self._wait(page, 400)
@@ -2182,8 +2184,8 @@ class WorkdayAdapter:
 
         Workday skills pickers render result rows asynchronously and use a checkbox
         inside each row. Clicking the row itself is unreliable: it can focus the
-        search input or toggle an already selected item. Target the checkbox after
-        the exact result has rendered instead.
+        search input or toggle an already selected item. Target the best matching
+        checkbox after the search results have rendered instead.
         """
         if self._prompt_has_selected_value(page, field, value):
             return
@@ -2193,10 +2195,21 @@ class WorkdayAdapter:
         search = page.locator(selector).first
         search.click(force=True)
         search.fill(value)
+        # Some Workday skill pickers only issue their search after Enter. If it
+        # selects a unique match directly, the selected-value check below exits.
+        try:
+            search.press("Enter")
+        except Exception:
+            pass
+        self._wait(page, 500)
+        if self._prompt_has_selected_value(page, field, value):
+            search.fill("")
+            return
 
         option_locator = None
         for _ in range(30):
             options = self._prompt_options(page, field, search)
+            best_match_score = 0
             for index in range(options.count()):
                 candidate = options.nth(index)
                 try:
@@ -2205,27 +2218,45 @@ class WorkdayAdapter:
                     candidate_text = str(candidate.inner_text() or "")
                 except Exception:
                     continue
-                if self._normalize_option_text(candidate_text) != self._normalize_option_text(value):
-                    continue
-                option_locator = candidate
-                break
+                match_score = self._prompt_option_match_score(
+                    field_name=str(field.get("field_name") or ""),
+                    target=value,
+                    candidate=candidate_text,
+                )
+                if match_score > best_match_score:
+                    option_locator = candidate
+                    best_match_score = match_score
             if option_locator is not None:
                 break
             self._wait(page, 250)
         if option_locator is None:
             raise RuntimeError(f"multi-select option not found for {value!r}")
 
-        checkbox = option_locator.locator('input[type="checkbox"]').first
-        if checkbox.count() > 0:
+        checkbox = None
+        for row in (
+            option_locator,
+            option_locator.locator("xpath=ancestor::*[@role='option'][1]"),
+            option_locator.locator(
+                "xpath=ancestor::*[.//input[@type='checkbox'] or .//*[@role='checkbox']][1]"
+            ),
+        ):
+            candidate_checkbox = row.locator('input[type="checkbox"]').first
+            if candidate_checkbox.count() == 0:
+                candidate_checkbox = row.locator('[role="checkbox"]').first
+            if candidate_checkbox.count() > 0:
+                checkbox = candidate_checkbox
+                break
+        if checkbox is None:
+            # Some tenants use a clickable result row without exposing its
+            # selection control to the accessibility tree.
+            option_locator.click(force=True)
+        elif checkbox.get_attribute("type") == "checkbox":
             try:
                 if not checkbox.is_checked():
                     checkbox.check(force=True)
             except Exception:
                 checkbox.click(force=True)
         else:
-            checkbox = option_locator.locator('[role="checkbox"]').first
-            if checkbox.count() == 0:
-                raise RuntimeError(f"multi-select checkbox not found for {value!r}")
             checked = str(checkbox.get_attribute("aria-checked") or "").lower() == "true"
             if not checked:
                 checkbox.click(force=True)
@@ -2312,13 +2343,16 @@ class WorkdayAdapter:
             return False
         escaped_id = container_id.replace("\\", "\\\\").replace('"', '\\"')
         selected = page.locator(f'[id="{escaped_id}"] [data-automation-id="selectedItem"]')
-        target = self._normalize_option_text(value)
         for index in range(selected.count()):
             try:
                 text = self._normalize_option_text(str(selected.nth(index).inner_text() or ""))
             except Exception:
                 continue
-            if text == target:
+            if self._listbox_option_match_score(
+                field_name=str(field.get("field_name") or ""),
+                target=value,
+                candidate=text,
+            ) > 0:
                 return True
         return False
 
