@@ -723,7 +723,15 @@ def _page_body_has_security_verification(page) -> bool:
     except Exception:
         return False
     lowered = body_text.lower()
-    return all(marker in lowered for marker in SECURITY_VERIFICATION_MARKERS)
+    page_url = str(getattr(page, "url", "") or "").lower()
+    return (
+        "cf_challenge" in page_url
+        or SECURITY_VERIFICATION_MARKERS[0] in lowered
+        or (
+            "security service to protect against malicious bots" in lowered
+            and "cloudflare" in lowered
+        )
+    )
 
 
 def _discover_card_url(page, title: str) -> str:

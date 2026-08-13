@@ -715,6 +715,20 @@ class HandshakeSourceTests(unittest.TestCase):
 
         self.assertTrue(_page_body_has_security_verification(FakePage()))
 
+    def test_page_body_has_security_verification_detects_cloudflare_challenge_url(self) -> None:
+        class FakeBodyLocator:
+            def inner_text(self):
+                return "app.joinhandshake.com"
+
+        class FakePage:
+            url = "https://app.joinhandshake.com/jobs/11294502?cf_challenge=1"
+
+            def locator(self, selector):
+                self._selector = selector
+                return FakeBodyLocator()
+
+        self.assertTrue(_page_body_has_security_verification(FakePage()))
+
     def test_page_body_has_security_verification_false(self) -> None:
         class FakeBodyLocator:
             def inner_text(self):
