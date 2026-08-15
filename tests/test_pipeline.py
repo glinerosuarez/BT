@@ -1895,6 +1895,40 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(row["query_key"], query_key)
         self.assertEqual(int(row["fetched_count"] or 0), 0)
 
+    def test_query_coverage_preserves_pre_dedupe_fetched_and_unique_counts(self) -> None:
+        query_key = "https://app.joinhandshake.com/job-search/1?query=ai&page=1"
+        payload = [
+            {
+                "source": "handshake",
+                "external_id": "hs-query-1",
+                "url": "https://app.joinhandshake.com/jobs/1",
+                "title": "AI Engineering Intern",
+                "company": "Example",
+                "location": "Remote",
+                "posted_at": recent_posted_at(),
+                "description": "Build data pipelines with Python and machine learning systems.",
+                "skills": [],
+                "source_detail": query_key,
+                "source_metadata": {"detail_quality_status": "detail_complete"},
+            }
+        ]
+        fetch_meta = {
+            "configured_query_keys": [query_key],
+            "query_coverage": {query_key: {"fetched_count": 5, "unique_count": 1}},
+        }
+        with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload, fetch_meta=fetch_meta)]):
+            outcome = run_pipeline(self.settings, self.store, None)
+
+        normalized_query_key = "https://app.joinhandshake.com/job-search/1?query=ai"
+        stats = outcome.source_query_stats["fake"][normalized_query_key]
+        self.assertEqual(stats.fetched_count, 5)
+        self.assertEqual(stats.unique_count, 1)
+        row = self.store._conn.execute(
+            "SELECT fetched_count, unique_count FROM source_query_run_logs ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(int(row["fetched_count"] or 0), 5)
+        self.assertEqual(int(row["unique_count"] or 0), 1)
+
     def test_handshake_refresh_updates_existing_row_by_url_even_when_rejected_later(self) -> None:
         self.store._conn.execute(
             """

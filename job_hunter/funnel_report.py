@@ -76,6 +76,16 @@ def _render_text(report: dict[str, object]) -> str:
                 ).format(**row),
             ]
         )
+    query_stats = list(report.get("source_query_stats", []))
+    if query_stats:
+        lines.extend(["", "queries"])
+        for row in query_stats:
+            lines.append(
+                "  {source_name} fetched={fetched_count} unique={unique_count} "
+                "stage_1b={after_stage_1b_count} stage_1c={after_stage_1c_count} "
+                "eligible_rejected={rejected_eligibility_count} relevance_rejected={rejected_relevance_count} "
+                "persisted={persisted_count} notified={notified_count} query={query_key}".format(**row)
+            )
     return "\n".join(lines)
 
 

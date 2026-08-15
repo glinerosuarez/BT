@@ -29,11 +29,35 @@ class HandshakeAccessWallError(RuntimeError):
     pass
 
 
+def _normalize_browser_backend(value: str) -> str:
+    backend = value.strip().lower()
+    if backend in {"", "playwright"}:
+        return "playwright"
+    if backend == "patchright":
+        return backend
+    raise ValueError("Handshake browser backend must be 'playwright' or 'patchright'.")
+
+
+def _load_browser_api(backend: str):
+    if backend == "playwright":
+        return sync_playwright, PlaywrightTimeoutError
+    try:
+        from patchright.sync_api import TimeoutError as PatchrightTimeoutError
+        from patchright.sync_api import sync_playwright as patchright_sync_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "Patchright is not installed. Install it with `pip install -e '.[handshake-patchright]'` "
+            "or set JOB_HUNTER_HANDSHAKE_BROWSER_BACKEND=playwright."
+        ) from exc
+    return patchright_sync_playwright, PatchrightTimeoutError
+
+
 @dataclass(frozen=True, slots=True)
 class SearchPageFetch:
     rows: list[dict]
     card_count: int
     stopped_on_age: bool
+    sort_verified: bool
 DETAIL_TEXT_SCRIPT = """
 () => {
   let best = null;
@@ -105,6 +129,8 @@ HANDSHAKE_ACTION_ONLY_RE = re.compile(
     r"^(?:save|share|apply(?: externally)?|quick apply)(?:\s+(?:save|share|apply(?: externally)?|quick apply))*$",
     flags=re.IGNORECASE,
 )
+NEWEST_SORT_LABELS = ("Newest jobs", "Most recent", "Empleos más recientes", "Más recientes")
+RELEVANCE_SORT_LABELS = ("Most relevant", "Más relevantes")
 
 
 class HandshakeSource(SourceConnector):
@@ -119,6 +145,7 @@ class HandshakeSource(SourceConnector):
         fetch_details: bool = True,
         recent_pages: int = 10,
         use_keyword_supplemental: bool = False,
+        browser_backend: str = "playwright",
     ) -> None:
         super().__init__(name="handshake")
         self.search_urls = search_urls
@@ -130,6 +157,8 @@ class HandshakeSource(SourceConnector):
         self.fetch_details = fetch_details
         self.recent_pages = max(recent_pages, 1)
         self.use_keyword_supplemental = use_keyword_supplemental
+        self.browser_backend = _normalize_browser_backend(browser_backend)
+        self._timeout_error = PlaywrightTimeoutError
         self._fetch_meta: dict[str, object] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
@@ -141,7 +170,8 @@ class HandshakeSource(SourceConnector):
         rows: list[dict] = []
         headful_fallback_needed = False
 
-        with sync_playwright() as playwright:
+        browser_sync_playwright, self._timeout_error = _load_browser_api(self.browser_backend)
+        with browser_sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
                 str(profile_path),
                 channel="chrome",
@@ -156,10 +186,15 @@ class HandshakeSource(SourceConnector):
                 results: list[dict] = []
                 search_urls, job_urls = _partition_handshake_urls(self.search_urls)
                 broad_recent_url = _broad_recent_search_url(search_urls[0]) if search_urls else ""
+                configured_query_keys = [broad_recent_url] if broad_recent_url else []
+                if self.use_keyword_supplemental:
+                    configured_query_keys.extend(_normalize_search_url(url) for url in search_urls)
                 recent_sweep_blocked = False
                 if broad_recent_url:
                     try:
-                        recent_rows, recent_pages_fetched, stopped_on_age = self._fetch_recent_pages(page, broad_recent_url)
+                        recent_rows, recent_pages_fetched, stopped_on_age, sort_verified = self._fetch_recent_pages(
+                            page, broad_recent_url
+                        )
                         results.extend(recent_rows)
                         item_results.append(
                             {
@@ -168,6 +203,7 @@ class HandshakeSource(SourceConnector):
                                 "error": "",
                                 "pages_fetched": str(recent_pages_fetched),
                                 "stopped_on_age": str(stopped_on_age).lower(),
+                                "sort_verified": str(sort_verified).lower(),
                             }
                         )
                     except HandshakeSecurityVerificationError as exc:
@@ -202,7 +238,14 @@ class HandshakeSource(SourceConnector):
                             item_results.append({"item": normalized_search_url, "status": "failure", "error": str(exc)})
                             LOG.warning("handshake_search_security_verification_blocked url=%s", normalized_search_url)
                             continue
-                        item_results.append({"item": normalized_search_url, "status": "success", "error": ""})
+                        item_results.append(
+                            {
+                                "item": normalized_search_url,
+                                "status": "success",
+                                "error": "",
+                                "sort_verified": str(page_result.sort_verified).lower(),
+                            }
+                        )
                         LOG.info(
                             "handshake_search_fetch_finished index=%s total=%s url=%s fetched_count=%s",
                             index,
@@ -222,14 +265,17 @@ class HandshakeSource(SourceConnector):
                     item_results.append({"item": job_url, "status": "success", "error": ""})
                     if parsed is not None:
                         results.append(parsed)
+                rows = _dedupe_rows(results)
                 self._fetch_meta = {
+                    "browser_backend": self.browser_backend,
                     "security_verification_blocked_count": security_verification_blocked_count,
                     "recent_sweep_blocked": recent_sweep_blocked,
                     "keyword_supplemental_enabled": self.use_keyword_supplemental,
                     "recent_sweep_page_limit": self.recent_pages,
+                    "configured_query_keys": configured_query_keys,
+                    "query_coverage": _build_query_coverage(results, rows),
                     "item_results": item_results,
                 }
-                rows = _dedupe_rows(results)
                 if self.headless and security_verification_blocked_count:
                     # Handshake can challenge a valid persistent session only when
                     # Chrome is headless. Retry after this Playwright session exits.
@@ -258,8 +304,9 @@ class HandshakeSource(SourceConnector):
     def get_fetch_meta(self) -> dict[str, object]:
         return dict(self._fetch_meta)
 
-    def _fetch_recent_pages(self, page, search_url: str) -> tuple[list[dict], int, bool]:
+    def _fetch_recent_pages(self, page, search_url: str) -> tuple[list[dict], int, bool, bool]:
         rows: list[dict] = []
+        all_pages_sort_verified = True
         for page_number in range(1, self.recent_pages + 1):
             page_url = _with_page_number(search_url, page_number)
             LOG.info(
@@ -270,22 +317,30 @@ class HandshakeSource(SourceConnector):
             )
             result = self._fetch_search_page(page, page_url)
             rows.extend(result.rows)
-            if result.stopped_on_age or result.card_count == 0:
-                return rows, page_number, result.stopped_on_age
+            all_pages_sort_verified = all_pages_sort_verified and result.sort_verified
+            if result.card_count == 0:
+                return rows, page_number, False, all_pages_sort_verified
+            if result.stopped_on_age and result.sort_verified:
+                return rows, page_number, True, all_pages_sort_verified
+            if result.stopped_on_age:
+                LOG.warning("handshake_stale_page_ignored_unverified_sort url=%s page=%s", page_url, page_number)
         LOG.warning(
             "handshake_recent_sweep_page_limit_reached page_limit=%s url=%s",
             self.recent_pages,
             search_url,
         )
-        return rows, self.recent_pages, False
+        return rows, self.recent_pages, False, all_pages_sort_verified
 
     def _fetch_search_page(self, page, search_url: str) -> SearchPageFetch:
         self._goto_handshake_page(page, search_url)
         _raise_for_auth_wall(page.url, context="search results")
+        sort_verified = _ensure_newest_sort(page, timeout_error=self._timeout_error)
+        if not sort_verified:
+            LOG.warning("handshake_newest_sort_not_verified url=%s", search_url)
 
         try:
             page.get_by_text(re.compile(r"jobs? found", re.IGNORECASE)).first.wait_for(timeout=5000)
-        except PlaywrightTimeoutError:
+        except self._timeout_error:
             LOG.warning("handshake_results_count_not_found url=%s", search_url)
 
         body_text = page.locator("body").inner_text()
@@ -328,7 +383,7 @@ class HandshakeSource(SourceConnector):
                 discovered_url = _discover_card_url(page, title)
                 if discovered_url:
                     card_url = _job_search_url_to_jobs_url(discovered_url) or discovered_url
-                locator = _find_detail_trigger(page, title)
+                locator = _find_detail_trigger(page, title, timeout_error=self._timeout_error)
                 try:
                     if locator is not None:
                         card_url = _job_search_url_to_jobs_url(
@@ -343,7 +398,7 @@ class HandshakeSource(SourceConnector):
                             page.wait_for_timeout(750)
                         card_url = _resolve_job_url(page, title, card_url)
                         detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
-                except PlaywrightTimeoutError:
+                except self._timeout_error:
                     detail_text = ""
                 if not detail_text.strip() and card_url:
                     fallback_detail_text = self._fetch_detail_text_from_job_url(page.context, card_url)
@@ -380,7 +435,12 @@ class HandshakeSource(SourceConnector):
                     str(parsed.get("url") or ""),
                 )
         stopped_on_age = _all_cards_are_stale(card_payloads, self.max_posting_age_days)
-        return SearchPageFetch(rows=rows, card_count=len(card_payloads), stopped_on_age=stopped_on_age)
+        return SearchPageFetch(
+            rows=rows,
+            card_count=len(card_payloads),
+            stopped_on_age=stopped_on_age,
+            sort_verified=sort_verified,
+        )
 
     def _fetch_job_page(self, page, job_url: str) -> dict | None:
         self._goto_handshake_page(page, job_url, post_wait_ms=1500)
@@ -412,7 +472,7 @@ class HandshakeSource(SourceConnector):
             if not detail_text.strip():
                 detail_text = str(detail_page.locator("body").inner_text() or "")
             return detail_text
-        except PlaywrightTimeoutError:
+        except self._timeout_error:
             LOG.warning("handshake_direct_detail_timeout url=%s", job_url)
             return ""
         finally:
@@ -463,6 +523,64 @@ def _normalize_search_url(search_url: str) -> str:
     filtered_pairs.append(("sort", "posted_date_desc"))
     normalized_query = urlencode(filtered_pairs, doseq=True)
     return urlunparse(parsed._replace(query=normalized_query))
+
+
+def _handshake_query_key(url: str) -> str:
+    parsed = urlparse(url)
+    query_pairs = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key != "page"]
+    return urlunparse(parsed._replace(query=urlencode(query_pairs, doseq=True)))
+
+
+def _build_query_coverage(raw_rows: list[dict], unique_rows: list[dict]) -> dict[str, dict[str, int]]:
+    coverage: dict[str, dict[str, int]] = {}
+    for row in raw_rows:
+        query_key = _handshake_query_key(str(row.get("source_detail") or ""))
+        if not query_key:
+            continue
+        coverage.setdefault(query_key, {"fetched_count": 0, "unique_count": 0})["fetched_count"] += 1
+    for row in unique_rows:
+        query_key = _handshake_query_key(str(row.get("source_detail") or ""))
+        if not query_key:
+            continue
+        coverage.setdefault(query_key, {"fetched_count": 0, "unique_count": 0})["unique_count"] += 1
+    return coverage
+
+
+def _ensure_newest_sort(page, *, timeout_error) -> bool:
+    if _has_visible_sort_label(page, NEWEST_SORT_LABELS, timeout_error=timeout_error):
+        return True
+    for label in RELEVANCE_SORT_LABELS:
+        locator = page.get_by_text(label, exact=True).first
+        try:
+            locator.wait_for(timeout=2000)
+            locator.click(timeout=2000)
+            break
+        except timeout_error:
+            continue
+    else:
+        return False
+
+    for label in NEWEST_SORT_LABELS:
+        locator = page.get_by_text(label, exact=True).first
+        try:
+            locator.wait_for(timeout=2000)
+            locator.click(timeout=2000)
+            page.wait_for_timeout(1000)
+            return _has_visible_sort_label(page, NEWEST_SORT_LABELS, timeout_error=timeout_error)
+        except timeout_error:
+            continue
+    return False
+
+
+def _has_visible_sort_label(page, labels: tuple[str, ...], *, timeout_error) -> bool:
+    for label in labels:
+        locator = page.get_by_text(label, exact=True).first
+        try:
+            locator.wait_for(timeout=1000)
+            return True
+        except timeout_error:
+            continue
+    return False
 
 
 def _broad_recent_search_url(search_url: str) -> str:
@@ -767,13 +885,13 @@ def _select_best_card_url(candidates: list[dict[str, str]], title: str) -> str:
     return ""
 
 
-def _find_detail_trigger(page, title: str):
+def _find_detail_trigger(page, title: str, timeout_error=PlaywrightTimeoutError):
     for role in ("button", "link"):
         locator = page.get_by_role(role, name=title, exact=False).first
         try:
             locator.wait_for(timeout=1000)
             return locator
-        except PlaywrightTimeoutError:
+        except timeout_error:
             continue
     return None
 

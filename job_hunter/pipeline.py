@@ -11,7 +11,7 @@ import unicodedata
 from dataclasses import asdict
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from job_hunter.config import Settings
 from job_hunter.keywords import (
@@ -247,6 +247,7 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 fetch_details=settings.handshake_fetch_details,
                 recent_pages=getattr(settings, "handshake_recent_pages", 10),
                 use_keyword_supplemental=getattr(settings, "handshake_use_keyword_supplemental", False),
+                browser_backend=getattr(settings, "handshake_browser_backend", "playwright"),
             )
         )
     if settings.use_linkedin and linkedin_search_urls:
@@ -360,6 +361,17 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 normalized_query_key = _normalize_query_key(str(query_key or ""))
                 if normalized_query_key:
                     _query_stats_bucket(outcome, source.name, normalized_query_key)
+        query_coverage = fetch_meta.get("query_coverage", {})
+        coverage_query_keys: set[str] = set()
+        if isinstance(query_coverage, dict):
+            for query_key, raw_counts in query_coverage.items():
+                normalized_query_key = _normalize_query_key(str(query_key or ""))
+                if not normalized_query_key or not isinstance(raw_counts, dict):
+                    continue
+                query_stats = _query_stats_bucket(outcome, source.name, normalized_query_key)
+                query_stats.fetched_count = max(int(raw_counts.get("fetched_count", 0) or 0), 0)
+                query_stats.unique_count = max(int(raw_counts.get("unique_count", 0) or 0), 0)
+                coverage_query_keys.add(normalized_query_key)
         source_stats.dead_token_count += int(fetch_meta.get("dead_token_count", 0))
         source_stats.feed_error_count += int(fetch_meta.get("feed_error_count", 0))
         source_stats.security_verification_blocked_count += int(fetch_meta.get("security_verification_blocked_count", 0))
@@ -371,12 +383,15 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
 
         outcome.source_count += len(raw_jobs)
         source_stats.fetched_count += len(raw_jobs)
+        source_stats.unique_count += len(raw_jobs)
         for raw_job in raw_jobs:
             query_key = _query_key_from_raw(raw_job)
             if not query_key:
                 continue
             query_stats = _query_stats_bucket(outcome, source.name, query_key)
-            query_stats.fetched_count += 1
+            if query_key not in coverage_query_keys:
+                query_stats.fetched_count += 1
+                query_stats.unique_count += 1
         LOG.info(
             "source_fetch_finished source=%s status=ok elapsed_seconds=%.2f fetched_count=%s",
             source.name,
@@ -681,7 +696,9 @@ def _normalize_query_key(value: str) -> str:
     if "linkedin.com/jobs/search" in lowered:
         return text
     if "joinhandshake.com/job-search/" in lowered:
-        return text
+        parsed = urlparse(text)
+        query_pairs = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key != "page"]
+        return urlunparse(parsed._replace(query=urlencode(query_pairs, doseq=True)))
     return ""
 
 

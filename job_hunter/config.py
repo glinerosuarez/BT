@@ -4,6 +4,10 @@ import os
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+
+DEFAULT_HANDSHAKE_RECALL_QUERIES = ["ai engineering", "ai fellow"]
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -157,6 +161,19 @@ def _merge_unique(primary: list[str], secondary: list[str]) -> list[str]:
     return merged
 
 
+def _add_handshake_recall_queries(search_urls: list[str], query_terms: list[str]) -> list[str]:
+    if not search_urls or not query_terms:
+        return search_urls
+    parsed = urlparse(search_urls[0])
+    base_pairs = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key not in {"query", "page"}]
+    generated = [
+        urlunparse(parsed._replace(query=urlencode([*base_pairs, ("query", term), ("page", "1")], doseq=True)))
+        for term in query_terms
+        if term.strip()
+    ]
+    return _merge_unique(search_urls, generated)
+
+
 @dataclass(frozen=True)
 class Settings:
     db_path: str
@@ -264,6 +281,8 @@ class Settings:
     handshake_recent_pages: int = 10
     handshake_use_keyword_supplemental: bool = False
     handshake_direct_job_urls: list[str] = field(default_factory=list)
+    handshake_recall_queries: list[str] = field(default_factory=lambda: list(DEFAULT_HANDSHAKE_RECALL_QUERIES))
+    handshake_browser_backend: str = "playwright"
 
 
 DEFAULT_DB_PATH = "job_hunter.db"
@@ -329,6 +348,8 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
     github_repo_readmes = _env_csv("JOB_HUNTER_GITHUB_REPO_READMES", DEFAULT_GITHUB_REPO_READMES)
     ashby_boards = _env_csv("JOB_HUNTER_ASHBY_BOARDS", DEFAULT_ASHBY_BOARDS)
     handshake_search_urls = _env_csv("JOB_HUNTER_HANDSHAKE_SEARCH_URLS", [])
+    handshake_recall_queries = _env_csv("JOB_HUNTER_HANDSHAKE_RECALL_QUERIES", DEFAULT_HANDSHAKE_RECALL_QUERIES)
+    handshake_search_urls = _add_handshake_recall_queries(handshake_search_urls, handshake_recall_queries)
     handshake_direct_job_urls = _env_csv("JOB_HUNTER_HANDSHAKE_DIRECT_JOB_URLS", [])
     hiring_cafe_search_urls = _env_csv("JOB_HUNTER_HIRING_CAFE_SEARCH_URLS", DEFAULT_HIRING_CAFE_SEARCH_URLS)
 
@@ -431,4 +452,6 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         handshake_recent_pages=_env_int("JOB_HUNTER_HANDSHAKE_RECENT_PAGES", 10),
         handshake_use_keyword_supplemental=_env_bool("JOB_HUNTER_HANDSHAKE_USE_KEYWORD_SUPPLEMENTAL", False),
         handshake_direct_job_urls=handshake_direct_job_urls,
+        handshake_recall_queries=handshake_recall_queries,
+        handshake_browser_backend=os.getenv("JOB_HUNTER_HANDSHAKE_BROWSER_BACKEND", "playwright"),
     )

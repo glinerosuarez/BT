@@ -54,6 +54,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.handshake_recent_pages, 10)
         self.assertFalse(settings.handshake_use_keyword_supplemental)
         self.assertEqual(settings.handshake_direct_job_urls, [])
+        self.assertEqual(settings.handshake_recall_queries, ["ai engineering", "ai fellow"])
+        self.assertEqual(settings.handshake_browser_backend, "playwright")
         self.assertEqual(settings.tailoring_profile_root, "profiles")
         self.assertEqual(settings.tailoring_output_root, "artifacts/tailoring")
         self.assertEqual(settings.tailoring_provider, "anthropic")
@@ -76,6 +78,8 @@ class ConfigTests(unittest.TestCase):
                         "JOB_HUNTER_SOURCE_HANDSHAKE=true",
                         "JOB_HUNTER_HANDSHAKE_SEARCH_URLS=\"https://app.joinhandshake.com/job-search/1?query=data\"",
                         "JOB_HUNTER_HANDSHAKE_HEADLESS=false",
+                        "JOB_HUNTER_HANDSHAKE_BROWSER_BACKEND=patchright",
+                        "JOB_HUNTER_HANDSHAKE_RECALL_QUERIES=",
                     ]
                 ),
                 encoding="utf-8",
@@ -85,6 +89,23 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.use_handshake)
         self.assertEqual(settings.handshake_search_urls, ["https://app.joinhandshake.com/job-search/1?query=data"])
         self.assertFalse(settings.handshake_headless)
+        self.assertEqual(settings.handshake_browser_backend, "patchright")
+        self.assertEqual(settings.handshake_recall_queries, [])
+
+    def test_recall_queries_inherit_the_first_handshake_search_filters(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "JOB_HUNTER_HANDSHAKE_SEARCH_URLS": "https://app.joinhandshake.com/job-search/1?jobType=3&query=data&page=4",
+                "JOB_HUNTER_HANDSHAKE_RECALL_QUERIES": "ai fellow",
+            },
+            clear=True,
+        ):
+            settings = load_settings()
+        self.assertEqual(len(settings.handshake_search_urls), 2)
+        self.assertIn("jobType=3", settings.handshake_search_urls[1])
+        self.assertIn("query=ai+fellow", settings.handshake_search_urls[1])
+        self.assertIn("page=1", settings.handshake_search_urls[1])
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 @dataclass(slots=True)
 class SourceRunStats:
     fetched_count: int = 0
+    unique_count: int = 0
     normalized_count: int = 0
     rejected_missing_core_fields_count: int = 0
     rejected_age_count: int = 0

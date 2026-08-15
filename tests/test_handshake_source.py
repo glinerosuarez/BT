@@ -17,7 +17,10 @@ from job_hunter.sources.handshake import (
     _job_search_url_to_jobs_url,
     _normalize_title_token,
     _normalize_search_url,
+    _normalize_browser_backend,
     _broad_recent_search_url,
+    _build_query_coverage,
+    _handshake_query_key,
     _with_page_number,
     _partition_handshake_urls,
     _page_requires_auth,
@@ -218,6 +221,26 @@ Company: GreenPoint Global
 
 
 class HandshakeSourceTests(unittest.TestCase):
+    def test_handshake_query_key_ignores_pagination(self) -> None:
+        first_page = "https://app.joinhandshake.com/job-search/1?query=ai&page=1&sort=posted_date_desc"
+        second_page = "https://app.joinhandshake.com/job-search/1?query=ai&page=2&sort=posted_date_desc"
+        self.assertEqual(_handshake_query_key(first_page), _handshake_query_key(second_page))
+
+    def test_query_coverage_separates_fetched_from_unique(self) -> None:
+        first_page = "https://app.joinhandshake.com/job-search/1?query=ai&page=1"
+        second_page = "https://app.joinhandshake.com/job-search/1?query=ai&page=2"
+        first = {"external_id": "one", "source_detail": first_page}
+        duplicate = {"external_id": "one", "source_detail": second_page}
+        coverage = _build_query_coverage([first, duplicate], [first])
+        key = _handshake_query_key(first_page)
+        self.assertEqual(coverage[key], {"fetched_count": 2, "unique_count": 1})
+
+    def test_normalize_browser_backend_accepts_supported_values(self) -> None:
+        self.assertEqual(_normalize_browser_backend("playwright"), "playwright")
+        self.assertEqual(_normalize_browser_backend("Patchright"), "patchright")
+        with self.assertRaises(ValueError):
+            _normalize_browser_backend("chromium")
+
     def test_expand_more_script_can_scope_to_search_detail_pane(self) -> None:
         self.assertIn("restrictToDetailPane", EXPAND_MORE_SCRIPT)
         self.assertIn("restrictToDetailPane && rect.left", EXPAND_MORE_SCRIPT)
