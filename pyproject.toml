@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.72,<1",
     "playwright>=1.60,<2",
+    "patchright>=1.61,<2",
     "reportlab>=4.4,<5",
 ]
 
@@ -17,9 +18,6 @@ dependencies = [
 local-embeddings = [
     "numpy>=1.26,<3",
     "sentence-transformers>=3,<4",
-]
-handshake-patchright = [
-    "patchright>=1.61,<2",
 ]
 
 [tool.setuptools]

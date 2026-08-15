@@ -8,9 +8,7 @@ from hashlib import sha1
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
-
+from job_hunter.browser_api import load_browser_api, normalize_browser_backend
 from job_hunter.sources.base import SourceConnector
 
 LOG = logging.getLogger(__name__)
@@ -27,29 +25,6 @@ class HandshakeSecurityVerificationError(RuntimeError):
 
 class HandshakeAccessWallError(RuntimeError):
     pass
-
-
-def _normalize_browser_backend(value: str) -> str:
-    backend = value.strip().lower()
-    if backend in {"", "playwright"}:
-        return "playwright"
-    if backend == "patchright":
-        return backend
-    raise ValueError("Handshake browser backend must be 'playwright' or 'patchright'.")
-
-
-def _load_browser_api(backend: str):
-    if backend == "playwright":
-        return sync_playwright, PlaywrightTimeoutError
-    try:
-        from patchright.sync_api import TimeoutError as PatchrightTimeoutError
-        from patchright.sync_api import sync_playwright as patchright_sync_playwright
-    except ImportError as exc:
-        raise RuntimeError(
-            "Patchright is not installed. Install it with `pip install -e '.[handshake-patchright]'` "
-            "or set JOB_HUNTER_HANDSHAKE_BROWSER_BACKEND=playwright."
-        ) from exc
-    return patchright_sync_playwright, PatchrightTimeoutError
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,8 +132,8 @@ class HandshakeSource(SourceConnector):
         self.fetch_details = fetch_details
         self.recent_pages = max(recent_pages, 1)
         self.use_keyword_supplemental = use_keyword_supplemental
-        self.browser_backend = _normalize_browser_backend(browser_backend)
-        self._timeout_error = PlaywrightTimeoutError
+        self.browser_backend = normalize_browser_backend(browser_backend)
+        self._timeout_error: type[Exception] = Exception
         self._fetch_meta: dict[str, object] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
@@ -170,8 +145,9 @@ class HandshakeSource(SourceConnector):
         rows: list[dict] = []
         headful_fallback_needed = False
 
-        browser_sync_playwright, self._timeout_error = _load_browser_api(self.browser_backend)
-        with browser_sync_playwright() as playwright:
+        browser_api = load_browser_api(self.browser_backend)
+        self._timeout_error = browser_api.timeout_error
+        with browser_api.sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
                 str(profile_path),
                 channel="chrome",
@@ -267,7 +243,7 @@ class HandshakeSource(SourceConnector):
                         results.append(parsed)
                 rows = _dedupe_rows(results)
                 self._fetch_meta = {
-                    "browser_backend": self.browser_backend,
+                    "browser_backend": browser_api.name,
                     "security_verification_blocked_count": security_verification_blocked_count,
                     "recent_sweep_blocked": recent_sweep_blocked,
                     "keyword_supplemental_enabled": self.use_keyword_supplemental,
@@ -278,7 +254,7 @@ class HandshakeSource(SourceConnector):
                 }
                 if self.headless and security_verification_blocked_count:
                     # Handshake can challenge a valid persistent session only when
-                    # Chrome is headless. Retry after this Playwright session exits.
+                    # Chrome is headless. Retry after this browser session exits.
                     LOG.warning(
                         "handshake_headless_security_fallback_started blocked_count=%s",
                         security_verification_blocked_count,
@@ -885,7 +861,7 @@ def _select_best_card_url(candidates: list[dict[str, str]], title: str) -> str:
     return ""
 
 
-def _find_detail_trigger(page, title: str, timeout_error=PlaywrightTimeoutError):
+def _find_detail_trigger(page, title: str, timeout_error=Exception):
     for role in ("button", "link"):
         locator = page.get_by_role(role, name=title, exact=False).first
         try:

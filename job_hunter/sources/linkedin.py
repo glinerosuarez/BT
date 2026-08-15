@@ -7,9 +7,7 @@ from hashlib import sha1
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
-
+from job_hunter.browser_api import load_browser_api, normalize_browser_backend
 from job_hunter.sources.base import SourceConnector
 
 LOG = logging.getLogger(__name__)
@@ -251,6 +249,7 @@ class LinkedInSource(SourceConnector):
         page_timeout_seconds: int,
         max_posting_age_days: int,
         fetch_details: bool = True,
+        browser_backend: str = "playwright",
     ) -> None:
         super().__init__(name="linkedin")
         self.search_urls = search_urls
@@ -260,6 +259,8 @@ class LinkedInSource(SourceConnector):
         self.page_timeout_seconds = max(page_timeout_seconds, 5)
         self.max_posting_age_days = max(max_posting_age_days, 1)
         self.fetch_details = fetch_details
+        self.browser_backend = normalize_browser_backend(browser_backend)
+        self._timeout_error: type[Exception] = Exception
         self._fetch_meta: dict[str, object] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
@@ -267,7 +268,9 @@ class LinkedInSource(SourceConnector):
         profile_path = Path(self.profile_dir).expanduser()
         profile_path.mkdir(parents=True, exist_ok=True)
 
-        with sync_playwright() as playwright:
+        browser_api = load_browser_api(self.browser_backend)
+        self._timeout_error = browser_api.timeout_error
+        with browser_api.sync_playwright() as playwright:
             results: list[dict] = []
             search_urls, job_urls = _partition_linkedin_urls(self.search_urls)
             configured_query_keys = [_normalize_search_url(url) for url in search_urls]
@@ -404,7 +407,7 @@ class LinkedInSource(SourceConnector):
                     locator.click(timeout=5000)
                     page.wait_for_timeout(2000)
                     click_succeeded = True
-                except PlaywrightTimeoutError:
+                except self._timeout_error:
                     try:
                         locator.evaluate("(el) => el.click()")
                         page.wait_for_timeout(2000)
@@ -536,7 +539,7 @@ class LinkedInSource(SourceConnector):
                 detail_text = page_text
             external_apply_url = _extract_external_apply_url_from_page(detail_page)
             return detail_text, external_apply_url, False
-        except PlaywrightTimeoutError:
+        except self._timeout_error:
             LOG.warning("linkedin_direct_detail_timeout url=%s", job_url)
             return "", "", False
         finally:

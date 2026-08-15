@@ -247,7 +247,7 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 fetch_details=settings.handshake_fetch_details,
                 recent_pages=getattr(settings, "handshake_recent_pages", 10),
                 use_keyword_supplemental=getattr(settings, "handshake_use_keyword_supplemental", False),
-                browser_backend=getattr(settings, "handshake_browser_backend", "playwright"),
+                browser_backend=getattr(settings, "browser_backend", "playwright"),
             )
         )
     if settings.use_linkedin and linkedin_search_urls:
@@ -260,6 +260,7 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 page_timeout_seconds=settings.linkedin_page_timeout_seconds,
                 max_posting_age_days=settings.max_posting_age_days,
                 fetch_details=settings.linkedin_fetch_details,
+                browser_backend=getattr(settings, "browser_backend", "playwright"),
             )
         )
     if settings.use_interstride and settings.interstride_search_urls:
@@ -272,6 +273,7 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 page_timeout_seconds=settings.interstride_page_timeout_seconds,
                 max_posting_age_days=settings.max_posting_age_days,
                 fetch_details=settings.interstride_fetch_details,
+                browser_backend=getattr(settings, "browser_backend", "playwright"),
             )
         )
     if settings.use_apple and settings.apple_queries:
@@ -281,6 +283,7 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 max_results=settings.apple_max_results,
                 headless=settings.apple_headless,
                 page_timeout_seconds=settings.apple_page_timeout_seconds,
+                browser_backend=getattr(settings, "browser_backend", "playwright"),
             )
         )
     if getattr(settings, "use_hiring_cafe", False) and getattr(settings, "hiring_cafe_search_urls", []):

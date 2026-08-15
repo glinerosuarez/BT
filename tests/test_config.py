@@ -55,7 +55,7 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(settings.handshake_use_keyword_supplemental)
         self.assertEqual(settings.handshake_direct_job_urls, [])
         self.assertEqual(settings.handshake_recall_queries, ["ai engineering", "ai fellow"])
-        self.assertEqual(settings.handshake_browser_backend, "playwright")
+        self.assertEqual(settings.browser_backend, "playwright")
         self.assertEqual(settings.tailoring_profile_root, "profiles")
         self.assertEqual(settings.tailoring_output_root, "artifacts/tailoring")
         self.assertEqual(settings.tailoring_provider, "anthropic")
@@ -78,8 +78,8 @@ class ConfigTests(unittest.TestCase):
                         "JOB_HUNTER_SOURCE_HANDSHAKE=true",
                         "JOB_HUNTER_HANDSHAKE_SEARCH_URLS=\"https://app.joinhandshake.com/job-search/1?query=data\"",
                         "JOB_HUNTER_HANDSHAKE_HEADLESS=false",
-                        "JOB_HUNTER_HANDSHAKE_BROWSER_BACKEND=patchright",
                         "JOB_HUNTER_HANDSHAKE_RECALL_QUERIES=",
+                        "JOB_HUNTER_BROWSER_BACKEND=patchright",
                     ]
                 ),
                 encoding="utf-8",
@@ -89,8 +89,8 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.use_handshake)
         self.assertEqual(settings.handshake_search_urls, ["https://app.joinhandshake.com/job-search/1?query=data"])
         self.assertFalse(settings.handshake_headless)
-        self.assertEqual(settings.handshake_browser_backend, "patchright")
         self.assertEqual(settings.handshake_recall_queries, [])
+        self.assertEqual(settings.browser_backend, "patchright")
 
     def test_recall_queries_inherit_the_first_handshake_search_filters(self) -> None:
         with patch.dict(

@@ -4,8 +4,7 @@ import logging
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from playwright.sync_api import sync_playwright
-
+from job_hunter.browser_api import load_browser_api, normalize_browser_backend
 from job_hunter.sources.base import SourceConnector
 
 LOG = logging.getLogger(__name__)
@@ -26,6 +25,7 @@ class InterstrideSource(SourceConnector):
         page_timeout_seconds: int,
         max_posting_age_days: int,
         fetch_details: bool = True,
+        browser_backend: str = "playwright",
     ) -> None:
         super().__init__(name="interstride")
         self.search_urls = search_urls
@@ -35,13 +35,15 @@ class InterstrideSource(SourceConnector):
         self.page_timeout_seconds = max(page_timeout_seconds, 5)
         self.max_posting_age_days = max(max_posting_age_days, 1)
         self.fetch_details = fetch_details
+        self.browser_backend = normalize_browser_backend(browser_backend)
         self._fetch_meta: dict[str, object] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
         _ = timeout_seconds
         profile_path = Path(self.profile_dir).expanduser()
         profile_path.mkdir(parents=True, exist_ok=True)
-        with sync_playwright() as playwright:
+        browser_api = load_browser_api(self.browser_backend)
+        with browser_api.sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
                 str(profile_path), channel="chrome", headless=self.headless
             )

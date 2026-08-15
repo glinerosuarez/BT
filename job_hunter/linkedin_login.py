@@ -3,8 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
+from job_hunter.browser_api import load_browser_api
 from job_hunter.config import load_settings
 
 
@@ -21,7 +20,7 @@ def main() -> int:
     profile_path = Path(settings.linkedin_profile_dir).expanduser()
     profile_path.mkdir(parents=True, exist_ok=True)
 
-    with sync_playwright() as playwright:
+    with load_browser_api(settings.browser_backend).sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             str(profile_path),
             channel="chrome",

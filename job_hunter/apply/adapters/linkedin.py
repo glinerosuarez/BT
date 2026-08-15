@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from job_hunter.apply.resolver import AnswerResolver, ResolutionError
 from job_hunter.apply.types import Blocker, StepSnapshot, SubmitResult
+from patchright.sync_api import TimeoutError as PatchrightTimeoutError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 _EASY_APPLY_LABELS = (
@@ -1376,7 +1377,7 @@ class LinkedInEasyApplyAdapter:
 
         try:
             locator.click(timeout=1000, force=True)
-        except PlaywrightTimeoutError:
+        except (PlaywrightTimeoutError, PatchrightTimeoutError):
             if not dom_click():
                 raise
 

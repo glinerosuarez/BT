@@ -3,8 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from playwright.sync_api import sync_playwright
-
+from job_hunter.browser_api import load_browser_api, normalize_browser_backend
 from job_hunter.sources.base import SourceConnector
 
 LOG = logging.getLogger(__name__)
@@ -18,12 +17,20 @@ US_LOCATION_ID = "postLocation-USA"
 class AppleJobsSource(SourceConnector):
     """Fetch US Apple Jobs search results from Apple's public careers search API."""
 
-    def __init__(self, queries: list[str], max_results: int = 25, headless: bool = True, page_timeout_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        queries: list[str],
+        max_results: int = 25,
+        headless: bool = True,
+        page_timeout_seconds: int = 30,
+        browser_backend: str = "playwright",
+    ) -> None:
         super().__init__(name="apple")
         self.queries = [query.strip() for query in queries if query.strip()]
         self.max_results = max(max_results, 1)
         self.headless = headless
         self.page_timeout_seconds = max(page_timeout_seconds, 5)
+        self.browser_backend = normalize_browser_backend(browser_backend)
         self._fetch_meta: dict[str, object] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
@@ -32,7 +39,7 @@ class AppleJobsSource(SourceConnector):
         item_results: list[dict[str, str]] = []
         failures = 0
 
-        with sync_playwright() as playwright:
+        with load_browser_api(self.browser_backend).sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel="chrome", headless=self.headless)
             try:
                 page = browser.new_page()

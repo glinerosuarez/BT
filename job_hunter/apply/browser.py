@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Protocol
 
+from job_hunter.browser_api import load_browser_api
 from job_hunter.config import Settings
 
 _DEFAULT_CHROME_USER_AGENT = (
@@ -70,12 +71,8 @@ class BrowserManager:
         self.settings = settings
 
     def open(self, *, adapter_name: str, headless: bool | None = None) -> BrowserSession:
-        try:
-            from playwright.sync_api import sync_playwright
-        except ModuleNotFoundError as exc:
-            raise RuntimeError("Playwright is not installed. Run `pip install -e .`.") from exc
-
-        playwright = sync_playwright().start()
+        browser_api = load_browser_api(self.settings.browser_backend)
+        playwright = browser_api.sync_playwright().start()
         cdp_url = os.getenv("JOB_HUNTER_APPLY_CDP_URL", "").strip()
         if cdp_url:
             browser = playwright.chromium.connect_over_cdp(cdp_url)
