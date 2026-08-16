@@ -55,6 +55,7 @@ class ApplicationService:
         icims_adapter: ICIMSAdapter | None = None,
         workday_adapter: WorkdayAdapter | None = None,
         email_code_client: GmailVerificationCodeClient | None = None,
+        auto_apply_labels: frozenset[str] | None = None,
     ) -> None:
         self.settings = settings
         self.store = store
@@ -67,13 +68,15 @@ class ApplicationService:
         self.icims_adapter = icims_adapter or ICIMSAdapter()
         self.workday_adapter = workday_adapter or WorkdayAdapter()
         self.email_code_client = email_code_client
+        self.auto_apply_labels = (
+            frozenset({"pass"}) if auto_apply_labels is None else auto_apply_labels
+        )
 
     def submit_job(self, *, job_id: int, profile_name: str, force: bool = False) -> ApplicationRunRecord:
         job = self.store.get_job_for_application(job_id)
         if job is None:
             raise RuntimeError(f"Job id {job_id} not found.")
-        if str(job["profile_match_label"] or "") != "pass" and not force:
-            raise RuntimeError(f"Job id {job_id} is not eligible for auto-apply because profile_match_label is not 'pass'.")
+        self._validate_auto_apply_label(job, job_id=job_id, force=force)
 
         profile, answers = load_application_inputs(self.settings.tailoring_profile_root, profile_name)
         resolver = AnswerResolver(profile=profile, answers=answers)
@@ -212,8 +215,7 @@ class ApplicationService:
         job = self.store.get_job_for_application(job_id)
         if job is None:
             raise RuntimeError(f"Job id {job_id} not found.")
-        if str(job["profile_match_label"] or "") != "pass" and not force:
-            raise RuntimeError(f"Job id {job_id} is not eligible for auto-apply because profile_match_label is not 'pass'.")
+        self._validate_auto_apply_label(job, job_id=job_id, force=force)
 
         profile, answers = load_application_inputs(self.settings.tailoring_profile_root, profile_name)
         resolver = AnswerResolver(profile=profile, answers=answers)
@@ -972,6 +974,17 @@ class ApplicationService:
             current_url=str(row["current_url"] or ""),
             output_dir=str(row["output_dir"]),
         )
+
+    def _validate_auto_apply_label(self, job, *, job_id: int, force: bool) -> None:
+        if force:
+            return
+        label = str(job["profile_match_label"] or "").strip()
+        if label not in self.auto_apply_labels:
+            allowed = ", ".join(sorted(self.auto_apply_labels))
+            raise RuntimeError(
+                f"Job id {job_id} is not eligible for auto-apply because "
+                f"profile_match_label={label or 'missing'} is not in {{{allowed}}}."
+            )
 
     def _output_dir(self, profile_name: str, run_id: str) -> Path:
         return Path(self.settings.apply_output_root).expanduser() / profile_name / run_id

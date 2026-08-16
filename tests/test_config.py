@@ -66,6 +66,18 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.apply_page_timeout_seconds, 30)
         self.assertEqual(settings.apply_batch_default_limit, 5)
         self.assertEqual(settings.apply_output_root, "artifacts/applications")
+        self.assertEqual(settings.orchestrator_daily_attempt_limit, 5)
+        self.assertEqual(settings.orchestrator_profiles, ["backend", "data_intern", "ml_eng_intern"])
+        self.assertEqual(settings.orchestrator_timezone, "America/Bogota")
+        self.assertTrue(settings.orchestrator_new_jobs_only)
+        self.assertEqual(settings.orchestrator_provider, "openai")
+        self.assertEqual(settings.writer_provider, "anthropic")
+        self.assertIsNone(settings.nvidia_api_key)
+        self.assertEqual(settings.nvidia_nim_base_url, "https://integrate.api.nvidia.com/v1")
+        self.assertEqual(settings.nvidia_nim_structured_output_method, "json_schema")
+        self.assertEqual(settings.source_discovery_daily_credit_limit, 20)
+        self.assertTrue(settings.phoenix_enabled)
+        self.assertEqual(settings.phoenix_collector_endpoint, "http://127.0.0.1:6006/v1/traces")
 
     def test_requested_dotenv_loads_handshake_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -85,6 +97,21 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.use_handshake)
         self.assertEqual(settings.handshake_search_urls, ["https://app.joinhandshake.com/job-search/1?query=data"])
         self.assertFalse(settings.handshake_headless)
+
+    def test_nvidia_nim_settings(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "NVIDIA_API_KEY": "nvapi-test",
+                "JOB_HUNTER_NVIDIA_NIM_BASE_URL": "https://nim.example/v1/",
+                "JOB_HUNTER_NVIDIA_NIM_STRUCTURED_OUTPUT_METHOD": "function_calling",
+            },
+            clear=True,
+        ):
+            settings = load_settings()
+        self.assertEqual(settings.nvidia_api_key, "nvapi-test")
+        self.assertEqual(settings.nvidia_nim_base_url, "https://nim.example/v1/")
+        self.assertEqual(settings.nvidia_nim_structured_output_method, "function_calling")
 
 
 if __name__ == "__main__":

@@ -39,11 +39,11 @@ class AnthropicTailoringProvider:
         message = self._client.messages.create(
             model=self.model_name,
             max_tokens=3000,
-            system=_system_prompt(),
+            system=tailoring_system_prompt(),
             messages=[
                 {
                     "role": "user",
-                    "content": _build_user_prompt(profile=profile, job_context=job_context),
+                    "content": build_tailoring_user_prompt(profile=profile, job_context=job_context),
                 }
             ],
             tools=[
@@ -70,7 +70,7 @@ class AnthropicTailoringProvider:
         raise RuntimeError("Anthropic response did not include the expected structured tailoring payload.")
 
 
-def _system_prompt() -> str:
+def tailoring_system_prompt() -> str:
     return (
         "You tailor resumes and cover letters for job applications. "
         "Never invent employers, dates, education, projects, titles, metrics, skills, libraries, frameworks, or tools not present in the provided profile. "
@@ -96,7 +96,7 @@ def _system_prompt() -> str:
     )
 
 
-def _build_user_prompt(*, profile: TailoringProfile, job_context: TailoringJobContext) -> str:
+def build_tailoring_user_prompt(*, profile: TailoringProfile, job_context: TailoringJobContext) -> str:
     payload = {
         "job_context": asdict(job_context),
         "profile": {

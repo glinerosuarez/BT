@@ -4,6 +4,8 @@ Automated sourcing pipeline for US-based ML/Data internships with eligibility-aw
 
 It also includes a tailoring module for job-specific artifacts and an adapter-based application module for resumable automated submits on supported targets.
 
+The LangGraph orchestrator connects those tools into a durable autonomous workflow with four roles: orchestration, sourcing, application writing, and applying. It accepts `profile_match_label` as a decision input, enforces a configurable daily unique-job attempt limit, and pauses unsafe or ambiguous applications for a Telegram intervention.
+
 ## What it does
 
 - Pulls postings from multi-source connectors (`Arbeitnow`, `Remotive`, `The Muse`, `Greenhouse`, `Lever`, `RSS`, `Ashby`, optional public GitHub internship repos).
@@ -51,6 +53,62 @@ Current implementation status:
 set -a; source .env; set +a
 python -m job_hunter.run_loop --interval-minutes 15
 ```
+
+## Autonomous orchestrator
+
+Install the project, configure the orchestrator/model variables in `.env`, and initialize it before the first autonomous cycle:
+
+```bash
+pip install -e .
+python -m job_hunter.orchestrator init --format json
+python -m job_hunter.orchestrator once --attempt-limit 3 --format json
+python -m job_hunter.orchestrator run --attempt-limit 5
+```
+
+Initialization records the current maximum job ID. With `JOB_HUNTER_ORCHESTRATOR_NEW_JOBS_ONLY=true`, only jobs sourced after that baseline are eligible. Candidates must have a `profile_match_label` of `pass` or `review` and must also pass the existing eligibility, policy, source-quality, and duplicate-submission gates. The orchestration agent then decides whether to apply and which ready profile to use; the label is an input, not an automatic apply instruction.
+
+An orchestrator profile is ready only when its directory contains all of:
+
+- `resume.md`
+- `cover_letter.md`
+- `application_profile.json`
+- `application_answers.json`
+
+`init` reports missing files and only ready profiles are offered to the agent. In the current checkout, `ml_eng_intern` is ready; complete the reported files for `backend` and `data_intern` before they can be selected.
+
+The application-writer agent uses the same shared system and user prompts as the existing tailoring CLI. It writes the same Markdown, PDF, metadata, requirement, and evidence artifacts through `TailoringService`.
+
+Each role can use OpenAI, Anthropic, or an NVIDIA-hosted NIM model independently. To use a free NVIDIA API Catalog endpoint, generate a key at [build.nvidia.com](https://build.nvidia.com), choose a currently available chat model ID, and configure the role with `nvidia_nim`:
+
+```bash
+NVIDIA_API_KEY=nvapi-...
+JOB_HUNTER_NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
+JOB_HUNTER_NVIDIA_NIM_STRUCTURED_OUTPUT_METHOD=json_schema
+
+JOB_HUNTER_ORCHESTRATOR_PROVIDER=nvidia_nim
+JOB_HUNTER_ORCHESTRATOR_MODEL=meta/llama-3.1-70b-instruct
+JOB_HUNTER_SOURCING_PROVIDER=nvidia_nim
+JOB_HUNTER_SOURCING_MODEL=meta/llama-3.1-70b-instruct
+```
+
+The same provider/model pairing works for `JOB_HUNTER_WRITER_*` and `JOB_HUNTER_APPLIER_*`. Model availability in NVIDIA's free catalog can change, and the selected model must support structured JSON output for these agents. `json_schema` is the default; `function_calling` is available for models whose catalog page advertises tool calling instead. The base URL can also target a self-hosted OpenAI-compatible NIM deployment.
+
+The sourcing agent can discover Greenhouse, Lever, Ashby, RSS, and public GitHub sources through Tavily. Discovered sources enter a registry as candidates, are SSRF-checked and probed, and become active after two successful probes. Two consecutive failures quarantine an active source. Inspect or roll back registry changes with:
+
+```bash
+python -m job_hunter.orchestrator sources list --format json
+python -m job_hunter.orchestrator sources history --source-id 12 --format json
+python -m job_hunter.orchestrator sources rollback --source-id 12 --format json
+```
+
+Blocked applications are persisted as LangGraph interrupts. With Telegram configured, use `/status`, `/open <intervention-id>`, `/retry <intervention-id>`, `/continue <intervention-id>`, or `/skip <intervention-id>`. The same actions are available locally:
+
+```bash
+python -m job_hunter.orchestrator interventions list --format json
+python -m job_hunter.orchestrator interventions resolve --intervention-id 7 --action retry --format json
+```
+
+Phoenix tracing is enabled by default and exported over OTLP/HTTP to `http://127.0.0.1:6006/v1/traces`. Instrumentation failures do not stop the workflow, and prompt/output/message capture is disabled by privacy flags. Set `JOB_HUNTER_PHOENIX_ENABLED=false` to disable it.
 
 ## Handshake usage
 

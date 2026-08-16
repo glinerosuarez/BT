@@ -264,6 +264,32 @@ class Settings:
     handshake_recent_pages: int = 10
     handshake_use_keyword_supplemental: bool = False
     handshake_direct_job_urls: list[str] = field(default_factory=list)
+    orchestrator_daily_attempt_limit: int = 5
+    orchestrator_checkpoint_db_path: str = "artifacts/orchestrator/checkpoints.db"
+    orchestrator_profiles: list[str] = field(
+        default_factory=lambda: ["backend", "data_intern", "ml_eng_intern"]
+    )
+    orchestrator_timezone: str = "America/Bogota"
+    orchestrator_new_jobs_only: bool = True
+    orchestrator_agent_timeout_seconds: int = 120
+    orchestrator_agent_max_retries: int = 2
+    orchestrator_provider: str = "openai"
+    orchestrator_model: str | None = None
+    sourcing_provider: str = "openai"
+    sourcing_model: str | None = None
+    writer_provider: str = "anthropic"
+    writer_model: str | None = None
+    applier_provider: str = "openai"
+    applier_model: str | None = None
+    nvidia_api_key: str | None = None
+    nvidia_nim_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_nim_structured_output_method: str = "json_schema"
+    tavily_api_key: str | None = None
+    source_discovery_daily_credit_limit: int = 20
+    source_discovery_max_results: int = 5
+    phoenix_enabled: bool = True
+    phoenix_collector_endpoint: str = "http://127.0.0.1:6006/v1/traces"
+    phoenix_project_name: str = "job-hunter-orchestrator"
 
 
 DEFAULT_DB_PATH = "job_hunter.db"
@@ -431,4 +457,55 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         handshake_recent_pages=_env_int("JOB_HUNTER_HANDSHAKE_RECENT_PAGES", 10),
         handshake_use_keyword_supplemental=_env_bool("JOB_HUNTER_HANDSHAKE_USE_KEYWORD_SUPPLEMENTAL", False),
         handshake_direct_job_urls=handshake_direct_job_urls,
+        orchestrator_daily_attempt_limit=max(_env_int("JOB_HUNTER_ORCHESTRATOR_DAILY_ATTEMPT_LIMIT", 5), 0),
+        orchestrator_checkpoint_db_path=os.getenv(
+            "JOB_HUNTER_ORCHESTRATOR_CHECKPOINT_DB_PATH",
+            "artifacts/orchestrator/checkpoints.db",
+        ),
+        orchestrator_profiles=_env_csv(
+            "JOB_HUNTER_ORCHESTRATOR_PROFILES",
+            ["backend", "data_intern", "ml_eng_intern"],
+        ),
+        orchestrator_timezone=os.getenv("JOB_HUNTER_ORCHESTRATOR_TIMEZONE", "America/Bogota"),
+        orchestrator_new_jobs_only=_env_bool("JOB_HUNTER_ORCHESTRATOR_NEW_JOBS_ONLY", True),
+        orchestrator_agent_timeout_seconds=max(
+            _env_int("JOB_HUNTER_ORCHESTRATOR_AGENT_TIMEOUT_SECONDS", 120),
+            1,
+        ),
+        orchestrator_agent_max_retries=max(
+            _env_int("JOB_HUNTER_ORCHESTRATOR_AGENT_MAX_RETRIES", 2),
+            0,
+        ),
+        orchestrator_provider=os.getenv("JOB_HUNTER_ORCHESTRATOR_PROVIDER", "openai"),
+        orchestrator_model=os.getenv("JOB_HUNTER_ORCHESTRATOR_MODEL"),
+        sourcing_provider=os.getenv("JOB_HUNTER_SOURCING_PROVIDER", "openai"),
+        sourcing_model=os.getenv("JOB_HUNTER_SOURCING_MODEL"),
+        writer_provider=os.getenv("JOB_HUNTER_WRITER_PROVIDER", "anthropic"),
+        writer_model=os.getenv("JOB_HUNTER_WRITER_MODEL"),
+        applier_provider=os.getenv("JOB_HUNTER_APPLIER_PROVIDER", "openai"),
+        applier_model=os.getenv("JOB_HUNTER_APPLIER_MODEL"),
+        nvidia_api_key=os.getenv("NVIDIA_API_KEY"),
+        nvidia_nim_base_url=os.getenv(
+            "JOB_HUNTER_NVIDIA_NIM_BASE_URL",
+            "https://integrate.api.nvidia.com/v1",
+        ),
+        nvidia_nim_structured_output_method=os.getenv(
+            "JOB_HUNTER_NVIDIA_NIM_STRUCTURED_OUTPUT_METHOD",
+            "json_schema",
+        ),
+        tavily_api_key=os.getenv("TAVILY_API_KEY"),
+        source_discovery_daily_credit_limit=max(
+            _env_int("JOB_HUNTER_SOURCE_DISCOVERY_DAILY_CREDIT_LIMIT", 20),
+            0,
+        ),
+        source_discovery_max_results=max(
+            _env_int("JOB_HUNTER_SOURCE_DISCOVERY_MAX_RESULTS", 5),
+            1,
+        ),
+        phoenix_enabled=_env_bool("JOB_HUNTER_PHOENIX_ENABLED", True),
+        phoenix_collector_endpoint=os.getenv(
+            "PHOENIX_COLLECTOR_ENDPOINT",
+            "http://127.0.0.1:6006/v1/traces",
+        ),
+        phoenix_project_name=os.getenv("PHOENIX_PROJECT_NAME", "job-hunter-orchestrator"),
     )
