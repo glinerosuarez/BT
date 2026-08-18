@@ -16,6 +16,11 @@
             "answer": "LinkedIn"
         },
         {
+            "match_type": "exact",
+            "pattern": "how did you hear about us?*",
+            "answer": "Career Fair"
+        },
+        {
             "match_type": "regex",
             "pattern": "pronouns?",
             "answer": "He, him, his"
@@ -149,6 +154,16 @@
             "match_type": "contains",
             "pattern": "postal code",
             "answer": "90007"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "county*",
+            "answer": "Los Angeles"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "location*",
+            "answer": "Los Angeles, CA"
         },
         {
             "match_type": "contains",

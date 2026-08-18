@@ -12,6 +12,7 @@ from job_hunter.config import Settings
 from job_hunter.models import JobRecord
 from job_hunter.storage import JobStore
 from job_hunter.tailor_jobs import main
+from job_hunter.tailoring.provider import _parse_tool_payload
 from job_hunter.tailoring.service import TailoringService
 from job_hunter.tailoring.types import TailoringResult
 
@@ -38,6 +39,26 @@ class FakeProvider:
             provider_name=self.provider_name,
             model_name=self.model_name,
         )
+
+
+class TailoringProviderTests(unittest.TestCase):
+    def test_parse_tool_payload_normalizes_single_highlight_requirement(self) -> None:
+        result = _parse_tool_payload(
+            {
+                "resume_markdown": "# Resume",
+                "cover_letter_markdown": "# Cover Letter",
+                "highlight_requirements": "Python",
+                "evidence_map": [
+                    {
+                        "job_requirement": "Python",
+                        "profile_evidence": "Built Python workflows.",
+                    }
+                ],
+            },
+            model_name="claude-test",
+        )
+
+        self.assertEqual(result.highlight_requirements, ["Python"])
 
 
 def make_settings(db_path: str, profile_root: str, output_root: str) -> Settings:

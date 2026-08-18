@@ -1585,6 +1585,26 @@ class WorkdayAdapter:
                     locator.fill("")
                     locator.fill(target)
                     self._wait(page, 750)
+                    # A flat Workday prompt often commits its best search match
+                    # with Enter, while a click on the result text merely moves
+                    # focus. Prefer that native activation before row matching.
+                    if len(selection_path) == 1:
+                        try:
+                            locator.press("Enter")
+                            self._wait(page, 300)
+                            current_value = self._prompt_current_value(page, field)
+                            if (
+                                self._normalize_option_text(target)
+                                in self._normalize_option_text(current_value)
+                                and not self._prompt_is_invalid(page, field)
+                            ):
+                                return
+                        except Exception:
+                            pass
+                        # Reopen results if Enter only submitted the search query.
+                        locator.click(force=True)
+                        locator.fill(target)
+                        self._wait(page, 300)
                 options = self._prompt_options(page, field, locator)
                 option_locator = None
                 best_match_score = 0
@@ -1645,6 +1665,18 @@ class WorkdayAdapter:
                 if path_index < len(selection_path) - 1:
                     self._wait(page, 300)
             current_value = self._prompt_current_value(page, field)
+            if not current_value or self._prompt_is_invalid(page, field):
+                # Some Workday source controls are rendered as multiselects even
+                # when the form only accepts one value. Their result row does not
+                # commit a selection; the checkbox inside that row does.
+                if len(selection_path) == 1:
+                    try:
+                        self._select_multi_prompt_value(page, field, expected_target)
+                    except RuntimeError:
+                        # Retain the keyboard fallback for tenants whose prompt
+                        # results do not expose checkbox controls.
+                        pass
+                current_value = self._prompt_current_value(page, field)
             if not current_value or self._prompt_is_invalid(page, field):
                 locator = page.locator(selector).first
                 locator.press("ArrowDown")
@@ -2236,9 +2268,6 @@ class WorkdayAdapter:
         for row in (
             option_locator,
             option_locator.locator("xpath=ancestor::*[@role='option'][1]"),
-            option_locator.locator(
-                "xpath=ancestor::*[.//input[@type='checkbox'] or .//*[@role='checkbox']][1]"
-            ),
         ):
             candidate_checkbox = row.locator('input[type="checkbox"]').first
             if candidate_checkbox.count() == 0:

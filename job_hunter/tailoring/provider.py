@@ -177,7 +177,13 @@ def _parse_tool_payload(payload: object, *, model_name: str) -> TailoringResult:
     evidence_map = payload.get("evidence_map")
     if not resume_markdown or not cover_letter_markdown:
         raise RuntimeError("Anthropic returned an empty resume or cover letter.")
-    if not isinstance(highlight_requirements, list) or not all(str(item).strip() for item in highlight_requirements):
+    # The tool schema requests a list, but providers occasionally return a single
+    # string for this descriptive metadata. Normalize that harmless variant.
+    if isinstance(highlight_requirements, str):
+        highlight_requirements = [highlight_requirements]
+    if not isinstance(highlight_requirements, list) or not all(
+        isinstance(item, str) and item.strip() for item in highlight_requirements
+    ):
         raise RuntimeError("Anthropic returned invalid highlight_requirements.")
     if not isinstance(evidence_map, list):
         raise RuntimeError("Anthropic returned invalid evidence_map.")
@@ -200,7 +206,7 @@ def _parse_tool_payload(payload: object, *, model_name: str) -> TailoringResult:
     return TailoringResult(
         resume_markdown=resume_markdown,
         cover_letter_markdown=cover_letter_markdown,
-        highlight_requirements=[str(item).strip() for item in highlight_requirements],
+        highlight_requirements=[item.strip() for item in highlight_requirements],
         evidence_map=normalized_evidence,
         provider_name="anthropic",
         model_name=model_name,
