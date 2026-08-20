@@ -13,7 +13,9 @@ from job_hunter.apply.adapters.icims import ICIMSAdapter
 from job_hunter.apply.adapters.linkedin import LinkedInEasyApplyAdapter
 from job_hunter.apply.adapters.oracle_hcm import OracleHCMAdapter
 from job_hunter.apply.adapters.phenom import PhenomAdapter
+from job_hunter.apply.adapters.successfactors import SuccessFactorsAdapter
 from job_hunter.apply.adapters.workday import WorkdayAdapter
+
 from job_hunter.apply.browser import BrowserManager
 from job_hunter.apply.email_codes import GmailVerificationCodeClient
 from job_hunter.apply.profile_loader import load_application_inputs
@@ -60,6 +62,7 @@ class ApplicationService:
         workday_adapter: WorkdayAdapter | None = None,
         phenom_adapter: PhenomAdapter | None = None,
         oracle_hcm_adapter: OracleHCMAdapter | None = None,
+        successfactors_adapter: SuccessFactorsAdapter | None = None,
         email_code_client: GmailVerificationCodeClient | None = None,
     ) -> None:
         self.settings = settings
@@ -75,7 +78,9 @@ class ApplicationService:
         self.workday_adapter = workday_adapter or WorkdayAdapter()
         self.phenom_adapter = phenom_adapter or PhenomAdapter()
         self.oracle_hcm_adapter = oracle_hcm_adapter or OracleHCMAdapter()
+        self.successfactors_adapter = successfactors_adapter or SuccessFactorsAdapter()
         self.email_code_client = email_code_client
+
 
     def submit_job(self, *, job_id: int, profile_name: str, force: bool = False) -> ApplicationRunRecord:
         job = self.store.get_job_for_application(job_id)
@@ -784,7 +789,10 @@ class ApplicationService:
             return "handshake_fellow", self.handshake_fellow_adapter, current_url
         if self.oracle_hcm_adapter.is_oracle_hcm_target(target_url, page=page):
             return "oracle_hcm", self.oracle_hcm_adapter, target_url
+        if self.successfactors_adapter.is_successfactors_target(target_url, page=page):
+            return "successfactors", self.successfactors_adapter, target_url
         blocker_reason, details = self._classify_unsupported_target(
+
             source=source,
             target_url=target_url,
             current_url=str(getattr(page, "url", target_url) or target_url),
@@ -832,7 +840,10 @@ class ApplicationService:
             return "ashby"
         if source == "phenom":
             return "phenom"
+        if source in {"successfactors", "jobs2web"}:
+            return "successfactors"
         return "greenhouse"
+
 
     def _discover_external_apply_url(self, job, page, target_url: str, *, allow_click: bool = True) -> str:
         source_metadata = self._job_source_metadata(job)
@@ -1026,7 +1037,10 @@ class ApplicationService:
             return self.workday_adapter
         if adapter_name == "oracle_hcm":
             return self.oracle_hcm_adapter
+        if adapter_name == "successfactors":
+            return self.successfactors_adapter
         raise RuntimeError(f"Unsupported adapter name: {adapter_name}")
+
 
     def _persist_result(self, *, run_id: int, result: SubmitResult, output_dir: Path, page) -> None:
         self.store.update_application_run(
