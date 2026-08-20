@@ -62,12 +62,17 @@ class AttachedBrowserSession:
 
     def new_page(self):
         if hasattr(self._context, "pages") and self._context.pages:
+            for p in self._context.pages:
+                url = str(getattr(p, "url", "") or "")
+                if url.startswith("http://") or url.startswith("https://"):
+                    return p
             return self._context.pages[0]
         return self._context.new_page()
 
     def close(self) -> None:
         # The user owns this browser process; only detach Playwright from it.
         return None
+
 
 
 class BrowserManager:

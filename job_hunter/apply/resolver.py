@@ -361,8 +361,36 @@ class AnswerResolver:
             if city:
                 return AnswerResolution(answer=city, source="computed:identity.location")
 
-        if "18 or older" in question or "at least 18 years old" in question:
+        if "18 or older" in question or "at least 18 years old" in question or "18 years of age" in question:
             return AnswerResolution(answer="Yes", source="computed:eligibility.age_of_majority")
+
+        if "ernst & young" in question or "ernst and young" in question:
+            return AnswerResolution(answer="No", source="policy:prior_employer.no")
+
+        if "non-competition" in question or "non-disclosure" in question or "non-solicitation" in question:
+            return AnswerResolution(answer="No", source="policy:employment.no_conflicting_agreement")
+
+        if "intellectual property rights" in question or "patents, trademarks" in question:
+            return AnswerResolution(answer="No", source="policy:employment.no_ip_rights")
+
+        if (
+            "secondary non-intel" in question
+            or ("board of directors" in question and "non-intel" in question)
+            or "if hired, do you intend to" in question
+            or "do you intend to (select all that apply)" in question
+        ):
+            return AnswerResolution(answer="Neither", source="policy:employment.outside_activities_neither")
+
+
+        if "department of defense" in question or "dod" in question.split():
+            return AnswerResolution(answer="No", source="policy:employment.no_dod")
+
+        if "federal, state or local government" in question:
+            return AnswerResolution(answer="No", source="policy:employment.no_government")
+
+        if "export control" in question:
+            return AnswerResolution(answer="Yes", source="policy:work_authorization.export_control_authorized")
+
 
         if "valid driver's license" in question or "valid drivers license" in question:
             drivers_license = str(self.answers.field_defaults.get("valid_drivers_license", "")).strip().lower()
@@ -718,7 +746,17 @@ class AnswerResolver:
             if month:
                 return AnswerResolution(answer=month, source="computed:education.end_month")
 
-        if "start date year" in question or field_name.startswith("start-year"):
+        if (
+            "start date year" in question
+            or field_name.startswith("start-year")
+            or "firstyearattended" in normalized_field_name
+            or "from (actual or expected)" in question
+        ):
+            start_date = self._structured.get("education.start_date", "").strip()
+            if start_date:
+                match = re.match(r"^(\d{4})", start_date)
+                if match:
+                    return AnswerResolution(answer=match.group(1), source="structured:education.start_date")
             year = _education_start_year(
                 graduation_date=self._structured.get("education.graduation_date", ""),
                 degree=self._structured.get("education.degree", ""),
@@ -726,15 +764,18 @@ class AnswerResolver:
             if year:
                 return AnswerResolution(answer=year, source="computed:education.start_year")
 
-        if forced_intent == "education_end_year" or "end date year" in question or field_name.startswith("end-year"):
+        if (
+            forced_intent == "education_end_year"
+            or "end date year" in question
+            or field_name.startswith("end-year")
+            or "lastyearattended" in normalized_field_name
+            or "to (actual or expected)" in question
+            or "what year will you graduate" in question
+        ):
             year = _graduation_year(self._structured.get("education.graduation_date", ""))
             if year:
                 return AnswerResolution(answer=year, source="computed:education.end_year")
 
-        if "what year will you graduate" in question:
-            year = _graduation_year(self._structured.get("education.graduation_date", ""))
-            if year:
-                return AnswerResolution(answer=year, source="computed:education.end_year")
 
         if forced_intent == "identity_linkedin_url" or "linkedin profile" in question:
             value = self._structured.get("identity.linkedin_url", "").strip()
