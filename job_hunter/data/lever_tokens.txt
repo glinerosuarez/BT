@@ -1,9 +1,0 @@
-atlassian
-lever
-plaid
-palantir
-spotify
-clari
-medium
-mindtickle
-outreach

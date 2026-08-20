@@ -16,10 +16,15 @@ from job_hunter.config import Settings
 _GMAIL_API_ROOT = "https://gmail.googleapis.com/gmail/v1/users/me"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _CODE_PATTERNS = (
-    re.compile(r"(?:security code|copy and paste this code[^:]*|enter this code[^:]*)[:\s]+([A-Za-z0-9]{8})", re.IGNORECASE),
+    re.compile(
+        r"(?:security code|one-time pass code|pass code|verification code|copy and paste this code[^:]*|enter this code[^:]*)[:\s]+([A-Za-z0-9]{4,8})",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b([0-9]{6,8})\b"),
     re.compile(r"\b([A-Z0-9]{8})\b"),
     re.compile(r"\b([a-zA-Z0-9]{8})\b"),
 )
+
 
 
 class GmailVerificationCodeClient:
@@ -52,6 +57,15 @@ class GmailVerificationCodeClient:
             requested_at=requested_at,
             sender_filter="",
             allowed_lengths=(6, 8),
+        )
+
+    def poll_for_oracle_hcm_code(self, *, recipient_email: str, requested_at: datetime) -> str | None:
+        """Poll for Oracle HCM Cloud's 6-digit email OTP verification code."""
+        return self.poll_for_code(
+            recipient_email=recipient_email,
+            requested_at=requested_at,
+            sender_filter="",  # Oracle HCM sender varies by tenant
+            allowed_lengths=(6,),
         )
 
     def poll_for_code(

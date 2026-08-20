@@ -43,6 +43,8 @@ class PlaywrightBrowserSession:
         self._closed = False
 
     def new_page(self):
+        if hasattr(self._context, "pages") and self._context.pages:
+            return self._context.pages[0]
         return self._context.new_page()
 
     def close(self) -> None:
@@ -59,6 +61,8 @@ class AttachedBrowserSession:
         self._context = context
 
     def new_page(self):
+        if hasattr(self._context, "pages") and self._context.pages:
+            return self._context.pages[0]
         return self._context.new_page()
 
     def close(self) -> None:

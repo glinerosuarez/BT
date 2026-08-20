@@ -11,6 +11,8 @@ from job_hunter.apply.adapters.handshake import HandshakeAdapter
 from job_hunter.apply.adapters.handshake_fellow import HandshakeFellowAdapter
 from job_hunter.apply.adapters.icims import ICIMSAdapter
 from job_hunter.apply.adapters.linkedin import LinkedInEasyApplyAdapter
+from job_hunter.apply.adapters.oracle_hcm import OracleHCMAdapter
+from job_hunter.apply.adapters.phenom import PhenomAdapter
 from job_hunter.apply.adapters.workday import WorkdayAdapter
 from job_hunter.apply.browser import BrowserManager
 from job_hunter.apply.email_codes import GmailVerificationCodeClient
@@ -56,6 +58,8 @@ class ApplicationService:
         ashby_adapter: AshbyAdapter | None = None,
         icims_adapter: ICIMSAdapter | None = None,
         workday_adapter: WorkdayAdapter | None = None,
+        phenom_adapter: PhenomAdapter | None = None,
+        oracle_hcm_adapter: OracleHCMAdapter | None = None,
         email_code_client: GmailVerificationCodeClient | None = None,
     ) -> None:
         self.settings = settings
@@ -69,6 +73,8 @@ class ApplicationService:
         self.ashby_adapter = ashby_adapter or AshbyAdapter()
         self.icims_adapter = icims_adapter or ICIMSAdapter()
         self.workday_adapter = workday_adapter or WorkdayAdapter()
+        self.phenom_adapter = phenom_adapter or PhenomAdapter()
+        self.oracle_hcm_adapter = oracle_hcm_adapter or OracleHCMAdapter()
         self.email_code_client = email_code_client
 
     def submit_job(self, *, job_id: int, profile_name: str, force: bool = False) -> ApplicationRunRecord:
@@ -81,7 +87,11 @@ class ApplicationService:
         profile, answers = load_application_inputs(self.settings.tailoring_profile_root, profile_name)
         resolver = AnswerResolver(profile=profile, answers=answers)
         tailoring_artifact = self._ensure_tailoring_artifact(job_id=job_id, profile_name=profile_name, force=force)
-        context = self._build_adapter_context(profile, tailoring_artifact["output_dir"])
+        context = self._build_adapter_context(
+            profile,
+            tailoring_artifact["output_dir"],
+            job_source=str(job["source"] or ""),
+        )
 
         session_adapter_name = self._session_adapter_name_for_source(str(job["source"] or ""))
         session = self.browser_manager.open(adapter_name=session_adapter_name)
@@ -146,7 +156,11 @@ class ApplicationService:
                 )
                 session_adapter_name = adapter_name
                 page = session.new_page()
-                page.goto(target_url, wait_until="domcontentloaded")
+                try:
+                    page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+                except TypeError:
+                    page.goto(target_url, wait_until="domcontentloaded")
+
 
             duplicate = self.store.find_application_run(
                 job_id=job_id,
@@ -229,6 +243,7 @@ class ApplicationService:
             result.status == "blocked"
             and result.blocker is not None
             and result.blocker.reason in {
+                "captcha",
                 "manual_checkpoint_required",
                 "candidate_account_bootstrap_required",
             }
@@ -252,7 +267,11 @@ class ApplicationService:
         profile, answers = load_application_inputs(self.settings.tailoring_profile_root, profile_name)
         resolver = AnswerResolver(profile=profile, answers=answers)
         tailoring_artifact = self._ensure_tailoring_artifact(job_id=job_id, profile_name=profile_name, force=force)
-        context = self._build_adapter_context(profile, tailoring_artifact["output_dir"])
+        context = self._build_adapter_context(
+            profile,
+            tailoring_artifact["output_dir"],
+            job_source=str(job["source"] or ""),
+        )
 
         session_adapter_name = self._session_adapter_name_for_source(str(job["source"] or ""))
         session = self.browser_manager.open(adapter_name=session_adapter_name, headless=False)
@@ -310,6 +329,11 @@ class ApplicationService:
                 session_adapter_name = adapter_name
                 page = session.new_page()
                 page.goto(target_url, wait_until="domcontentloaded")
+                if hasattr(page, "wait_for_load_state"):
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=6000)
+                    except Exception:
+                        pass
 
             duplicate = self.store.find_application_run(
                 job_id=job_id,
@@ -379,7 +403,13 @@ class ApplicationService:
         row = self.store.get_application_run(application_run_id)
         if row is None:
             raise RuntimeError(f"Application id {application_run_id} not found.")
-        if str(row["status"]) not in {"blocked", "failed"}:
+        status = str(row["status"])
+        # Manual-gate runs intentionally remain "applying" while their
+        # browser is handed to the candidate.  Once the handoff is complete,
+        # normal resume must treat that persisted blocker as resumable rather
+        # than silently returning the stale run.
+        is_manual_checkpoint = status == "applying" and bool(str(row["blocked_reason"] or "").strip())
+        if status not in {"blocked", "failed"} and not is_manual_checkpoint:
             return self._run_record(application_run_id)
         return self.submit_job(job_id=int(row["job_id"]), profile_name=str(row["profile_name"]), force=True)
 
@@ -416,7 +446,11 @@ class ApplicationService:
                 profile_name=profile_name,
                 force=False,
             )
-        context = self._build_adapter_context(profile, tailoring_artifact["output_dir"])
+        context = self._build_adapter_context(
+            profile,
+            tailoring_artifact["output_dir"],
+            job_source=str(job["source"] or ""),
+        )
         adapter = self._adapter_for_name(adapter_name)
         manual_url = str(row["current_url"] or row["target_url"] or job["url"] or "").strip()
         if not manual_url:
@@ -426,6 +460,11 @@ class ApplicationService:
         try:
             page = session.new_page()
             page.goto(manual_url, wait_until="domcontentloaded")
+            if hasattr(page, "wait_for_load_state"):
+                try:
+                    page.wait_for_load_state("networkidle", timeout=6000)
+                except Exception:
+                    pass
             if notify is not None:
                 notify(self._manual_checkpoint_message(row))
             if wait_for_user is not None:
@@ -529,6 +568,7 @@ class ApplicationService:
                     f"{question_text}{answer_clause}, leave the application on the same page after the selection, "
                     "then return here and press Enter."
                 )
+
         return (
             "Manual gate continuation opened in the browser. "
             "Complete any captcha, login, or consent steps, navigate to the application form, "
@@ -643,7 +683,7 @@ class ApplicationService:
             raise RuntimeError("No tailoring artifact available for application.")
         return {key: artifact[key] for key in artifact.keys()}
 
-    def _build_adapter_context(self, profile, artifact_output_dir: str):
+    def _build_adapter_context(self, profile, artifact_output_dir: str, *, job_source: str = ""):
         from job_hunter.apply.adapters.base import AdapterContext
 
         output_dir = Path(artifact_output_dir)
@@ -669,6 +709,7 @@ class ApplicationService:
             profile=profile,
             workday_account_store_path=None,
             transcript_path=transcript_path,
+            job_source=job_source,
         )
 
     def _resolve_adapter(self, job, page, target_url: str):
@@ -717,6 +758,20 @@ class ApplicationService:
             return "greenhouse", self.greenhouse_adapter, target_url
         if self.ashby_adapter.is_ashby_target(target_url, page=page):
             return "ashby", self.ashby_adapter, target_url
+        if self.phenom_adapter.is_phenom_target(target_url, page=page):
+            underlying_apply_url = self.phenom_adapter.extract_underlying_apply_url(page)
+            if underlying_apply_url:
+                page.goto(underlying_apply_url, wait_until="domcontentloaded")
+                target_url = underlying_apply_url
+                if self.greenhouse_adapter.is_greenhouse_target(target_url, page=page):
+                    return "greenhouse", self.greenhouse_adapter, target_url
+                if self.ashby_adapter.is_ashby_target(target_url, page=page):
+                    return "ashby", self.ashby_adapter, target_url
+                if self.icims_adapter.is_icims_target(target_url, page=page):
+                    return "icims", self.icims_adapter, target_url
+                if self.workday_adapter.is_workday_target(target_url, page=page):
+                    return "workday", self.workday_adapter, target_url
+            return "phenom", self.phenom_adapter, target_url
         if self.icims_adapter.is_icims_target(target_url, page=page):
             return "icims", self.icims_adapter, target_url
         if self.workday_adapter.is_workday_target(target_url, page=page):
@@ -727,6 +782,8 @@ class ApplicationService:
         if self.handshake_fellow_adapter.is_handshake_fellow_target(target_url, page=page):
             current_url = str(getattr(page, "url", target_url) or target_url)
             return "handshake_fellow", self.handshake_fellow_adapter, current_url
+        if self.oracle_hcm_adapter.is_oracle_hcm_target(target_url, page=page):
+            return "oracle_hcm", self.oracle_hcm_adapter, target_url
         blocker_reason, details = self._classify_unsupported_target(
             source=source,
             target_url=target_url,
@@ -773,6 +830,8 @@ class ApplicationService:
             return "handshake"
         if source == "ashby":
             return "ashby"
+        if source == "phenom":
+            return "phenom"
         return "greenhouse"
 
     def _discover_external_apply_url(self, job, page, target_url: str, *, allow_click: bool = True) -> str:
@@ -959,10 +1018,14 @@ class ApplicationService:
             return self.handshake_fellow_adapter
         if adapter_name == "ashby":
             return self.ashby_adapter
+        if adapter_name == "phenom":
+            return self.phenom_adapter
         if adapter_name == "icims":
             return self.icims_adapter
         if adapter_name == "workday":
             return self.workday_adapter
+        if adapter_name == "oracle_hcm":
+            return self.oracle_hcm_adapter
         raise RuntimeError(f"Unsupported adapter name: {adapter_name}")
 
     def _persist_result(self, *, run_id: int, result: SubmitResult, output_dir: Path, page) -> None:
@@ -1023,7 +1086,7 @@ class ApplicationService:
         recipient_email: str,
         submit_started_at: datetime,
     ) -> SubmitResult:
-        if adapter_name not in {"greenhouse", "workday"}:
+        if adapter_name not in {"greenhouse", "workday", "oracle_hcm"}:
             return result
         if result.blocker is None or result.blocker.reason != "email_verification_required":
             return result
@@ -1032,6 +1095,11 @@ class ApplicationService:
         try:
             if adapter_name == "workday":
                 code = self.email_code_client.poll_for_workday_code(
+                    recipient_email=recipient_email,
+                    requested_at=submit_started_at,
+                )
+            elif adapter_name == "oracle_hcm":
+                code = self.email_code_client.poll_for_oracle_hcm_code(
                     recipient_email=recipient_email,
                     requested_at=submit_started_at,
                 )

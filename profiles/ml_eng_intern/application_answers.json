@@ -1,75 +1,75 @@
 {
-  "question_overrides": [
-    {
-      "match_type": "exact",
-      "pattern": "Please select the ethnicity which most accurately describes how you identify yourself.*",
-      "answer": "I prefer not to answer"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "This is an on-site opportunity in Dallas, TX. Will you be able to report to this location?*",
-      "answer": "Yes"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "Terms & Conditions*",
-      "answer": "I agree"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "What country do you currently reside in?*",
-      "answer": "United States"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "Do you have relevant internship experience at a proprietary trading firm?*",
-      "answer": "No"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "Please re-confirm the university you currently attend *",
-      "answer": "University of Southern California"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "Tell me about the most exciting project you've built (please type answer without AI)",
-      "answer": "Built an agentic document extraction pipeline to ingest ESG data from more than 1000 company reports, using a LangChain LLM orchestrator hosted on Google Agent Platform, fine-tuned vision-language models (VLMs), OCR models, and PyTorch-based deep learning workflows. Designed and deployed our evals approach, which included building eval datasets, using Phoenix to instrument agent calls with OpenTelemetry, computing metrics, and running experiments across versions to improve visibility into agent performance and make the system more truthful, increasing precision from 50% with our initial zero-shot approach to 80% with a RAG-based system."
-    },
-    {
-      "match_type": "exact",
-      "pattern": "What internship term(s) are you targeting? Please check all that apply*",
-      "answer": "Fall"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "What is the duration of internship you are available to work full time, 40 hours/week? *",
-      "answer": "6 Months"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "Depending on the needs of the role, we may have openings in multiple locations. Please choose which locations you are open to working in/relocating to. (Select all that apply) *",
-      "answer": "Santa Clara, CA"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "Are you willing and able to work in the office 5 days a week? *",
-      "answer": "Yes"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "How did you hear about the role?*",
-      "answer": "Other (please specify)"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "If you selected \"Other,\" please specify how you heard about us",
-      "answer": "JobRight"
-    },
-    {
-      "match_type": "exact",
-      "pattern": "I have read and understand the Export Control statement included in the job description above.*",
-      "answer": "Yes"
-    },
+    "question_overrides": [
+        {
+            "match_type": "exact",
+            "pattern": "Please select the ethnicity which most accurately describes how you identify yourself.*",
+            "answer": "I prefer not to answer"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "This is an on-site opportunity in Dallas, TX. Will you be able to report to this location?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Terms & Conditions*",
+            "answer": "I agree"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What country do you currently reside in?*",
+            "answer": "United States"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Do you have relevant internship experience at a proprietary trading firm?*",
+            "answer": "No"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Please re-confirm the university you currently attend *",
+            "answer": "University of Southern California"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Tell me about the most exciting project you've built (please type answer without AI)",
+            "answer": "Built an agentic document extraction pipeline to ingest ESG data from more than 1000 company reports, using a LangChain LLM orchestrator hosted on Google Agent Platform, fine-tuned vision-language models (VLMs), OCR models, and PyTorch-based deep learning workflows. Designed and deployed our evals approach, which included building eval datasets, using Phoenix to instrument agent calls with OpenTelemetry, computing metrics, and running experiments across versions to improve visibility into agent performance and make the system more truthful, increasing precision from 50% with our initial zero-shot approach to 80% with a RAG-based system."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What internship term(s) are you targeting? Please check all that apply*",
+            "answer": "Fall"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What is the duration of internship you are available to work full time, 40 hours/week? *",
+            "answer": "6 Months"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Depending on the needs of the role, we may have openings in multiple locations. Please choose which locations you are open to working in/relocating to. (Select all that apply) *",
+            "answer": "Santa Clara, CA"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Are you willing and able to work in the office 5 days a week? *",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "How did you hear about the role?*",
+            "answer": "Other (please specify)"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "If you selected \"Other,\" please specify how you heard about us",
+            "answer": "JobRight"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "I have read and understand the Export Control statement included in the job description above.*",
+            "answer": "Yes"
+        },
         {
             "match_type": "exact",
             "pattern": "How Did You Hear About Us?*",
@@ -82,7 +82,7 @@
         },
         {
             "match_type": "exact",
-            "pattern": "Are you currently enrolled in an accredited academic program (Associate’s, Bachelor’s, Master’s, or PhD), and will you remain enrolled for the full duration of the internship?*",
+            "pattern": "Are you currently enrolled in an accredited academic program (Associate\u2019s, Bachelor\u2019s, Master\u2019s, or PhD), and will you remain enrolled for the full duration of the internship?*",
             "answer": "Yes"
         },
         {
@@ -113,7 +113,7 @@
         {
             "match_type": "exact",
             "pattern": "Why are you interested in this specific role at Appian?*",
-            "answer": "I’m interested in Appian because the role combines production software engineering with AI-powered automation, technical rigor, and collaboration on a platform used for mission-critical enterprise work. My experience building and evaluating LLM/RAG systems, full-stack AI workflows, and scalable data pipelines aligns with Appian’s focus on reliable AI capabilities and high-quality engineering. I’m particularly excited to contribute to real engineering work, learn through code reviews and mentorship, and use AI coding tools responsibly to improve development speed while maintaining correctness and maintainability."
+            "answer": "I\u2019m interested in Appian because the role combines production software engineering with AI-powered automation, technical rigor, and collaboration on a platform used for mission-critical enterprise work. My experience building and evaluating LLM/RAG systems, full-stack AI workflows, and scalable data pipelines aligns with Appian\u2019s focus on reliable AI capabilities and high-quality engineering. I\u2019m particularly excited to contribute to real engineering work, learn through code reviews and mentorship, and use AI coding tools responsibly to improve development speed while maintaining correctness and maintainability."
         },
         {
             "match_type": "contains",
@@ -304,12 +304,178 @@
             "match_type": "exact",
             "pattern": "What motivates you to pursue an opportunity with Walleye Capital?*",
             "answer": "I am interested in Walleye Capital because the role combines large-scale data work, quantitative analysis, and infrastructure used in live decision-making. My background includes building anomaly detection systems, evaluation infrastructure, and high-volume data pipelines on AWS and Spark, and I am interested in applying that foundation in an environment where analytical rigor and fast iteration both matter. I am also drawn to the chance to work closely with experienced researchers and engineers while contributing to projects that support real trading and risk workflows."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Do you have experience with LLMs?",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Have you built a personal project using LLM\u2019s?",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What are some AI specific technologies you are comfortable with?",
+            "answer": "I'm comfortable with Python, PyTorch, LangChain, RAG systems, LLM orchestration and tool-calling workflows, OCR and vision-language models, agent evaluation with Phoenix and OpenTelemetry, and deploying AI workloads on GCP and AWS."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Why do you want to work at Notion?",
+            "answer": "I want to work at Notion because it is building software that makes knowledge work clearer and less fragmented, while treating AI as part of the product rather than a separate feature. I've built LLM-based systems for document extraction and data workflows, including evaluation infrastructure that improved precision from 50% to 80%. I'd value applying that experience to product engineering problems where reliability, usability, and thoughtful tradeoffs matter."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Please indicate all of the locations that you would be interested in relocating to for this position.",
+            "answer": "New York, NY || San Francisco, CA"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "How many prior internships have you had?",
+            "answer": "3+"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What type of engineering role are you interested in?",
+            "answer": "Data || AI || Infra"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "First example:*",
+            "answer": "Built an agentic ESG document-extraction pipeline processing 1,000+ company reports with LangChain orchestration, fine-tuned vision-language models, OCR, and PyTorch workflows."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "First example:",
+            "answer": "Built an agentic ESG document-extraction pipeline processing 1,000+ company reports with LangChain orchestration, fine-tuned vision-language models, OCR, and PyTorch workflows."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Second example:",
+            "answer": "Designed evaluation infrastructure for that pipeline, including curated eval datasets and OpenTelemetry/Phoenix instrumentation; improved precision from 50% with zero-shot extraction to 80% using RAG."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Second example:",
+            "answer": "Designed evaluation infrastructure for that pipeline, including curated eval datasets and OpenTelemetry/Phoenix instrumentation; improved precision from 50% with zero-shot extraction to 80% using RAG."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Third example:",
+            "answer": "Built an IoT anomaly-detection pipeline at EPAM that caught 95% of incorrect records before production, improving data quality for a SaaS platform."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Third example:",
+            "answer": "Built an IoT anomaly-detection pipeline at EPAM that caught 95% of incorrect records before production, improving data quality for a SaaS platform."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Fourth example:",
+            "answer": "Optimized Spark workloads processing terabytes of scientific data from nearly one day to under one hour, reducing AWS EMR costs by about $10,000 per month."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Fourth example:",
+            "answer": "Optimized Spark workloads processing terabytes of scientific data from nearly one day to under one hour, reducing AWS EMR costs by about $10,000 per month."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Do you have prior internship or co-op experience?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What intern season are you interested in?*",
+            "answer": "Summer 2026 (May - August)"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Ideal start date in office",
+            "answer": "May 15, 2026"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Ideal start date in office",
+            "answer": "May 15, 2026"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "I understand that this position requires me to work on-site. *",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Address Line 1 *",
+            "answer": "3030 Shrine Pl"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "address line 1 *",
+            "answer": "3030 Shrine Pl"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "ZIP Code *",
+            "answer": "90007"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "ZIP Code*",
+            "answer": "90007"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "County *",
+            "answer": "Los Angeles"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "how did you hear of this opportunity",
+            "answer": "ONE Gas Job Board"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "related to a current or previous employee",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "ever worked for one gas",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "convicted of, pled guilty or no contest",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "currently working for a government agency",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "wish to be considered for other opportunities",
+            "answer": "Yes"
         }
     ],
     "field_defaults": {
+        "ai_resume_screening_opt_in": true,
+        "close_personal_relationship": false,
+        "company_client_relationship": false,
+        "previous_employers": "EPAM || Perficient || Impatico",
+        "pursue_cpa": false,
+        "valid_drivers_license": true,
         "veteran_status": false,
         "gender": "Male",
         "race_ethnicity": "Hispanic or Latino",
-        "disability_status": false
+        "disability_status": false,
+        "street_address": "3030 Shrine Pl",
+        "address_line_1": "3030 Shrine Pl",
+        "zip_code": "90007",
+        "postal_code": "90007",
+        "county": "Los Angeles"
     }
 }

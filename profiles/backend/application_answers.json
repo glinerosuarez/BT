@@ -1,0 +1,55 @@
+{
+  "question_overrides": [
+    {
+      "match_type": "exact",
+      "pattern": "How Did You Hear About Us?*",
+      "answer": "Career Website"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "are you willing to complete a background check?",
+      "answer": "Yes"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "hear about us",
+      "answer": "LinkedIn"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "how did you hear about",
+      "answer": "LinkedIn"
+    },
+    {
+      "match_type": "regex",
+      "pattern": "pronouns?",
+      "answer": "He, him, his"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "bound by any agreements with a current or former employer",
+      "answer": "No"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Do you have any outstanding offers or deadlines?*",
+      "answer": "No"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "What is your office location preference?*",
+      "answer": "New York"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Are you interested in our Women's Winternship program?*",
+      "answer": "No"
+    }
+  ],
+  "field_defaults": {
+    "veteran_status": false,
+    "gender": "Male",
+    "race_ethnicity": "Hispanic or Latino",
+    "disability_status": false
+  }
+}

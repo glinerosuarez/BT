@@ -166,6 +166,11 @@
             "answer": "Los Angeles, CA"
         },
         {
+            "match_type": "exact",
+            "pattern": "role description*",
+            "answer": "Built an agentic document-extraction pipeline for ESG data from more than 1,000 company reports using a LangChain LLM orchestrator, fine-tuned vision-language models, OCR, and PyTorch workflows. Designed evaluation datasets and instrumented agent calls with Phoenix and OpenTelemetry, improving extraction precision from 50% in a zero-shot approach to 80% with RAG."
+        },
+        {
             "match_type": "contains",
             "pattern": "zip code",
             "answer": "90007"
@@ -214,7 +219,52 @@
             "match_type": "contains",
             "pattern": "are you proficient in pyspark",
             "answer": "Yes"
-        }
+        },
+    {
+      "match_type": "exact",
+      "pattern": "please provide a brief summary of your experience in data management and analysis.*",
+      "answer": "I have built production data pipelines, quality frameworks, and analysis systems using Python, SQL, Spark, Airflow, AWS, and GCP. At EPAM, I improved Spark pipeline runtime by 50% and reduced SLA breaches by 75%; at SoFi, I modernized a workflow processing 1 TB of data into 2,000+ reports daily, improving worst-case runtime by 12x. I have also built high-volume IoT ingestion pipelines, implemented schema enforcement and anomaly detection, and developed evaluation datasets and observability workflows for AI systems."
+    },
+    {
+      "match_type": "exact",
+      "pattern": "please provide a brief summary of your experience using ai tools for data management.*",
+      "answer": "I have used AI tools to make data-management workflows more reliable and useful, including building an agentic document-extraction pipeline that ingests data from over 1,000 reports using LangChain, fine-tuned vision-language models, OCR, and PyTorch. I built evaluation datasets and instrumented agent behavior with Phoenix and OpenTelemetry, improving precision from 50% in a zero-shot approach to 80% with RAG. I also use AI and ML evaluation and observability practices alongside production data pipelines to monitor quality, diagnose failures, and improve downstream data reliability."
+    },
+    {
+      "match_type": "exact",
+      "pattern": "please briefly describe the most significant challenge you have encountered in your work and the approach you took to resolve it.*",
+      "answer": "A significant challenge was improving the reliability of an AI document-extraction pipeline processing more than 1,000 ESG reports. The initial zero-shot approach achieved only 50% precision. I built evaluation datasets, introduced retrieval-augmented generation, and instrumented the system with Phoenix and OpenTelemetry to identify failure patterns and compare versions. This increased precision to 80% while making the workflow more observable and easier to improve."
+    },
+    {
+      "match_type": "exact",
+      "pattern": "where are you physically based?",
+      "answer": "Los Angeles, CA"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "does your current employer have any restrictions on your ability to work as a part time or full time employee at vendelux?",
+      "answer": "No"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "are you able to commit to our nyc hq up to 4 times a week?",
+      "answer": "Yes"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "minimum pay desired*",
+      "answer": "$25/hr"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "are you willing to travel?*",
+      "answer": "Yes"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "are you subject to any restrictions in the scope of your contemplated employment activities as a result of your current or prior employment, such as agreements to protect confidential or proprietary information, or agreements not to compete or not to solicit former customers or employees?*",
+      "answer": "No"
+    }
     ],
     "field_defaults": {
         "veteran_status": false,

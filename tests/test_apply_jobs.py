@@ -15,6 +15,7 @@ from job_hunter.apply.adapters.handshake import HandshakeAdapter
 from job_hunter.apply.adapters.handshake_fellow import HandshakeFellowAdapter
 from job_hunter.apply.adapters.icims import ICIMSAdapter
 from job_hunter.apply.adapters.linkedin import LinkedInEasyApplyAdapter
+from job_hunter.apply.adapters.phenom import PhenomAdapter
 from job_hunter.apply.adapters.workday import WorkdayAdapter
 from job_hunter.apply.email_codes import extract_verification_code
 from job_hunter.apply.profile_loader import ProfileValidationError, load_application_inputs
@@ -54,6 +55,7 @@ class FakePage:
         greenhouse=True,
         icims=False,
         ashby=False,
+        phenom=False,
     ) -> None:
         self.url = url
         self._fields = list(fields or [])
@@ -62,6 +64,7 @@ class FakePage:
         self._greenhouse = greenhouse
         self._icims = icims
         self._ashby = ashby
+        self._phenom = phenom
         self._content = ""
         self._login_wall = False
         self._captcha = False
@@ -120,6 +123,9 @@ class FakePage:
 
     def detect_ashby(self) -> bool:
         return self._ashby
+
+    def detect_phenom(self) -> bool:
+        return self._phenom
 
     def detect_candidate_profile(self) -> bool:
         return self._candidate_profile
@@ -643,7 +649,135 @@ class ApplyJobsTests(unittest.TestCase):
             "No",
         )
         self.assertEqual(
+            resolver.resolve(
+                question_text="Are you currently working at Key (as an employee, intern, or contractor)?*",
+                field_name="currently-working-at-key",
+                field_type="listbox-button",
+            ).answer,
+            "No",
+        )
+        self.assertEqual(
+            resolver.resolve(
+                question_text="Are you willing to relocate?*",
+                field_name="7dffeb7d325c100165da79533dca0006",
+                field_type="listbox-button",
+            ).answer,
+            "Yes",
+        )
+        self.assertEqual(
+            resolver.resolve(
+                question_text="Are you currently running for or planning to run for public office OR do you currently hold, or have you held in the past two (2) years, a position with a government entity?*",
+                field_name="public-office",
+                field_type="listbox-button",
+            ).answer,
+            "No",
+        )
+        self.assertEqual(
+            resolver.resolve(
+                question_text="Have you ever been discharged, asked to resign, or resigned to avoid termination from any former employment?*",
+                field_name="employment-termination",
+                field_type="listbox-button",
+            ).answer,
+            "No",
+        )
+        self.assertEqual(
+            resolver.resolve(
+                question_text="Application acknowledgement: select I acknowledge to certify the application is true.*",
+                field_name="application-acknowledgement",
+                field_type="listbox-button",
+            ).answer,
+            "I acknowledge",
+        )
+        self.assertEqual(
+            resolver.resolve(
+                question_text=(
+                    "I recognize that I may waive my right to receive a copy of any public record "
+                    "obtained by the company from a non-CRA source pursuant to California Civil Code "
+                    "section 1786, et seq. Please select the appropriate box."
+                ),
+                field_name="california-public-record-waiver",
+                field_type="listbox-button",
+            ).answer,
+            "Waive",
+        )
+        california_profile, california_answers = load_application_inputs(str(self.profile_root), "default")
+        california_profile.identity.region = "CA"
+        california_resolver = AnswerResolver(profile=california_profile, answers=california_answers)
+        self.assertEqual(
+            california_resolver.resolve(
+                question_text="Are you a California resident?*",
+                field_name="california-resident",
+                field_type="listbox-button",
+            ).answer,
+            "Yes",
+        )
+        self.assertEqual(
             resolver.resolve(question_text="Were you previously employed at DataRobot?", field_name="candidateIsPreviousWorker", field_type="radio-group").answer,
+            "No",
+        )
+        resolver.answers.field_defaults["previous_employers"] = "EPAM || Perficient || Impatico"
+        self.assertEqual(
+            resolver.resolve(
+                question_text="Have you ever worked at Crowe before?*",
+                field_name="previous-employer",
+                field_type="listbox-button",
+            ).answer,
+            "No",
+        )
+        resolver.answers.field_defaults["pursue_cpa"] = "false"
+        self.assertEqual(
+            resolver.resolve(
+                question_text="Do you plan to pursue a CPA?*",
+                field_name="cpa-intent",
+                field_type="listbox-button",
+            ).answer,
+            "No",
+        )
+        resolver.answers.field_defaults["valid_drivers_license"] = "true"
+        self.assertEqual(
+            resolver.resolve(
+                question_text="Do you have a valid driver's license?*",
+                field_name="drivers-license",
+                field_type="listbox-button",
+            ).answer,
+            "Yes",
+        )
+        resolver.answers.field_defaults["ai_resume_screening_opt_in"] = "true"
+        self.assertEqual(
+            resolver.resolve(
+                question_text="We use an AI-assisted resume-screening tool to help recruiters manage applications.*",
+                field_name="ai-screening-notice",
+                field_type="listbox-button",
+            ).answer,
+            "Opt In",
+        )
+        self.assertEqual(
+            resolver.resolve(
+                question_text="Have you ever worked for EPAM?*",
+                field_name="previous-employer",
+                field_type="listbox-button",
+            ).answer,
+            "Yes",
+        )
+        resolver.answers.field_defaults["company_client_relationship"] = "false"
+        self.assertEqual(
+            resolver.resolve(
+                question_text="Do you currently work at a Crowe client?*",
+                field_name="company-client",
+                field_type="listbox-button",
+            ).answer,
+            "No",
+        )
+        resolver.answers.field_defaults["close_personal_relationship"] = "false"
+        self.assertEqual(
+            resolver.resolve(
+                question_text=(
+                    "Do you have a familial (by blood or marriage), romantic, or close personal relationship "
+                    "with a Crowe employee or applicant?*"
+                ),
+                field_name="personal-relationship",
+                field_type="listbox-button",
+            ).answer,
             "No",
         )
         self.assertEqual(
@@ -762,6 +896,35 @@ class ApplyJobsTests(unittest.TestCase):
             ),
             "2027",
         )
+        self.assertEqual(
+            adapter._date_component_value(
+                field={"field_name": "workExperience-4--startDate-dateSectionMonth-input"},
+                value="5",
+            ),
+            "05",
+        )
+
+    def test_workday_uses_explicit_current_employment_start_date(self) -> None:
+        profile, answers = load_application_inputs(str(self.profile_root), "default")
+        profile.employment.current_start_date = "2026-05"
+        resolver = AnswerResolver(profile=profile, answers=answers)
+
+        self.assertEqual(
+            resolver.resolve(
+                question_text="From*",
+                field_name="workExperience-4--startDate-dateSectionMonth-input",
+                field_type="text",
+            ).answer,
+            "5",
+        )
+        self.assertEqual(
+            resolver.resolve(
+                question_text="From*",
+                field_name="workExperience-4--startDate-dateSectionYear-input",
+                field_type="text",
+            ).answer,
+            "2026",
+        )
 
     def test_workday_fills_explicit_self_identification_signed_date(self) -> None:
         resolution = WorkdayAdapter()._signed_attestation_date_resolution(
@@ -835,6 +998,20 @@ class ApplyJobsTests(unittest.TestCase):
             )
         )
 
+    def test_workday_waiver_listbox_matches_portal_full_label(self) -> None:
+        adapter = WorkdayAdapter()
+        self.assertGreater(
+            adapter._listbox_option_match_score(
+                field_name="california-public-record-waiver",
+                target="Waive",
+                candidate=(
+                    "I waive and do not wish to receive a copy of any public records "
+                    "obtained by the company from a non-CRA source about me."
+                ),
+            ),
+            0,
+        )
+
     def test_workday_veteran_status_equivalence_ignores_case_and_punctuation(self) -> None:
         adapter = WorkdayAdapter()
         self.assertTrue(
@@ -848,6 +1025,13 @@ class ApplyJobsTests(unittest.TestCase):
             adapter._is_effectively_same_value(
                 field_name="veteranStatus",
                 current_value="I am not a veteran",
+                desired_value="I am not a protected veteran.",
+            )
+        )
+        self.assertTrue(
+            adapter._is_effectively_same_value(
+                field_name="veteranStatus",
+                current_value="No, I am not a protected veteran",
                 desired_value="I am not a protected veteran.",
             )
         )
@@ -1079,6 +1263,33 @@ class ApplyJobsTests(unittest.TestCase):
         )
         self.assertEqual(resolution.answer, "Yes")
         self.assertIn("capability:greenhouse:work_auth_us", resolution.source)
+
+    def test_answer_resolver_applies_global_us_work_authorization_policy(self) -> None:
+        resolver = self._resolver()
+
+        authorization = resolver.resolve_for_portal(
+            portal="ashby",
+            question_text="Are you authorized to work lawfully in the United States?",
+            field_type="yes-no",
+        )
+        sponsorship = resolver.resolve_for_portal(
+            portal="ashby",
+            question_text="Will you now or in the future require sponsorship for employment in the United States?",
+            field_type="yes-no",
+        )
+
+        self.assertEqual(authorization.answer, "Yes")
+        self.assertEqual(authorization.source, "policy:work_authorization.us_authorized")
+        self.assertEqual(sponsorship.answer, "No")
+        self.assertEqual(sponsorship.source, "policy:work_authorization.no_sponsorship")
+
+        anchor_days = resolver.resolve_for_portal(
+            portal="ashby",
+            question_text="Are you able to commit to working from one of our offices on Anchor Days each week?",
+            field_type="yes-no",
+        )
+        self.assertEqual(anchor_days.answer, "Yes")
+        self.assertIn("capability:ashby:on_site_acknowledgement", anchor_days.source)
 
     def test_answer_resolver_computes_education_fields(self) -> None:
         profile, answers = load_application_inputs(str(self.profile_root), "default")
@@ -1433,6 +1644,52 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(result.blocker.reason, "missing_required_answer")
         self.assertFalse(page.submitted)
 
+    def test_ashby_adapter_normalizes_native_option_group_labels(self) -> None:
+        adapter = AshbyAdapter()
+
+        self.assertEqual(
+            adapter._matching_option_labels(["He/Him", "She/Her"], "He, him, his", multiple=False),
+            ["He/Him"],
+        )
+        self.assertEqual(
+            adapter._matching_option_labels(
+                ["New York, NY", "San Francisco, CA"],
+                "New York, NY || San Francisco, CA",
+                multiple=True,
+            ),
+            ["New York, NY", "San Francisco, CA"],
+        )
+        self.assertEqual(
+            adapter._matching_option_labels(
+                ["Los Angeles, California, United States"],
+                "Los Angeles, CA",
+                multiple=False,
+            ),
+            ["Los Angeles, California, United States"],
+        )
+        self.assertEqual(
+            adapter._matching_option_labels(["F-1", "H-1B", "None"], "No", multiple=False),
+            ["None"],
+        )
+        self.assertEqual(adapter._matching_option_labels(["Yes", "No"], "Maybe", multiple=False), [])
+
+    def test_ashby_adapter_detects_unsatisfied_invisible_recaptcha_after_submit(self) -> None:
+        adapter = AshbyAdapter()
+
+        class RecaptchaPage:
+            def locator(self, selector: str):
+                self.selector = selector
+
+                class Locator:
+                    def evaluate_all(self, script: str) -> bool:
+                        return True
+
+                return Locator()
+
+        page = RecaptchaPage()
+        self.assertTrue(adapter._has_unsatisfied_invisible_recaptcha(page))
+        self.assertEqual(page.selector, "textarea.g-recaptcha-response")
+
     def test_ashby_adapter_identifies_submission_spam_rejection(self) -> None:
         adapter = AshbyAdapter()
         page = FakePage(
@@ -1451,6 +1708,123 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(result.blocker.reason, "submission_flagged")
         self.assertTrue(page.submitted)
 
+    def test_phenom_adapter_fills_required_fields_uploads_artifacts_and_confirms(self) -> None:
+        adapter = PhenomAdapter()
+        page = FakePage(
+            url=(
+                "https://careers.example.com/apply?jobSeqNo=EXTERNAL123&"
+                "step=1&stepname=personalInformation"
+            ),
+            fields=[
+                {"field_name": "first_name", "question_text": "First Name", "field_type": "text", "required": True},
+                {"field_name": "last_name", "question_text": "Last Name", "field_type": "text", "required": True},
+                {"field_name": "email", "question_text": "Email", "field_type": "text", "required": True},
+                {"field_name": "resume", "question_text": "Resume", "field_type": "file", "required": True},
+                {"field_name": "cover_letter", "question_text": "Cover Letter", "field_type": "file", "required": True},
+                {
+                    "field_name": "work_auth",
+                    "question_text": "Are you legally authorized to work in the United States?",
+                    "field_type": "radio-group",
+                    "required": True,
+                    "current_value": "",
+                    "options": [{"selector": "#work-auth-yes", "label": "Yes"}, {"selector": "#work-auth-no", "label": "No"}],
+                },
+            ],
+            confirmation={"application_id": "phenom-123"},
+            easy_apply=False,
+            greenhouse=False,
+            phenom=True,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertTrue(adapter.is_phenom_target(page.url, page=page))
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(result.confirmation_payload["application_id"], "phenom-123")
+        self.assertEqual(page.values["first_name"], "Ada")
+        self.assertEqual(page.values["last_name"], "Lovelace")
+        self.assertEqual(page.values["resume"], self._adapter_context().resume_pdf_path)
+        self.assertEqual(page.values["cover_letter"], self._adapter_context().cover_letter_pdf_path)
+        self.assertEqual(page.values["work_auth"], "Yes")
+        self.assertTrue(page.submitted)
+
+    def test_phenom_adapter_blocks_on_required_unknown_question(self) -> None:
+        adapter = PhenomAdapter()
+        page = FakePage(
+            url="https://careers.example.com/apply?jobSeqNo=EXTERNAL123&stepname=personalInformation",
+            fields=[
+                {
+                    "field_name": "freeform_essay",
+                    "question_text": "Describe your experience running an international division.",
+                    "field_type": "text",
+                    "required": True,
+                    "current_value": "",
+                }
+            ],
+            easy_apply=False,
+            greenhouse=False,
+            phenom=True,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.blocker.reason, "missing_required_answer")
+        self.assertFalse(page.submitted)
+
+    def test_phenom_adapter_advances_before_known_final_submit(self) -> None:
+        class Button:
+            def __init__(self, page, action: str, available: bool) -> None:
+                self.page = page
+                self.action = action
+                self.available = available
+                self.last = self
+
+            def count(self) -> int:
+                return 1 if self.available else 0
+
+            def click(self) -> None:
+                self.page.stage += 1
+
+        class MultiStepPage:
+            url = "https://careers.example.com/apply?jobSeqNo=EXTERNAL123&step=1&stepname=personalInformation"
+
+            def __init__(self) -> None:
+                self.stage = 0
+                self.values: dict[str, str] = {}
+
+            def extract_fields(self):
+                if self.stage == 0:
+                    return [{"field_name": "first_name", "question_text": "First Name", "field_type": "text", "required": True}]
+                if self.stage == 1:
+                    return [{"field_name": "resume", "question_text": "Resume", "field_type": "file", "required": True}]
+                return []
+
+            def set_field(self, field, value: str) -> None:
+                self.values[field["field_name"]] = value
+
+            def extract_confirmation(self):
+                return {"message": "Application submitted"} if self.stage == 2 else {}
+
+            def content(self) -> str:
+                return ""
+
+            def get_by_role(self, role: str, *, name: str, exact: bool):
+                _ = role, exact
+                available = (self.stage == 0 and name == "Next") or (self.stage == 1 and name == "Submit Application")
+                return Button(self, name, available)
+
+            def wait_for_timeout(self, milliseconds: int) -> None:
+                _ = milliseconds
+
+        page = MultiStepPage()
+        result = PhenomAdapter().submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(page.values["first_name"], "Ada")
+        self.assertEqual(page.values["resume"], self._adapter_context().resume_pdf_path)
+        self.assertTrue(any(step.step_key.startswith("phenom:next:") for step in result.steps))
+
     def test_application_service_dispatches_ashby_target(self) -> None:
         page = FakePage(
             url="https://jobs.ashbyhq.com/Serval/d7fb089c-db8a-4877-a5f3-73a09e67f54b",
@@ -1466,6 +1840,42 @@ class ApplyJobsTests(unittest.TestCase):
 
         self.assertEqual(adapter_name, "ashby")
         self.assertIsInstance(adapter, AshbyAdapter)
+        self.assertEqual(target_url, page.url)
+
+    def test_application_service_dispatches_phenom_target(self) -> None:
+        page = FakePage(
+            url="https://careers.crowe.com/apply?jobSeqNo=CROCROUSR51782EXTERNALENUS&step=1&stepname=personalInformation",
+            easy_apply=False,
+            greenhouse=False,
+            phenom=True,
+        )
+        service = self._service(page)
+        job = self.store.get_job_for_application(1)
+
+        adapter_name, adapter, target_url = service._resolve_adapter(job, page, page.url)
+
+        self.assertEqual(adapter_name, "phenom")
+        self.assertIsInstance(adapter, PhenomAdapter)
+        self.assertEqual(target_url, page.url)
+
+    def test_application_service_routes_phenom_apply_url_to_underlying_workday_adapter(self) -> None:
+        page = FakePage(
+            url="https://careers.crowe.com/job/CROCROUSR51782EXTERNALENUS/AI-Engineering-Intern",
+            easy_apply=False,
+            greenhouse=False,
+            phenom=True,
+        )
+        page._content = (
+            '{"applyUrl":"https://crowe.wd12.myworkdayjobs.com/External_Careers/'
+            'job/Chicago-IL-USA/AI-Engineering-Intern_R-51782/apply"}'
+        )
+        service = self._service(page)
+        job = self.store.get_job_for_application(1)
+
+        adapter_name, adapter, target_url = service._resolve_adapter(job, page, page.url)
+
+        self.assertEqual(adapter_name, "workday")
+        self.assertIsInstance(adapter, WorkdayAdapter)
         self.assertEqual(target_url, page.url)
 
     def test_greenhouse_adapter_blocks_unknown_required_uploads(self) -> None:
@@ -2318,6 +2728,24 @@ class ApplyJobsTests(unittest.TestCase):
         )
         self.assertFalse(
             adapter._should_use_other_school(Page(), {"question_text": "School"}, 1, ["A", "B"]))
+
+    def test_workday_school_other_fallback_accepts_school_isnt_available_instruction(self) -> None:
+        class Page:
+            def locator(self, selector: str):
+                class Body:
+                    def inner_text(self, timeout: int = 0) -> str:
+                        return "If your school isn't available, type 'Other' and press Enter."
+
+                return Body()
+
+        self.assertTrue(
+            WorkdayAdapter()._should_use_other_school(
+                Page(),
+                {"question_text": "School or University*"},
+                0,
+                ["University of Southern California"],
+            )
+        )
 
     def test_workday_prompt_value_rejects_uncommitted_search_text(self) -> None:
         class Locator:
@@ -3535,6 +3963,29 @@ class ApplyJobsTests(unittest.TestCase):
         service = self._service(blocked_page)
         blocked = service.submit_job(job_id=1, profile_name="default", force=False)
         self.assertEqual(blocked.status, "blocked")
+
+        resumed_page = FakePage(
+            url="https://www.linkedin.com/jobs/view/1",
+            fields=[{"field_name": "identity.email", "question_text": "Email", "field_type": "text", "required": True}],
+            confirmation={"message": "ok"},
+        )
+        service.browser_manager = FakeBrowserManager(resumed_page)
+        resumed = service.resume(application_run_id=blocked.application_run_id)
+        self.assertEqual(resumed.status, "submitted")
+
+    def test_resume_retries_manual_gate_run_marked_applying(self) -> None:
+        blocked_page = FakePage(
+            url="https://www.linkedin.com/jobs/view/1",
+            fields=[{"field_name": "favorite_snack", "question_text": "Favorite snack", "field_type": "text", "required": True}],
+            confirmation={},
+        )
+        service = self._service(blocked_page)
+        blocked = service.submit_job(job_id=1, profile_name="default", force=False)
+        self.store.update_application_run(
+            blocked.application_run_id,
+            status="applying",
+            blocked_reason="manual_checkpoint_required",
+        )
 
         resumed_page = FakePage(
             url="https://www.linkedin.com/jobs/view/1",

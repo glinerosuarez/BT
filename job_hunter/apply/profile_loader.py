@@ -144,6 +144,7 @@ def _parse_profile(payload: dict[str, object]) -> ApplicationProfile:
             current_company=_require_str(employment, "current_company", section_name="employment"),
             current_title=_require_str(employment, "current_title", section_name="employment"),
             years_experience=_require_str(employment, "years_experience", section_name="employment"),
+            current_start_date=str(employment.get("current_start_date") or "").strip(),
         ),
         preferences=PreferenceProfile(
             salary_min_usd=_require_str(preferences, "salary_min_usd", section_name="preferences"),

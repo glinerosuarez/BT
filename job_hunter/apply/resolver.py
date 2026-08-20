@@ -35,7 +35,7 @@ _QUESTION_FIELD_MAP: list[tuple[tuple[str, ...], str]] = [
     (("years of experience",), "employment.years_experience"),
     (("salary", "compensation expectation", "compensation expectations"), "preferences.salary_min_usd"),
     (("remote",), "preferences.remote_ok"),
-    (("relocation",), "preferences.relocation_ok"),
+    (("relocation", "relocate"), "preferences.relocation_ok"),
 ]
 
 _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
@@ -87,6 +87,9 @@ _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
             "able to work on-site in one of our offices",
             "comfortable being onsite",
             "comfortable being on-site",
+            "anchor days",
+            "willing to relocate",
+            "willingness to relocate",
         ),
     ),
     ("education_end_month", ("end date month",)),
@@ -134,7 +137,7 @@ _FIELD_CAPABILITIES: tuple[FieldCapability, ...] = (
     FieldCapability(
         portal="ashby",
         widget_types=("yes-no",),
-        intents=("on_site_acknowledgement",),
+        intents=("on_site_acknowledgement", "work_auth_us", "future_sponsorship_us"),
         resolver_mode="computed_yes",
         submit_policy="safe_autofill",
     ),
@@ -183,6 +186,11 @@ class AnswerResolver:
         if structured_key:
             structured_value = self._structured.get(structured_key, "")
             if structured_value:
+                if structured_value.lower() in {"true", "false"}:
+                    return AnswerResolution(
+                        answer="Yes" if structured_value.lower() == "true" else "No",
+                        source=f"structured:{structured_key}",
+                    )
                 return AnswerResolution(answer=structured_value, source=f"structured:{structured_key}")
 
         default_key = normalized_field_name or normalized_question
@@ -263,8 +271,11 @@ class AnswerResolver:
             return "identity.region"
         for patterns, key in _QUESTION_FIELD_MAP:
             if any(_question_contains_pattern(question, pattern) or pattern == field_name for pattern in patterns):
+                if key == "identity.city" and any(term in question for term in ("council", "government", "agency", "elected", "utility", "commission")):
+                    continue
                 return key
         return ""
+
 
     def _capability_for(self, *, portal: str, field_type: str, intent: str | None) -> FieldCapability | None:
         if intent is None:
@@ -292,6 +303,14 @@ class AnswerResolver:
 
     def _computed_answer(self, *, question: str, field_name: str, field_type: str, forced_intent: str | None = None) -> AnswerResolution | None:
         normalized_field_name = field_name.lower()
+
+        # User-declared global policy: U.S. work authorization is affirmed and
+        # current or future sponsorship is declined, regardless of portal wording.
+        if _is_us_work_authorization_question(question):
+            return AnswerResolution(answer="Yes", source="policy:work_authorization.us_authorized")
+
+        if _is_us_sponsorship_question(question):
+            return AnswerResolution(answer="No", source="policy:work_authorization.no_sponsorship")
 
         if "first name" in question or field_name.endswith("first_name") or field_name == "first_name":
             first_name = _first_name(self._structured.get("identity.full_name", ""))
@@ -345,8 +364,79 @@ class AnswerResolver:
         if "18 or older" in question or "at least 18 years old" in question:
             return AnswerResolution(answer="Yes", source="computed:eligibility.age_of_majority")
 
-        if "relatives currently working" in question or "family members currently working" in question:
-            return AnswerResolution(answer="No", source="computed:employment.related_party")
+        if "valid driver's license" in question or "valid drivers license" in question:
+            drivers_license = str(self.answers.field_defaults.get("valid_drivers_license", "")).strip().lower()
+            if drivers_license in {"true", "yes", "1"}:
+                return AnswerResolution(answer="Yes", source="policy:identity.valid_drivers_license")
+
+        if "ai-assisted resume-screening" in question or "automated screening" in question:
+            screening_opt_in = str(self.answers.field_defaults.get("ai_resume_screening_opt_in", "")).strip().lower()
+            if screening_opt_in in {"true", "yes", "1", "opt in"}:
+                return AnswerResolution(answer="Opt In", source="policy:application.ai_resume_screening")
+
+        if "pursue a cpa" in question or "pursuing a cpa" in question:
+            cpa_intent = str(self.answers.field_defaults.get("pursue_cpa", "")).strip().lower()
+            if cpa_intent in {"false", "no", "0"}:
+                return AnswerResolution(answer="No", source="policy:education.pursue_cpa")
+
+        if _is_close_relationship_question(question):
+            close_relationship = str(
+                self.answers.field_defaults.get("close_personal_relationship", "")
+            ).strip().lower()
+            if close_relationship in {"false", "no", "0"}:
+                return AnswerResolution(answer="No", source="policy:employment.close_personal_relationship")
+
+        if "currently work at" in question and "client" in question:
+            client_relationship = str(
+                self.answers.field_defaults.get("company_client_relationship", "")
+            ).strip().lower()
+            if client_relationship in {"false", "no", "0"}:
+                return AnswerResolution(answer="No", source="policy:employment.company_client_relationship")
+
+        if (
+            "running for public office" in question
+            or ("government entity" in question and "past two" in question)
+        ):
+            return AnswerResolution(answer="No", source="policy:public_office.no")
+
+        if (
+            "discharged" in question
+            and "resign" in question
+            and "termination" in question
+        ):
+            return AnswerResolution(answer="No", source="policy:employment_termination.no")
+
+        if "application acknowledgement" in question and "i acknowledge" in question:
+            return AnswerResolution(answer="I acknowledge", source="policy:application_acknowledgement.accept")
+
+        if (
+            "may waive my right to receive a copy" in question
+            and "california civil code" in question
+            and "public record" in question
+        ):
+            return AnswerResolution(answer="Waive", source="policy:california_public_record.waive")
+
+        if "california resident" in question:
+            region = self._structured.get("identity.region", "").strip().lower()
+            if region in {"ca", "california"}:
+                return AnswerResolution(answer="Yes", source="computed:identity.california_resident")
+
+        if _is_prior_employment_question(question):
+            prior_employers = _split_answer_values(
+                self.answers.field_defaults.get("previous_employers", "")
+            )
+            if prior_employers:
+                answer = "Yes" if any(employer in question for employer in prior_employers) else "No"
+                return AnswerResolution(answer=answer, source="policy:employment_history")
+
+        if (
+            ("currently working at" in question or "ever worked at" in question)
+            and any(token in question for token in ("employee", "intern", "contractor"))
+        ):
+            current_company = self._structured.get("employment.current_company", "").strip().lower()
+            if current_company:
+                answer = "Yes" if current_company in question else "No"
+                return AnswerResolution(answer=answer, source="computed:employment.company_relationship")
 
         if "country of the position you are applying" in question:
             country = _canonical_country(self._structured.get("identity.country", "").strip())
@@ -358,10 +448,50 @@ class AnswerResolver:
             if country:
                 return AnswerResolution(answer=country, source="computed:identity.country")
 
+        # Address fields — pulled from field_defaults so they can be overridden
+        # per-profile without touching the resolver logic.
+        if (
+            "address line 1" in question
+            or normalized_field_name in {"address_line_1", "addressline1", "address1", "streetaddress"}
+        ):
+            addr = str(self.answers.field_defaults.get("address_line_1") or
+                       self.answers.field_defaults.get("street_address") or "").strip()
+            if addr:
+                return AnswerResolution(answer=addr, source="policy:identity.address_line_1")
+
+        if (
+            "zip code" in question
+            or "postal code" in question
+            or normalized_field_name in {"zip_code", "zipcode", "postalcode", "postal_code", "zip"}
+        ):
+            postal = str(self.answers.field_defaults.get("zip_code") or
+                         self.answers.field_defaults.get("postal_code") or "").strip()
+            if postal:
+                return AnswerResolution(answer=postal, source="policy:identity.zip_code")
+
+        if (
+            question.rstrip("* ").strip() == "county"
+            or normalized_field_name in {"county"}
+        ):
+            county = str(self.answers.field_defaults.get("county") or "").strip()
+            if county:
+                return AnswerResolution(answer=county, source="policy:identity.county")
+
+        if "specific source" in question or normalized_field_name in {"specific_source", "specificsource"}:
+            return AnswerResolution(answer="Company Website", source="policy:how_did_you_hear")
+
+        if normalized_field_name == "region2":
+            state = self._structured.get("identity.region", "").strip()
+            if state:
+                return AnswerResolution(answer="California" if state.upper() == "CA" else state, source="structured:identity.region")
+
+
         if "compensation expectations" in question or "salary expectations" in question:
+
             compensation = self._structured.get("preferences.salary_min_usd", "").strip()
             if compensation:
                 return AnswerResolution(answer=compensation, source="computed:preferences.salary_min_usd")
+
 
         if forced_intent == "work_auth_us" or "legally authorized to work in the united states" in question:
             authorized = self._structured.get("work_authorization.us_work_authorized", "").strip().lower()
@@ -409,13 +539,27 @@ class AnswerResolver:
         if "phone device type" in question:
             return AnswerResolution(answer="Mobile", source="computed:identity.phone_device_type")
 
+
+        if "other opportunities" in question or "considered for other" in question or "future opportunities" in question:
+            return AnswerResolution(answer="Yes", source="policy:future_opportunities")
+
+        if "convicted of" in question or "pled guilty" in question or "criminal or drug related" in question:
+            return AnswerResolution(answer="No", source="policy:criminal_history")
+
+        if "related to a current or previous employee" in question or "relatives currently employed" in question:
+            return AnswerResolution(answer="No", source="policy:relative_employee")
+
+
         if question.rstrip("*").strip() == "company" or normalized_field_name == "companyname":
             company = self._structured.get("employment.current_company", "").strip()
             if company:
                 return AnswerResolution(answer=company, source="structured:employment.current_company")
 
         if "startdate-datesection" in normalized_field_name:
-            experience_start = _employment_start_date(self._structured.get("employment.years_experience", ""))
+            experience_start = _employment_start_date(
+                current_start_date=self._structured.get("employment.current_start_date", ""),
+                years_experience=self._structured.get("employment.years_experience", ""),
+            )
             if "month-input" in normalized_field_name:
                 return AnswerResolution(
                     answer=str(datetime.strptime(experience_start["month"], "%B").month),
@@ -544,7 +688,10 @@ class AnswerResolver:
             return AnswerResolution(answer="No", source="computed:employment.may_contact")
 
         if "professional experience start date" in question:
-            experience_start = _employment_start_date(self._structured.get("employment.years_experience", ""))
+            experience_start = _employment_start_date(
+                current_start_date=self._structured.get("employment.current_start_date", ""),
+                years_experience=self._structured.get("employment.years_experience", ""),
+            )
             if (field_type == "select-year" or normalized_field_name.endswith("_year")) and experience_start["year"]:
                 return AnswerResolution(answer=experience_start["year"], source="computed:employment.start_year")
             if (field_type == "select-month" or normalized_field_name.endswith("_month")) and experience_start["month"]:
@@ -692,7 +839,17 @@ def _graduation_month_name(graduation_date: str) -> str:
     return datetime(2000, month_number, 1).strftime("%B")
 
 
-def _employment_start_date(years_experience: str) -> dict[str, str]:
+def _employment_start_date(*, current_start_date: str, years_experience: str) -> dict[str, str]:
+    match = re.fullmatch(r"(\d{4})-(\d{1,2})", current_start_date.strip())
+    if match:
+        year, month = match.groups()
+        month_number = int(month)
+        if 1 <= month_number <= 12:
+            return {
+                "year": year,
+                "month": datetime(2000, month_number, 1).strftime("%B"),
+                "day": "1",
+            }
     now = datetime.now()
     try:
         years = max(int(float(years_experience)), 0)
@@ -744,6 +901,59 @@ def _canonical_region(region: str) -> str:
     if lowered == "ny":
         return "New York"
     return region.strip()
+
+
+def _is_us_work_authorization_question(question: str) -> bool:
+    mentions_us = any(token in question for token in ("united states", "u.s.", "us "))
+    asks_authorization = any(token in question for token in ("authorized to work", "authorised to work", "eligible to work", "lawfully work", "legally work"))
+    return mentions_us and asks_authorization
+
+
+def _is_us_sponsorship_question(question: str) -> bool:
+    if "medpace" in question:
+        return False
+    mentions_sponsorship = any(token in question for token in ("sponsor", "sponsorship", "visa", "immigration"))
+    asks_future_need = any(
+        token in question
+        for token in (
+            "require",
+            "need",
+            "now or in the future",
+            "current or future",
+        )
+    )
+    return mentions_sponsorship and asks_future_need
+
+
+
+def _is_prior_employment_question(question: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:ever|previously)\s+(?:been\s+)?(?:worked|employed)\s+(?:at|for|by)\b",
+            question,
+        )
+    )
+
+
+def _is_close_relationship_question(question: str) -> bool:
+    relationship_terms = (
+        "relatives currently working",
+        "family members currently working",
+        "familial",
+        "romantic",
+        "close personal relationship",
+    )
+    return any(term in question for term in relationship_terms) and any(
+        term in question for term in ("employee", "applicant", "employed", "working")
+    )
+
+
+def _split_answer_values(value: object) -> tuple[str, ...]:
+    return tuple(
+        item.strip().lower()
+        for item in str(value or "").split("||")
+        if item.strip()
+    )
 
 
 def _rule_matches(match_type: str, pattern: str, question: str) -> bool:

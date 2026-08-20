@@ -1155,10 +1155,12 @@ class WorkdayAdapter:
                 )
                 filled_count += 1
                 continue
-            resolution = self._signed_attestation_date_resolution(
-                field_name=field_name,
-                question_text=question_text,
-            )
+            resolution = self._source_provenance_resolution(field=field, context=context)
+            if resolution is None:
+                resolution = self._signed_attestation_date_resolution(
+                    field_name=field_name,
+                    question_text=question_text,
+                )
             if resolution is None:
                 try:
                     resolution = resolver.resolve_for_portal(
@@ -1254,6 +1256,31 @@ class WorkdayAdapter:
             )
             filled_count += 1
         return None, filled_count
+
+    def _source_provenance_resolution(
+        self,
+        *,
+        field: dict[str, object],
+        context: AdapterContext,
+    ) -> AnswerResolution | None:
+        """Answer explicit source-provenance prompts from the stored job source."""
+        source = context.job_source.strip().lower()
+        if not source:
+            return None
+        field_name = str(field.get("field_name") or "").strip().lower()
+        question_text = str(field.get("question_text") or "").strip().lower()
+        if field_name == "source" and "hear about" in question_text:
+            # Crowe's source taxonomy exposes Handshake only through Other;
+            # the detail prompt is filled below when it appears.
+            if source == "handshake":
+                return AnswerResolution(answer="Other", source="job:source")
+            if source == "linkedin":
+                return AnswerResolution(answer="LinkedIn", source="job:source")
+        if source == "handshake" and "hear about" in question_text and any(
+            marker in question_text for marker in ("specify", "describe", "other")
+        ):
+            return AnswerResolution(answer="Handshake", source="job:source")
+        return None
 
     def _field_fill_priority(self, field: dict[str, object]) -> int:
         field_name = str(field.get("field_name") or "").strip().lower()
@@ -1361,7 +1388,10 @@ class WorkdayAdapter:
             normalized_current = "".join(ch for ch in current if ch.isalnum())
             normalized_desired = "".join(ch for ch in desired if ch.isalnum())
             if (
-                "notaveteran" in normalized_current
+                (
+                    "notaveteran" in normalized_current
+                    or "notaprotectedveteran" in normalized_current
+                )
                 and "notaprotectedveteran" in normalized_desired
             ):
                 return True
@@ -1438,8 +1468,23 @@ class WorkdayAdapter:
         question = str(field.get("question_text") or field.get("field_name") or "").lower()
         if path_index != 0 or len(selection_path) != 1 or not any(token in question for token in ("school", "university")):
             return False
-        page_text = self._page_text_once(page).lower()
-        return "type other" in page_text and "school is not listed" in page_text
+        # Workday tenants use several variants of this instruction, including
+        # "If your school isn't available, type 'Other' and press Enter."
+        page_text = self._page_text_once(page).lower().replace("'", "").replace("’", "")
+        page_text = re.sub(r"[^a-z0-9]+", " ", page_text)
+        has_other_instruction = "type other" in page_text
+        has_unavailable_school_instruction = any(
+            phrase in page_text
+            for phrase in (
+                "school is not listed",
+                "school isnt available",
+                "school is not available",
+                "university is not listed",
+                "university isnt available",
+                "university is not available",
+            )
+        )
+        return has_other_instruction and has_unavailable_school_instruction
 
     def _listbox_option_match_score(self, *, field_name: str, target: str, candidate: str) -> int:
         normalized_target = self._normalize_option_text(target)
@@ -1454,6 +1499,20 @@ class WorkdayAdapter:
             return eligibility_score
         if normalized_candidate == normalized_target:
             return 3
+        if field_name.strip().lower() == "source":
+            # Workday tenants label the LinkedIn parent category differently
+            # (for example, "A Job Board", "Job Boards", or "Job Sites").
+            # Treat only those equivalent category labels as a match; the
+            # next hierarchy level must still select the LinkedIn leaf.
+            source_category_aliases = {
+                "a job board",
+                "job board",
+                "job boards",
+                "job site",
+                "job sites",
+            }
+            if normalized_target in source_category_aliases and normalized_candidate in source_category_aliases:
+                return 2
         if f"not {normalized_target}" in normalized_candidate:
             # Avoid a partial match selecting the explicit negation of the
             # requested value, such as "Not Hispanic or Latino".
@@ -1716,11 +1775,12 @@ class WorkdayAdapter:
                     and self._normalize_option_text(selection_path[-1])
                     in self._normalize_option_text(current_value)
                 )
-                if not matches_selected_leaf and not self._is_effectively_same_value(
+                matches_selected_option = self._listbox_option_match_score(
                     field_name=str(field.get("field_name") or ""),
-                    current_value=current_value,
-                    desired_value=value,
-                ):
+                    target=value,
+                    candidate=current_value,
+                ) > 0
+                if not matches_selected_leaf and not matches_selected_option:
                     raise RuntimeError(
                         f"listbox selected unexpected value: current={current_value!r}, desired={value!r}"
                     )
@@ -1848,6 +1908,42 @@ class WorkdayAdapter:
                     )
                 if len(selection_path) > 1:
                     raise RuntimeError(f"listbox hierarchy option not found for {selection_path!r}")
+                # Some Workday tenants mount listbox rows without the usual
+                # role or automation-id markers.  Resolve a visible text node
+                # in the opened popup before falling back to keyboard input.
+                # This is particularly important for self-identification
+                # controls: typeahead can commit the first option sharing an
+                # initial letter (for example, "I choose not to disclose").
+                text_option = self._visible_listbox_text_option(
+                    page,
+                    field_name=field_name,
+                    target=value,
+                )
+                if text_option is not None:
+                    try:
+                        text_option.click()
+                    except Exception:
+                        text_option.click(force=True)
+                    self._wait(page, 400)
+                    verify_selection()
+                    return
+                if field_name.strip().lower() == "veteranstatus":
+                    available_options: list[str] = []
+                    for index in range(options.count()):
+                        try:
+                            option_text = str(options.nth(index).inner_text() or "").strip()
+                        except Exception:
+                            continue
+                        if option_text:
+                            available_options.append(option_text)
+                    try:
+                        locator.press("Escape")
+                    except Exception:
+                        pass
+                    raise RuntimeError(
+                        "veteran-status dropdown has no explicit matching option; "
+                        f"available options: {available_options!r}"
+                    )
                 try:
                     locator.focus()
                 except Exception:
@@ -2185,6 +2281,8 @@ class WorkdayAdapter:
         try:
             month, day, year = normalized.split("/")
         except ValueError:
+            if "month-input" in field_name and normalized.isdigit():
+                return normalized.zfill(2)
             return value
         components = {
             "month-input": month.zfill(2),
@@ -2439,6 +2537,36 @@ class WorkdayAdapter:
         if visible_popup_options.count() > 0:
             return visible_popup_options
         return page.locator('[role="listbox"]:visible ' + option_selectors)
+
+    def _visible_listbox_text_option(self, page, *, field_name: str, target: str):
+        """Return a visible, explicitly matching Workday listbox row when possible.
+
+        A few tenants render their option rows with presentation-only markup,
+        so the usual role/automation selectors cannot discover them.  Text
+        selection is deliberately limited to exact values and veteran-status
+        wording; broad substring matching here could click unrelated content
+        elsewhere on the application page.
+        """
+        get_by_text = getattr(page, "get_by_text", None)
+        if not callable(get_by_text):
+            return None
+        normalized_target = self._normalize_option_text(target).rstrip(".")
+        patterns: list[object] = [target]
+        if normalized_target != target:
+            patterns.append(normalized_target)
+        if field_name.strip().lower() == "veteranstatus":
+            patterns.append(re.compile(r"^(no,? )?i am not (a )?protected veteran\.?$", re.IGNORECASE))
+            patterns.append(re.compile(r"^i am not a veteran\.?$", re.IGNORECASE))
+        for pattern in patterns:
+            try:
+                locator = get_by_text(pattern, exact=not isinstance(pattern, re.Pattern))
+                for index in range(locator.count()):
+                    candidate = locator.nth(index)
+                    if candidate.is_visible():
+                        return candidate
+            except Exception:
+                continue
+        return None
 
     def _next_form_action(self, page) -> str:
         extractor = getattr(page, "extract_workday_navigation_action", None)

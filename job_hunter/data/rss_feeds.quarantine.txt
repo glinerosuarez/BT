@@ -9,3 +9,8 @@ https://jobicy.com/jobs-rss-feed
 https://www.techfetch.com/rss.xml
 https://www.higheredjobs.com/rss/articleFeed.cfm
 https://weworkremotely.com/remote-jobs.rss
+https://remoteok.com/remote-internship-jobs.rss
+https://weworkremotely.com/categories/remote-programming-jobs.rss
+https://stackoverflow.blog/jobs/feed/
+https://www.python.org/jobs/feed/rss/
+https://www.smashingmagazine.com/jobs/feed/

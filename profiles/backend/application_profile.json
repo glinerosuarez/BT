@@ -1,0 +1,36 @@
+{
+  "identity": {
+    "full_name": "Gabriel Linero",
+    "email": "linero@usc.edu",
+    "phone": "+1-213-7741818",
+    "city": "Los Angeles",
+    "region": "CA",
+    "country": "USA",
+    "linkedin_url": "https://www.linkedin.com/in/glinerosuarez",
+    "github_url": "https://github.com/glinerosuarez",
+    "portfolio_url": "https://devpost.com/linero?ref_content=user-portfolio&ref_feature=portfolio&ref_medium=global-nav"
+  },
+  "work_authorization": {
+    "us_work_authorized": true,
+    "requires_future_sponsorship": false,
+    "cpt": false,
+    "opt": false
+  },
+  "education": {
+    "school": "University of Southern California",
+    "degree": "M.S.",
+    "major": "Computer Science",
+    "graduation_date": "2027-05",
+    "gpa": "3.67"
+  },
+  "employment": {
+    "current_company": "Impatico",
+    "current_title": "AI Engineer Intern",
+    "years_experience": "3"
+  },
+  "preferences": {
+    "salary_min_usd": "50000",
+    "remote_ok": true,
+    "relocation_ok": true
+  }
+}

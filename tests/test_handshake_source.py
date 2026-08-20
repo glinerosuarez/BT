@@ -17,7 +17,6 @@ from job_hunter.sources.handshake import (
     _job_search_url_to_jobs_url,
     _normalize_title_token,
     _normalize_search_url,
-    _normalize_browser_backend,
     _broad_recent_search_url,
     _build_query_coverage,
     _handshake_query_key,
@@ -234,12 +233,6 @@ class HandshakeSourceTests(unittest.TestCase):
         coverage = _build_query_coverage([first, duplicate], [first])
         key = _handshake_query_key(first_page)
         self.assertEqual(coverage[key], {"fetched_count": 2, "unique_count": 1})
-
-    def test_normalize_browser_backend_accepts_supported_values(self) -> None:
-        self.assertEqual(_normalize_browser_backend("playwright"), "playwright")
-        self.assertEqual(_normalize_browser_backend("Patchright"), "patchright")
-        with self.assertRaises(ValueError):
-            _normalize_browser_backend("chromium")
 
     def test_expand_more_script_can_scope_to_search_detail_pane(self) -> None:
         self.assertIn("restrictToDetailPane", EXPAND_MORE_SCRIPT)

@@ -134,3 +134,12 @@ upstart
 wolt
 xendit
 yext
+atlassian
+lever
+plaid
+palantir
+spotify
+clari
+medium
+mindtickle
+outreach

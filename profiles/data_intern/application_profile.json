@@ -26,7 +26,8 @@
     "employment": {
       "current_company": "Impatico",
       "current_title": "AI Engineer Intern",
-      "years_experience": "3"
+      "years_experience": "3",
+      "current_start_date": "2026-05"
     },
     "preferences": {
       "salary_min_usd": "50000",

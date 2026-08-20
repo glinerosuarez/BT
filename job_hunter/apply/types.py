@@ -38,6 +38,7 @@ class EmploymentProfile:
     current_company: str
     current_title: str
     years_experience: str
+    current_start_date: str = ""
 
 
 @dataclass(slots=True)

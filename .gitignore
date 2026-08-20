@@ -2,6 +2,19 @@ __pycache__/
 *.pyc
 .venv/
 .env
+*.db
+.*.db
 job_hunter.db
 labeling/
-.handshake-profile/
+artifacts/
+*.egg-info/
+.DS_Store
+
+# Browser profiles and temporary data
+.*-profile/
+.tmp-*/
+.agents/
+.profiles/
+
+# Candidate credentials
+*workday_accounts.json
