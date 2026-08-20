@@ -611,13 +611,25 @@ class AnswerResolver:
             if country_code:
                 return AnswerResolution(answer=country_code, source="computed:identity.phone_country_code")
 
-        if question == "phone number*" or question == "phone number" or normalized_field_name == "phonenumber":
+        if (
+            (question in {"phone number*", "phone number", "phone", "primary phone", "cell phone", "mobile phone"}
+             or ("phone" in question and not any(k in question for k in ("consent", "sms", "text", "opt in", "agree", "code", "type", "device"))))
+            or normalized_field_name in {"phonenumber", "cellphone", "primaryphone", "phone"}
+        ):
             local_phone = _phone_local_number(self._structured.get("identity.phone", ""))
             if local_phone:
                 return AnswerResolution(answer=local_phone, source="computed:identity.phone_local_number")
 
         if "are you over 18" in question:
             return AnswerResolution(answer="Yes", source="computed:identity.over_18")
+
+        if "eligible to work in the country" in question or "authorized to work in the country" in question:
+            return AnswerResolution(answer="Yes", source="policy:work_authorization.authorized")
+
+        if "gender" in question or normalized_field_name in {"gender", "sex"}:
+            gender = str(self.answers.field_defaults.get("gender", "Male")).strip()
+            if gender:
+                return AnswerResolution(answer=gender, source="policy:self_identify.gender")
 
         if "hispanic or latino" in question:
             race_ethnicity = str(self.answers.field_defaults.get("race_ethnicity", "")).strip().lower()
@@ -639,7 +651,7 @@ class AnswerResolver:
                     source="computed:self_identify.veteran_status",
                 )
 
-        if "disabilitystatus" in normalized_field_name:
+        if "disability" in question or "disabilitystatus" in normalized_field_name:
             disability_status = str(self.answers.field_defaults.get("disability_status", "")).strip().lower()
             if disability_status in {"false", "no", "0"}:
                 return AnswerResolution(
@@ -651,6 +663,28 @@ class AnswerResolver:
                     answer="Yes",
                     source="computed:self_identify.disability_status",
                 )
+
+
+        if (
+            "certify that i have read" in question
+            or "employment understanding" in question
+            or "agreebutton" in normalized_field_name
+        ):
+            return AnswerResolution(answer="true", source="policy:agreement.consent")
+
+        if "middle name" in question or normalized_field_name == "middlename":
+            return AnswerResolution(answer="", source="policy:identity.middle_name_empty")
+
+        if "preferred name" in question or normalized_field_name == "preferredname":
+            first_name = self._structured.get("identity.first_name", "")
+            return AnswerResolution(answer=first_name, source="computed:identity.first_name")
+
+        if "shift preference" in question or normalized_field_name == "shiftpreference":
+            return AnswerResolution(answer="No Preference", source="policy:job.no_shift_preference")
+
+        if "preferred contact method" in question:
+            return AnswerResolution(answer="Email", source="policy:contact.preferred_email")
+
 
         if "previously" in question and "employ" in question:
             return AnswerResolution(answer="No", source="computed:employment.previously_employed_by_company")

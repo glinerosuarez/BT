@@ -433,8 +433,9 @@
         {
             "match_type": "contains",
             "pattern": "how did you hear of this opportunity",
-            "answer": "ONE Gas Job Board"
+            "answer": "LinkedIn"
         },
+
         {
             "match_type": "contains",
             "pattern": "related to a current or previous employee",

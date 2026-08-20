@@ -15,6 +15,8 @@ _SF_HOST_PATTERNS = (
 )
 
 _CONFIRMATION_MARKERS = (
+    "successfully applied",
+    "your application has been sent",
     "application submitted",
     "thank you for applying",
     "your application has been submitted",
@@ -26,6 +28,7 @@ _CONFIRMATION_MARKERS = (
     "you have already applied",
     "already applied",
 )
+
 
 _LOGIN_MARKERS = (
     "career opportunities: sign in",
@@ -48,51 +51,45 @@ _EXTRACT_FIELDS_JS = r"""
     return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && el.offsetParent !== null;
   }
 
-  function getLabel(el) {
-    if (!el) return '';
-    if (el.id) {
-      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (lbl) return lbl.textContent.trim();
+  function getLabel(inp) {
+    if (!inp) return '';
+    // 1. Label with for attribute
+    if (inp.id) {
+      const allLabels = Array.from(document.querySelectorAll('label'));
+      const matchingLabel = allLabels.find(l => l.getAttribute('for') === inp.id);
+      if (matchingLabel) {
+        const text = matchingLabel.textContent.trim();
+        if (text) return text;
+      }
     }
-    if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
-    const labelledby = el.getAttribute('aria-labelledby');
-    if (labelledby) {
-      const parts = labelledby.split(/\s+/).map(id => {
-        const target = document.getElementById(id);
-        return target ? target.textContent.trim() : '';
-      }).filter(Boolean);
-      if (parts.length) return parts.join(' ');
-    }
-    const parentLabel = el.closest('label');
-    if (parentLabel) {
-      const clone = parentLabel.cloneNode(true);
-      Array.from(clone.querySelectorAll('input, select, textarea, button')).forEach(n => n.remove());
-      const text = clone.textContent.trim();
-      if (text) return text;
-    }
-    const container = el.closest('.form-group, .form-row, .sapUiFormElement, .sapMInputBase, tr, .field-container, .rcm-field, div[class*="field"], div[class*="row"]');
+    // 2. Ancestor container label search
+    const container = inp.closest('.RCMFormField, .rcmFormElement, .sfTextFieldCss, .form-group, .form-row, .sapUiFormElement, tr, .field-container, div[class*="field"], div[class*="row"]');
     if (container) {
-      const lbl = container.querySelector('label, .control-label, .sapMLabel, .fieldLabel, th, .label');
-      if (lbl && isVisible(lbl)) return lbl.textContent.trim();
+      const lbl = container.querySelector('.rcmFormFieldLabel, label, .control-label, .sapMLabel, .fieldLabel, th, .label, span.normal');
+      if (lbl) {
+        const text = lbl.textContent.trim();
+        if (text) return text;
+      }
     }
-    return el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || '';
+    // 3. aria-label or placeholder or name
+    return inp.getAttribute('aria-label') || inp.getAttribute('placeholder') || inp.getAttribute('title') || inp.getAttribute('name') || '';
   }
 
-  function isRequired(el) {
-    if (!el) return false;
-    if (el.required || el.getAttribute('aria-required') === 'true') return true;
-    const container = el.closest('.form-group, .form-row, .sapUiFormElement, tr, div[class*="field"]');
+  function isRequired(inp) {
+    if (!inp) return false;
+    if (inp.required || inp.getAttribute('aria-required') === 'true') return true;
+    const container = inp.closest('.RCMFormField, .rcmFormElement, .form-group, .form-row, .sapUiFormElement, tr, div[class*="field"]');
     if (container) {
       const text = container.textContent;
-      if (/\*\s*indicates required|\*/.test(text) && container.querySelector('.required, .sapMLabelRequired, [aria-required="true"], span.requiredAsterisk')) {
+      if (/\*\s*indicates required|\*/.test(text) && container.querySelector('.required, .requiredField, .sapMLabelRequired, [aria-required="true"], span.requiredAsterisk')) {
         return true;
       }
     }
-    const label = getLabel(el);
+    const label = getLabel(inp);
     return /\*|\(required\)/i.test(label);
   }
 
-  // --- 1. File Inputs (Resume, Cover Letter) ---
+  // --- 1. File Uploads (Direct inputs or attachment buttons) ---
   const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
   for (const el of fileInputs) {
     const idx = counter++;
@@ -108,7 +105,24 @@ _EXTRACT_FIELDS_JS = r"""
     });
   }
 
-  // --- 2. Standard Select / Dropdown Elements ---
+  // --- 2. Combobox / Picklist Inputs (SuccessFactors custom dropdowns) ---
+  const comboboxes = Array.from(document.querySelectorAll('input[role="combobox"], input.rcmpaginatedselectinput')).filter(isVisible);
+  for (const el of comboboxes) {
+    const idx = counter++;
+    el.setAttribute('data-jh-idx', String(idx));
+    const label = getLabel(el).replace(/^\*\s*/, '').trim();
+    fields.push({
+      selector: `input[data-jh-idx="${idx}"]`,
+      field_name: el.getAttribute('name') || el.getAttribute('id') || '',
+      field_type: 'combobox',
+      label: label,
+      required: isRequired(el),
+      current_value: el.value || '',
+      options: [],
+    });
+  }
+
+  // --- 3. Standard Select Elements ---
   const selects = Array.from(document.querySelectorAll('select')).filter(isVisible);
   for (const el of selects) {
     const idx = counter++;
@@ -121,35 +135,35 @@ _EXTRACT_FIELDS_JS = r"""
       selector: `select[data-jh-idx="${idx}"]`,
       field_name: el.getAttribute('name') || el.getAttribute('id') || '',
       field_type: 'select-one',
-      label: getLabel(el),
+      label: getLabel(el).replace(/^\*\s*/, '').trim(),
       required: isRequired(el),
       current_value: el.selectedOptions[0]?.text?.trim() || '',
       options: opts,
     });
   }
 
-  // --- 3. Text, Email, Tel, Number Inputs & Textareas ---
+  // --- 4. Standard Text Inputs & Textareas ---
   const textInputs = Array.from(document.querySelectorAll(
-    'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="url"], input:not([type]), textarea'
+    'input[type="text"]:not([role="combobox"]):not(.rcmpaginatedselectinput), input[type="email"], input[type="tel"], input[type="number"], input[type="url"], input:not([type]), textarea'
   )).filter(el => isVisible(el) && !el.disabled && !el.readOnly);
 
   for (const el of textInputs) {
-    if (el.getAttribute('role') === 'combobox') continue;
     const idx = counter++;
     el.setAttribute('data-jh-idx', String(idx));
     const type = el.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text';
+    const label = getLabel(el).replace(/^\*\s*/, '').trim();
     fields.push({
       selector: `${el.tagName.toLowerCase()}[data-jh-idx="${idx}"]`,
       field_name: el.getAttribute('name') || el.getAttribute('id') || '',
       field_type: type,
-      label: getLabel(el),
+      label: label,
       required: isRequired(el),
       current_value: el.value || '',
       options: [],
     });
   }
 
-  // --- 4. Radio Groups ---
+  // --- 5. Radio Groups ---
   const radioGroups = new Map();
   const radios = Array.from(document.querySelectorAll('input[type="radio"]')).filter(isVisible);
   for (const r of radios) {
@@ -178,14 +192,14 @@ _EXTRACT_FIELDS_JS = r"""
       selector: `input[data-jh-radio-group="${idx}"]`,
       field_name: name,
       field_type: 'radio-group',
-      label: groupLabel,
+      label: groupLabel.replace(/^\*\s*/, '').trim(),
       required: group.some(isRequired),
       current_value: checkedOpt ? checkedOpt.label : '',
       options: options,
     });
   }
 
-  // --- 5. Checkbox Elements ---
+  // --- 6. Checkboxes ---
   const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(isVisible);
   for (const cb of checkboxes) {
     const idx = counter++;
@@ -194,7 +208,7 @@ _EXTRACT_FIELDS_JS = r"""
       selector: `input[type="checkbox"][data-jh-idx="${idx}"]`,
       field_name: cb.getAttribute('name') || cb.getAttribute('id') || '',
       field_type: 'checkbox',
-      label: getLabel(cb),
+      label: getLabel(cb).replace(/^\*\s*/, '').trim(),
       required: isRequired(cb),
       current_value: cb.checked ? 'true' : 'false',
       options: [],
@@ -221,18 +235,15 @@ class SuccessFactorsAdapter:
         path = parsed.path.lower()
         query = parsed.query.lower()
 
-        # Host-based detection
         for pattern in _SF_HOST_PATTERNS:
             if pattern.search(host):
                 return True
 
-        # URL path/query-based detection (company-branded vanity domains)
         if "/talentcommunity/apply/" in path or "/talentcommunity/" in path:
             return True
         if "successfactors" in query or "career_company=" in query or ("company=" in query and "careers" in path):
             return True
 
-        # DOM-based detection if page context is available
         if page is not None:
             checker = getattr(page, "detect_successfactors", None)
             if callable(checker):
@@ -301,14 +312,20 @@ class SuccessFactorsAdapter:
                 self._wait_for_spa_ready(page)
                 continue
 
-            # 4. Extract and fill form fields on the current page
+            # 4. Handle document attachments (Resume & Cover Letter)
+            self._handle_documents(page=page, context=context, steps=steps)
+
+            # 5. Expand all collapsible sections so all fields are active
+            self._expand_all_sections(page)
+
+            # 6. Extract and fill form fields on the current page
             blocked_result, filled_count = self._fill_current_step(
                 page=page, resolver=resolver, context=context, steps=steps
             )
             if blocked_result is not None:
                 return blocked_result
 
-            # 5. Check if we reached confirmation after filling
+            # 7. Check if we reached confirmation after filling
             confirmation = self._extract_confirmation(page)
             if confirmation:
                 return SubmitResult(
@@ -319,7 +336,7 @@ class SuccessFactorsAdapter:
                     adapter_name=self.adapter_name,
                 )
 
-            # 6. Try clicking Submit / Apply
+            # 8. Try clicking Submit / Apply
             if self._try_submit(page):
                 self._wait_for_spa_ready(page)
                 confirmation = self._extract_confirmation(page)
@@ -331,7 +348,6 @@ class SuccessFactorsAdapter:
                         steps=steps,
                         adapter_name=self.adapter_name,
                     )
-                # Check for validation errors after submitting
                 validation_errors = self._extract_validation_errors(page)
                 if validation_errors:
                     return self._blocked(
@@ -342,12 +358,11 @@ class SuccessFactorsAdapter:
                     )
                 continue
 
-            # 7. Try clicking Next / Continue to advance multi-step wizard
+            # 9. Try clicking Next / Continue to advance multi-step wizard
             if self._try_click_next(page):
                 self._wait_for_spa_ready(page)
                 continue
 
-            # If nothing was filled and no navigation occurred, check confirmation again
             if filled_count == 0:
                 confirmation = self._extract_confirmation(page)
                 if confirmation:
@@ -374,6 +389,73 @@ class SuccessFactorsAdapter:
         )
 
     # ------------------------------------------------------------------
+    # Document attachments
+    # ------------------------------------------------------------------
+
+    def _handle_documents(self, *, page, context: AdapterContext, steps: list[StepSnapshot]) -> None:
+        """Handle SuccessFactors popup-based resume and cover letter upload buttons."""
+        # 1. Resume upload
+        if context.resume_pdf_path and Path(context.resume_pdf_path).exists():
+            resume_icon = page.locator('[id="51:_attachIcon"], [id*="resume" i] .addAttachments, .addAttachments').first
+            try:
+                if resume_icon.count() > 0 and resume_icon.is_visible():
+                    resume_icon.click()
+                    self._wait(page, 1000)
+                    file_input = page.locator('input[type="file"]').first
+                    if file_input.count() > 0:
+                        file_input.set_input_files(context.resume_pdf_path)
+                        self._wait(page, 2000)
+                        steps.append(
+                            StepSnapshot(
+                                step_key="upload:resume",
+                                step_label="Upload resume",
+                                status="completed",
+                                field_name="resume",
+                                field_type="file",
+                                question_text="Resume",
+                                answer_source="artifact",
+                                answer_value=context.resume_pdf_path,
+                            )
+                        )
+            except Exception:
+                pass
+
+        # 2. Cover letter upload
+        if context.cover_letter_pdf_path and Path(context.cover_letter_pdf_path).exists():
+            cover_icon = page.locator('[id="53:_attachIcon"], [id*="cover" i] .addAttachments').first
+            try:
+                if cover_icon.count() > 0 and cover_icon.is_visible():
+                    cover_icon.click()
+                    self._wait(page, 1000)
+                    file_input = page.locator('input[type="file"]').first
+                    if file_input.count() > 0:
+                        file_input.set_input_files(context.cover_letter_pdf_path)
+                        self._wait(page, 2000)
+                        steps.append(
+                            StepSnapshot(
+                                step_key="upload:cover_letter",
+                                step_label="Upload cover letter",
+                                status="completed",
+                                field_name="cover_letter",
+                                field_type="file",
+                                question_text="Cover Letter",
+                                answer_source="artifact",
+                                answer_value=context.cover_letter_pdf_path,
+                            )
+                        )
+            except Exception:
+                pass
+
+    def _expand_all_sections(self, page) -> None:
+        try:
+            loc = page.locator('a:has-text("Expand all sections"), [id*="expandAllSections"]').first
+            if loc.count() > 0 and loc.is_visible():
+                loc.click()
+                self._wait(page, 1000)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
     # Step filling
     # ------------------------------------------------------------------
 
@@ -395,7 +477,6 @@ class SuccessFactorsAdapter:
             required = bool(field.get("required"))
             current_value = str(field.get("current_value") or "").strip()
 
-            # Handle file attachments
             if field_type == "file":
                 artifact = None
                 normalized_label = f"{field_name} {question_text}".lower()
@@ -535,24 +616,92 @@ class SuccessFactorsAdapter:
             locator.dispatch_event("change")
             self._wait(page, 200)
 
+        elif field_type == "combobox":
+            locator = page.locator(selector)
+            locator.scroll_into_view_if_needed()
+            locator.click()
+            self._wait(page, 500)
+            normalized = value.strip().lower()
+            tokens = [t for t in re.split(r"[\s/,'\-]+", normalized) if len(t) > 2 and t not in {"the", "and", "for", "with", "have"}]
+
+            clicked = False
+            # 1. Exact match or single-word Yes/No exact match
+            for opt_loc in page.locator('li[id*=":item"], a[role="menuitem"], [role="option"], .fd-list__item').all():
+                try:
+                    txt = opt_loc.text_content().strip().lower()
+                    if not txt or txt == "no selection":
+                        continue
+                    if txt == normalized:
+                        opt_loc.click()
+                        clicked = True
+                        break
+                    if normalized in {"no", "false"} and txt == "no":
+                        opt_loc.click()
+                        clicked = True
+                        break
+                    if normalized in {"yes", "true"} and txt == "yes":
+                        opt_loc.click()
+                        clicked = True
+                        break
+                except Exception:
+                    pass
+
+            if not clicked:
+                # 2. Heuristic matching with negation awareness
+                is_no = normalized.startswith("no") or "don't" in normalized or "not" in normalized or "do not" in normalized
+                is_yes = normalized.startswith("yes") and not is_no
+                for opt_loc in page.locator('li[id*=":item"], a[role="menuitem"], [role="option"], .fd-list__item').all():
+                    try:
+                        txt = opt_loc.text_content().strip().lower()
+                        if not txt or txt == "no selection":
+                            continue
+                        opt_is_no = txt.startswith("no") or "don't" in txt or "not" in txt or "do not" in txt
+                        if is_no and opt_is_no:
+                            opt_loc.click()
+                            clicked = True
+                            break
+                        if is_yes and not opt_is_no and (txt.startswith("yes") or "i have a disability" in txt):
+                            opt_loc.click()
+                            clicked = True
+                            break
+                        if normalized in txt or txt in normalized:
+                            opt_loc.click()
+                            clicked = True
+                            break
+                        if tokens and any(t in txt for t in tokens):
+                            if (is_no and opt_is_no) or (not is_no and not opt_is_no):
+                                opt_loc.click()
+                                clicked = True
+                                break
+                    except Exception:
+                        pass
+
+            if not clicked:
+                try:
+                    locator.fill(value)
+                    locator.dispatch_event("input")
+                    locator.dispatch_event("change")
+                except Exception:
+                    pass
+            self._wait(page, 300)
+
+
+
         elif field_type == "select-one":
             normalized = value.strip().lower()
             locator = page.locator(selector)
             locator.scroll_into_view_if_needed()
             options = list(field.get("options") or [])
-            # 1. Exact value match
             for opt in options:
                 if str(opt.get("value") or "").strip() == value:
                     locator.select_option(value=value)
                     self._wait(page, 300)
                     return
-            # 2. Exact label match
             for opt in options:
                 if str(opt.get("label") or "").strip().lower() == normalized:
                     locator.select_option(label=str(opt["label"]))
                     self._wait(page, 300)
                     return
-            # 3. Boolean yes/no match
             if normalized in {"true", "1", "yes", "on"}:
                 for opt in options:
                     if str(opt.get("label") or "").strip().lower() in {"yes", "true"}:
@@ -565,14 +714,12 @@ class SuccessFactorsAdapter:
                         locator.select_option(label=str(opt["label"]))
                         self._wait(page, 300)
                         return
-            # 4. Substring match
             for opt in options:
                 lbl = str(opt.get("label") or "").strip().lower()
                 if normalized in lbl or lbl in normalized:
                     locator.select_option(label=str(opt["label"]))
                     self._wait(page, 300)
                     return
-            # Fallback: select by label directly
             try:
                 locator.select_option(label=value)
             except Exception:
@@ -622,7 +769,7 @@ class SuccessFactorsAdapter:
     def _advance_from_job_landing_page(self, page) -> bool:
         """Click the primary Apply Now button on the job posting detail page."""
         current_url = getattr(page, "url", "").lower()
-        if "/talentcommunity/apply/" in current_url or "/careers?" in current_url or "/career?" in current_url or "/apply" in current_url:
+        if "/talentcommunity/apply/" in current_url or "/careers?" in current_url or "/career?" in current_url or "/apply" in current_url or "portalcareer" in current_url:
             return False
 
         for selector in (
@@ -643,7 +790,6 @@ class SuccessFactorsAdapter:
                 pass
         return False
 
-
     def _try_click_next(self, page) -> bool:
         for label in ("Next", "Save & Continue", "Save and Continue", "Continue", "Next Step"):
             loc = page.get_by_role("button", name=label).first
@@ -661,12 +807,20 @@ class SuccessFactorsAdapter:
         if callable(clicker):
             clicker()
             return True
-        for label in ("Submit Application", "Submit application", "Submit", "Apply", "Finish"):
-            loc = page.get_by_role("button", name=label).first
+        for selector in (
+            "span.rcmSaveButton:has-text('Apply')",
+            "[id*='_submitBtn']",
+            "button:has-text('Submit Application')",
+            "button:has-text('Submit application')",
+            "button:has-text('Submit')",
+            "button:has-text('Apply')",
+            "button:has-text('Finish')",
+        ):
+            loc = page.locator(selector).first
             try:
                 if loc.count() > 0 and loc.is_visible():
                     loc.click()
-                    self._wait(page, 1500)
+                    self._wait(page, 2000)
                     return True
             except Exception:
                 pass
@@ -684,16 +838,19 @@ class SuccessFactorsAdapter:
                 return dict(res)
         try:
             content = page.content().lower()
+            title = (getattr(page, "title", lambda: "")() or "").lower()
+            full_text = f"{title} {content}"
         except Exception:
             return {}
         for marker in _CONFIRMATION_MARKERS:
-            if marker in content:
+            if marker in full_text:
                 return {
                     "source": "successfactors",
                     "marker": marker,
                     "url": getattr(page, "url", ""),
                 }
         return {}
+
 
     def _has_login_wall(self, page) -> bool:
         checker = getattr(page, "detect_login_wall", None)
