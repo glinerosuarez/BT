@@ -252,6 +252,32 @@ class Stage2Tests(unittest.TestCase):
         self.assertIn("backend applications on Microsoft Azure cloud platform", text)
         self.assertNotIn("Posted 6 hours ago", text)
 
+    def test_combine_stage2_labels_matrix(self) -> None:
+        from job_hunter.stage2 import combine_stage2_labels
+
+        # REJ + REJ = REJ
+        self.assertEqual(combine_stage2_labels("reject", "reject"), "reject")
+
+        # REV + REJ = REV
+        self.assertEqual(combine_stage2_labels("review", "reject"), "review")
+        self.assertEqual(combine_stage2_labels("reject", "review"), "review")
+
+        # REV + REV = REV
+        self.assertEqual(combine_stage2_labels("review", "review"), "review")
+
+        # P + P = P
+        self.assertEqual(combine_stage2_labels("pass", "pass"), "pass")
+
+        # P + (REJ or REV) = REV
+        self.assertEqual(combine_stage2_labels("pass", "reject"), "review")
+        self.assertEqual(combine_stage2_labels("reject", "pass"), "review")
+        self.assertEqual(combine_stage2_labels("pass", "review"), "review")
+        self.assertEqual(combine_stage2_labels("review", "pass"), "review")
+
+        # Fallbacks for empty / none
+        self.assertEqual(combine_stage2_labels("", "pass"), "review")
+        self.assertEqual(combine_stage2_labels("pass", ""), "review")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2081,7 +2081,7 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertNotIn("Skip to content", row["description"])
         self.assertIn("About Presto Phoenix, Inc.", row["description"])
 
-    def test_stage2_deterministic_reject_suppresses_notification(self) -> None:
+    def test_stage2_combined_reject_when_both_reject_suppresses_notification(self) -> None:
         class FakeStage2Result:
             profile_match_score = 0.1
             profile_match_label = "reject"
@@ -2090,6 +2090,23 @@ class PipelineIntegrationTests(unittest.TestCase):
             scorer_version = "shadow_rules_v1"
             job_text_version = "job_text_v1"
             job_text_snapshot = "TITLE: Data Engineering Intern"
+
+        class FakeSemanticResult:
+            semantic_base_score = 0.2
+            semantic_match_score = 0.1
+            semantic_match_label = "reject"
+            semantic_match_reason_codes = ["semantic_negative_business_analyst"]
+            semantic_research_heaviness_score = 0.0
+            semantic_adjustment_reason_codes = []
+            semantic_profile_id = "data_engineering"
+            semantic_model_name = "fake-semantic-model"
+            semantic_scorer_version = "semantic_shadow_v1"
+            semantic_text_hash = "semantic-reject"
+
+        class FakeSemanticScorer:
+            def score(self, job):
+                _ = job
+                return FakeSemanticResult()
 
         payload = [
             {
@@ -2111,23 +2128,26 @@ class PipelineIntegrationTests(unittest.TestCase):
         notifier = FakeNotifier()
         with patch("job_hunter.pipeline.build_sources", return_value=[FakeSource(payload)]):
             with patch("job_hunter.pipeline.ShadowProfileScorer.score", return_value=FakeStage2Result()):
-                outcome = run_pipeline(self.settings, self.store, notifier)
+                with patch("job_hunter.pipeline._build_semantic_shadow_scorer", return_value=FakeSemanticScorer()):
+                    outcome = run_pipeline(self.settings, self.store, notifier)
 
         self.assertEqual(outcome.persisted_count, 1)
         self.assertEqual(outcome.notified_count, 0)
         self.assertEqual(notifier.sent, 0)
         row = self.store._conn.execute(
             """
-            SELECT profile_match_label, notified
+            SELECT profile_match_label, semantic_match_label, stage2_combined_label, notified
             FROM jobs
             WHERE id = 1
             """
         ).fetchone()
         self.assertIsNotNone(row)
         self.assertEqual(row["profile_match_label"], "reject")
+        self.assertEqual(row["semantic_match_label"], "reject")
+        self.assertEqual(row["stage2_combined_label"], "reject")
         self.assertEqual(int(row["notified"] or 0), 0)
 
-    def test_stage2_semantic_reject_suppresses_notification(self) -> None:
+    def test_stage2_disagreement_yields_review_and_allows_notification(self) -> None:
         class FakeSemanticResult:
             semantic_base_score = 0.2
             semantic_match_score = 0.1
@@ -2165,11 +2185,11 @@ class PipelineIntegrationTests(unittest.TestCase):
                 outcome = run_pipeline(self.settings, self.store, notifier)
 
         self.assertEqual(outcome.persisted_count, 1)
-        self.assertEqual(outcome.notified_count, 0)
-        self.assertEqual(notifier.sent, 0)
+        self.assertEqual(outcome.notified_count, 1)
+        self.assertEqual(notifier.sent, 1)
         row = self.store._conn.execute(
             """
-            SELECT profile_match_label, semantic_match_label, notified
+            SELECT profile_match_label, semantic_match_label, stage2_combined_label, notified
             FROM jobs
             WHERE id = 1
             """
@@ -2177,7 +2197,8 @@ class PipelineIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["profile_match_label"], "pass")
         self.assertEqual(row["semantic_match_label"], "reject")
-        self.assertEqual(int(row["notified"] or 0), 0)
+        self.assertEqual(row["stage2_combined_label"], "review")
+        self.assertEqual(int(row["notified"] or 0), 1)
 
 
 if __name__ == "__main__":

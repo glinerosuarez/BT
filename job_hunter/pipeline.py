@@ -30,7 +30,7 @@ from job_hunter.keywords import (
 )
 from job_hunter.models import JobRecord, PipelineOutcome, SourceRunStats
 from job_hunter.notify import TelegramNotifier
-from job_hunter.stage2 import ShadowProfileScorer
+from job_hunter.stage2 import ShadowProfileScorer, combine_stage2_labels
 from job_hunter.sources import (
     AdzunaSource,
     AppleJobsSource,
@@ -534,6 +534,11 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 except Exception:
                     LOG.exception("semantic_shadow_scoring_failed", extra={"source": source.name, "url": job.url})
 
+            job.stage2_combined_label = combine_stage2_labels(
+                job.profile_match_label,
+                job.semantic_match_label,
+            )
+
             if job.relevance_score < settings.min_relevance_score:
                 source_stats.rejected_relevance_count += 1
                 if query_stats is not None:
@@ -558,9 +563,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 if query_stats is not None:
                     query_stats.rejected_source_quality_count += 1
                 pass_notify = False
-            if job.profile_match_label == "reject":
-                pass_notify = False
-            if job.semantic_match_label == "reject":
+            if job.stage2_combined_label == "reject":
                 pass_notify = False
 
             outcome.passed_filter_count += 1

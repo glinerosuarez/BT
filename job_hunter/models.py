@@ -73,6 +73,7 @@ class JobRecord:
     semantic_model_name: str = ""
     semantic_scorer_version: str = ""
     semantic_text_hash: str = ""
+    stage2_combined_label: str = ""
     age_days: float | None = None
     age_unknown: bool = True
     source_detail: str = ""

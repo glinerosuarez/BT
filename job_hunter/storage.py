@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from job_hunter.models import JobRecord, PipelineOutcome
+from job_hunter.stage2 import combine_stage2_labels
 
 SUMMARY_BETA_MARKER = "summary beta"
 SOURCE_QUALITY_QUARANTINE_STATUSES = {"card_only", "detail_polluted", "detail_mismatch"}
@@ -88,6 +89,7 @@ class JobStore:
                 semantic_model_name TEXT,
                 semantic_scorer_version TEXT,
                 semantic_text_hash TEXT,
+                stage2_combined_label TEXT,
                 age_days REAL,
                 age_unknown INTEGER NOT NULL DEFAULT 1,
                 source_detail TEXT,
@@ -305,6 +307,7 @@ class JobStore:
         self._ensure_column("jobs", "semantic_model_name", "TEXT")
         self._ensure_column("jobs", "semantic_scorer_version", "TEXT")
         self._ensure_column("jobs", "semantic_text_hash", "TEXT")
+        self._ensure_column("jobs", "stage2_combined_label", "TEXT")
         self._ensure_column("run_logs", "normalized_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("run_logs", "rejected_missing_core_fields_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("run_logs", "after_stage_1a_count", "INTEGER NOT NULL DEFAULT 0")
@@ -459,6 +462,10 @@ class JobStore:
         now_iso = job.ingested_at
         payload = asdict(job)
         try:
+            combined_label = (
+                str(payload.get("stage2_combined_label") or "").strip()
+                or combine_stage2_labels(payload.get("profile_match_label") or "", payload.get("semantic_match_label") or "")
+            )
             self._conn.execute(
                 """
                 INSERT INTO jobs (
@@ -474,10 +481,10 @@ class JobStore:
                     semantic_match_score, semantic_match_label, semantic_match_reason_codes,
                     semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
                     semantic_profile_id, semantic_model_name, semantic_scorer_version,
-                    semantic_text_hash, age_days, age_unknown, source_detail,
+                    semantic_text_hash, stage2_combined_label, age_days, age_unknown, source_detail,
                     source_metadata, source_quality_status, source_quality_reason_codes,
                     source_quality_prev_status, source_quality_recovered_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     dedupe_key,
@@ -520,6 +527,7 @@ class JobStore:
                     payload["semantic_model_name"],
                     payload["semantic_scorer_version"],
                     payload["semantic_text_hash"],
+                    combined_label,
                     payload["age_days"],
                     int(payload["age_unknown"]),
                     payload["source_detail"],
@@ -695,6 +703,11 @@ class JobStore:
             semantic_scorer_version = existing_semantic_scorer_version
             semantic_text_hash = existing_semantic_text_hash
 
+        stage2_combined_label = (
+            str(job.stage2_combined_label or "").strip()
+            or combine_stage2_labels(profile_match_label, semantic_match_label)
+        )
+
         self._conn.execute(
             """
             UPDATE jobs
@@ -733,6 +746,7 @@ class JobStore:
                 semantic_model_name = ?,
                 semantic_scorer_version = ?,
                 semantic_text_hash = ?,
+                stage2_combined_label = ?,
                 age_days = ?,
                 age_unknown = ?,
                 source_detail = ?,
@@ -779,6 +793,7 @@ class JobStore:
                 semantic_model_name,
                 semantic_scorer_version,
                 semantic_text_hash,
+                stage2_combined_label,
                 job.age_days,
                 int(job.age_unknown),
                 source_detail,
@@ -1171,7 +1186,8 @@ class JobStore:
                 semantic_profile_id = ?,
                 semantic_model_name = ?,
                 semantic_scorer_version = ?,
-                semantic_text_hash = ?
+                semantic_text_hash = ?,
+                stage2_combined_label = ?
             WHERE id = ?
             """,
             (
@@ -1199,6 +1215,7 @@ class JobStore:
                 canonical_semantic_model_name or None,
                 canonical_semantic_scorer_version or None,
                 canonical_semantic_text_hash or None,
+                combine_stage2_labels(canonical_profile_match_label, canonical_semantic_match_label) or None,
                 int(canonical["id"]),
             ),
         )
@@ -1521,8 +1538,8 @@ class JobStore:
         clauses = ["job_text_version IS NOT NULL", "TRIM(job_text_version) <> ''"]
         params: list[object] = []
         if label:
-            clauses.append("profile_match_label = ?")
-            params.append(label)
+            clauses.append("(stage2_combined_label = ? OR profile_match_label = ?)")
+            params.extend([label, label])
         if source:
             clauses.append("source = ?")
             params.append(source)
@@ -1534,7 +1551,8 @@ class JobStore:
                    profile_version, scorer_version, job_text_version,
                    semantic_match_score, semantic_match_label, semantic_match_reason_codes,
                    semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
-                   semantic_profile_id, semantic_model_name, semantic_scorer_version
+                   semantic_profile_id, semantic_model_name, semantic_scorer_version,
+                   stage2_combined_label
             FROM jobs
             WHERE {where_sql}
             ORDER BY ingested_at DESC, id DESC
@@ -1557,7 +1575,7 @@ class JobStore:
                    semantic_match_score, semantic_match_label, semantic_match_reason_codes,
                    semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
                    semantic_profile_id, semantic_model_name, semantic_scorer_version,
-                   semantic_text_hash,
+                   semantic_text_hash, stage2_combined_label,
                    manual_fit_label, manual_fit_reason_codes
             FROM jobs
             WHERE id = ?
@@ -1583,7 +1601,7 @@ class JobStore:
                    semantic_match_score, semantic_match_label, semantic_match_reason_codes,
                    semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
                    semantic_profile_id, semantic_model_name, semantic_scorer_version,
-                   semantic_text_hash,
+                   semantic_text_hash, stage2_combined_label,
                    manual_fit_label, manual_fit_reason_codes
             FROM jobs
             WHERE manual_fit_label IS NOT NULL
@@ -1649,6 +1667,12 @@ class JobStore:
         semantic_scorer_version: str,
         semantic_text_hash: str,
     ) -> bool:
+        existing_profile = self._conn.execute(
+            "SELECT profile_match_label FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        existing_rule_label = str(existing_profile["profile_match_label"] or "") if existing_profile else ""
+        stage2_combined_label = combine_stage2_labels(existing_rule_label, semantic_match_label)
+
         cursor = self._conn.execute(
             """
             UPDATE jobs
@@ -1661,7 +1685,8 @@ class JobStore:
                 semantic_profile_id = ?,
                 semantic_model_name = ?,
                 semantic_scorer_version = ?,
-                semantic_text_hash = ?
+                semantic_text_hash = ?,
+                stage2_combined_label = ?
             WHERE id = ?
             """,
             (
@@ -1675,6 +1700,7 @@ class JobStore:
                 semantic_model_name,
                 semantic_scorer_version,
                 semantic_text_hash,
+                stage2_combined_label,
                 job_id,
             ),
         )
@@ -1693,6 +1719,12 @@ class JobStore:
         job_text_version: str,
         job_text_snapshot: str,
     ) -> bool:
+        existing_semantic = self._conn.execute(
+            "SELECT semantic_match_label FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        existing_sem_label = str(existing_semantic["semantic_match_label"] or "") if existing_semantic else ""
+        stage2_combined_label = combine_stage2_labels(profile_match_label, existing_sem_label)
+
         cursor = self._conn.execute(
             """
             UPDATE jobs
@@ -1702,7 +1734,8 @@ class JobStore:
                 profile_version = ?,
                 scorer_version = ?,
                 job_text_version = ?,
-                job_text_snapshot = ?
+                job_text_snapshot = ?,
+                stage2_combined_label = ?
             WHERE id = ?
             """,
             (
@@ -1713,6 +1746,7 @@ class JobStore:
                 scorer_version,
                 job_text_version,
                 job_text_snapshot,
+                stage2_combined_label,
                 job_id,
             ),
         )
@@ -1743,7 +1777,7 @@ class JobStore:
                    profile_match_score, profile_match_label, profile_match_reason_codes,
                    semantic_match_score, semantic_match_label, semantic_match_reason_codes,
                    semantic_base_score, semantic_research_heaviness_score, semantic_adjustment_reason_codes,
-                   semantic_profile_id, manual_fit_label, manual_fit_reason_codes
+                   semantic_profile_id, stage2_combined_label, manual_fit_label, manual_fit_reason_codes
             FROM jobs
             WHERE {where_sql}
             ORDER BY ingested_at DESC, id DESC

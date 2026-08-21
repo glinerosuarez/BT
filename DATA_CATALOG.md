@@ -58,6 +58,7 @@ Purpose: One row per persisted job posting after pipeline filtering and enrichme
 | `semantic_model_name` | `TEXT` | Embedding model or backend name used by the semantic scorer. |
 | `semantic_scorer_version` | `TEXT` | Version of the semantic scorer implementation. |
 | `semantic_text_hash` | `TEXT` | Stable hash of the normalized job text used for semantic scoring or caching consistency. |
+| `stage2_combined_label` | `TEXT` | Combined Stage-2 label combining deterministic rules and semantic embedding models (`pass`, `review`, or `reject`). |
 | `age_days` | `REAL` | Derived posting age in days. |
 | `age_unknown` | `INTEGER` | `0/1` flag indicating whether posting age could not be determined. |
 | `source_detail` | `TEXT` | Source-specific provenance detail, often the search URL or feed URL that produced the row. |

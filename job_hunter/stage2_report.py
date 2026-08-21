@@ -6,6 +6,7 @@ from pathlib import Path
 
 from job_hunter.config import load_settings
 from job_hunter.models import JobRecord
+from job_hunter.stage2 import combine_stage2_labels
 from job_hunter.storage import JobStore, ensure_parent_dir
 
 NO_POSITIVE_MATCH_PROFILE_ID = "no_positive_match"
@@ -217,6 +218,9 @@ def main() -> int:
 
 def _serialize_list_row(row) -> dict[str, object]:
     reasons = _decode_json_array(row["profile_match_reason_codes"])
+    profile_label = str(row["profile_match_label"] or "")
+    semantic_label = str(row["semantic_match_label"] or "")
+    combined_label = str(row["stage2_combined_label"] or "") if "stage2_combined_label" in row.keys() and row["stage2_combined_label"] else combine_stage2_labels(profile_label, semantic_label)
     return {
         "id": int(row["id"]),
         "source": str(row["source"]),
@@ -226,13 +230,13 @@ def _serialize_list_row(row) -> dict[str, object]:
         "posted_at": str(row["posted_at"] or ""),
         "compensation_type": str(row["compensation_type"] or "unknown"),
         "profile_match_score": float(row["profile_match_score"] or 0.0),
-        "profile_match_label": str(row["profile_match_label"] or ""),
+        "profile_match_label": profile_label,
         "profile_match_reason_codes": reasons,
         "profile_version": str(row["profile_version"] or ""),
         "scorer_version": str(row["scorer_version"] or ""),
         "job_text_version": str(row["job_text_version"] or ""),
         "semantic_match_score": float(row["semantic_match_score"] or 0.0),
-        "semantic_match_label": str(row["semantic_match_label"] or ""),
+        "semantic_match_label": semantic_label,
         "semantic_match_reason_codes": _decode_json_array(row["semantic_match_reason_codes"]),
         "semantic_base_score": float(row["semantic_base_score"] or 0.0),
         "semantic_research_heaviness_score": float(row["semantic_research_heaviness_score"] or 0.0),
@@ -240,10 +244,14 @@ def _serialize_list_row(row) -> dict[str, object]:
         "semantic_profile_id": str(row["semantic_profile_id"] or ""),
         "semantic_model_name": str(row["semantic_model_name"] or ""),
         "semantic_scorer_version": str(row["semantic_scorer_version"] or ""),
+        "stage2_combined_label": combined_label,
     }
 
 
 def _serialize_show_row(row) -> dict[str, object]:
+    profile_label = str(row["profile_match_label"] or "")
+    semantic_label = str(row["semantic_match_label"] or "")
+    combined_label = str(row["stage2_combined_label"] or "") if "stage2_combined_label" in row.keys() and row["stage2_combined_label"] else combine_stage2_labels(profile_label, semantic_label)
     return {
         "id": int(row["id"]),
         "source": str(row["source"]),
@@ -262,14 +270,14 @@ def _serialize_show_row(row) -> dict[str, object]:
         "source_quality_recovered_at": str(row["source_quality_recovered_at"] or ""),
         "source_metadata": _decode_json_object(row["source_metadata"]),
         "profile_match_score": float(row["profile_match_score"] or 0.0),
-        "profile_match_label": str(row["profile_match_label"] or ""),
+        "profile_match_label": profile_label,
         "profile_match_reason_codes": _decode_json_array(row["profile_match_reason_codes"]),
         "profile_version": str(row["profile_version"] or ""),
         "scorer_version": str(row["scorer_version"] or ""),
         "job_text_version": str(row["job_text_version"] or ""),
         "job_text_snapshot": str(row["job_text_snapshot"] or ""),
         "semantic_match_score": float(row["semantic_match_score"] or 0.0),
-        "semantic_match_label": str(row["semantic_match_label"] or ""),
+        "semantic_match_label": semantic_label,
         "semantic_match_reason_codes": _decode_json_array(row["semantic_match_reason_codes"]),
         "semantic_base_score": float(row["semantic_base_score"] or 0.0),
         "semantic_research_heaviness_score": float(row["semantic_research_heaviness_score"] or 0.0),
@@ -278,6 +286,7 @@ def _serialize_show_row(row) -> dict[str, object]:
         "semantic_model_name": str(row["semantic_model_name"] or ""),
         "semantic_scorer_version": str(row["semantic_scorer_version"] or ""),
         "semantic_text_hash": str(row["semantic_text_hash"] or ""),
+        "stage2_combined_label": combined_label,
         "manual_fit_label": str(row["manual_fit_label"] or ""),
         "manual_fit_reason_codes": _decode_json_array(row["manual_fit_reason_codes"]),
     }
@@ -294,6 +303,9 @@ def _filter_no_positive_match_rows(
 
 
 def _serialize_comparison_row(row) -> dict[str, object]:
+    profile_label = str(row["profile_match_label"] or "")
+    semantic_label = str(row["semantic_match_label"] or "")
+    combined_label = str(row["stage2_combined_label"] or "") if "stage2_combined_label" in row.keys() and row["stage2_combined_label"] else combine_stage2_labels(profile_label, semantic_label)
     return {
         "id": int(row["id"]),
         "source": str(row["source"]),
@@ -303,15 +315,16 @@ def _serialize_comparison_row(row) -> dict[str, object]:
         "posted_at": str(row["posted_at"] or ""),
         "compensation_type": str(row["compensation_type"] or "unknown"),
         "profile_match_score": float(row["profile_match_score"] or 0.0),
-        "profile_match_label": str(row["profile_match_label"] or ""),
+        "profile_match_label": profile_label,
         "profile_match_reason_codes": _decode_json_array(row["profile_match_reason_codes"]),
         "semantic_match_score": float(row["semantic_match_score"] or 0.0),
-        "semantic_match_label": str(row["semantic_match_label"] or ""),
+        "semantic_match_label": semantic_label,
         "semantic_match_reason_codes": _decode_json_array(row["semantic_match_reason_codes"]),
         "semantic_base_score": float(row["semantic_base_score"] or 0.0),
         "semantic_research_heaviness_score": float(row["semantic_research_heaviness_score"] or 0.0),
         "semantic_adjustment_reason_codes": _decode_json_array(row["semantic_adjustment_reason_codes"]),
         "semantic_profile_id": str(row["semantic_profile_id"] or ""),
+        "stage2_combined_label": combined_label,
         "manual_fit_label": str(row["manual_fit_label"] or ""),
         "manual_fit_normalized_label": _normalize_manual_fit_label(row["manual_fit_label"]),
         "manual_fit_reason_codes": _decode_json_array(row["manual_fit_reason_codes"]),
@@ -599,7 +612,7 @@ def _render_list_text(rows: list[dict[str, object]]) -> str:
             f"[{row['id']}] {row['title']}\n"
             f"  company={row['company']} source={row['source']}\n"
             f"  location={row['location']} posted_at={row['posted_at']} compensation={row['compensation_type']}\n"
-            f"  stage2={row['profile_match_label']} score={row['profile_match_score']:.2f} reasons={reasons}\n"
+            f"  stage2={row['profile_match_label']} combined={row['stage2_combined_label']} score={row['profile_match_score']:.2f} reasons={reasons}\n"
             f"  semantic={row['semantic_match_label'] or '-'} score={row['semantic_match_score']:.2f} base={row['semantic_base_score']:.2f} research_penalty={row['semantic_research_heaviness_score']:.2f} profile={row['semantic_profile_id'] or '-'} reasons={semantic_reasons} adjustments={semantic_adjustments}\n"
             f"  versions: profile={row['profile_version']} scorer={row['scorer_version']} text={row['job_text_version']}"
         )
@@ -627,6 +640,7 @@ def _render_show_text(row: dict[str, object]) -> str:
             f"source_quality_status={row['source_quality_status'] or '-'}",
             f"source_quality_reasons={source_quality_reasons}",
             f"stage2_label={row['profile_match_label']}",
+            f"stage2_combined_label={row['stage2_combined_label']}",
             f"stage2_score={row['profile_match_score']:.2f}",
             f"stage2_reasons={reasons}",
             f"semantic_label={row['semantic_match_label'] or '-'}",

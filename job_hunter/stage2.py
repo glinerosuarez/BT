@@ -229,6 +229,23 @@ def _score_shadow_rules(job: JobRecord, job_text: str, flags: list[str]) -> tupl
     return score, label, sorted(set(reasons))
 
 
+def combine_stage2_labels(rule_label: str, semantic_label: str) -> str:
+    """
+    Combines deterministic rule label and semantic embedding label:
+      - PASS + PASS -> PASS
+      - REJECT + REJECT -> REJECT
+      - All other combinations (disagreements or reviews) -> REVIEW
+    """
+    r = (rule_label or "").strip().lower()
+    s = (semantic_label or "").strip().lower()
+
+    if r == "pass" and s == "pass":
+        return "pass"
+    if r == "reject" and s == "reject":
+        return "reject"
+    return "review"
+
+
 def _has_builder_signals(blob: str) -> bool:
     hits = sum(1 for pattern in _BUILDER_SIGNAL_PATTERNS.values() if pattern.search(blob))
     return hits >= 1
