@@ -14,15 +14,44 @@ LOG = logging.getLogger(__name__)
 
 DETAIL_TEXT_SCRIPT = """
 () => {
-  const direct = document.querySelector('[data-view-name="job-detail-page"]');
-  if (direct && (direct.innerText || '').trim()) {
-    return (direct.innerText || '').trim();
+  const selectors = [
+    '#job-details',
+    '.show-more-less-html__markup',
+    '.jobs-description__content',
+    '.jobs-description-content',
+    '.jobs-box__html-content',
+    'article.jobs-description__container',
+    '[data-view-name="job-details"]',
+    '[data-view-name="job-detail-page"]',
+    '.jobs-description',
+  ];
+  for (const selector of selectors) {
+    const node = document.querySelector(selector);
+    if (node && (node.innerText || '').trim().length > 30) {
+      return (node.innerText || '').trim();
+    }
   }
   let best = '';
+  const searchPhrases = [
+    'about the job',
+    'acerca del empleo',
+    'job description',
+    'descripción del empleo',
+    'descripción del puesto',
+    'sobre el empleo',
+    'sobre el puesto',
+    'the role',
+    'role description',
+    'responsibilities',
+    'responsabilidades',
+    'qualifications',
+    'requisitos',
+  ];
   for (const node of Array.from(document.querySelectorAll('main, section, article, div'))) {
     const text = (node.innerText || '').trim();
     if (!text) continue;
-    if (text.includes('About the job') || text.includes('Acerca del empleo') || text.includes('Job description')) {
+    const lower = text.toLowerCase();
+    if (searchPhrases.some(phrase => lower.includes(phrase))) {
       if (text.length > best.length) best = text;
     }
   }
@@ -45,7 +74,7 @@ EXTERNAL_APPLY_URL_SCRIPT = """
   const candidates = Array.from(document.querySelectorAll('a[href], button, [role="button"]'));
   const match = candidates.find((candidate) => {
     const text = (candidate.innerText || candidate.getAttribute('aria-label') || '').trim().toLowerCase();
-    return text === 'apply' || text === 'apply now' || text === 'solicitar';
+    return text === 'apply' || text === 'apply now' || text === 'solicitar' || text === 'solicitar ahora';
   });
   if (match) {
     if (match.href) return normalize(match.href);
@@ -59,14 +88,43 @@ EXTERNAL_APPLY_URL_SCRIPT = """
 EXPAND_MORE_SCRIPT = """
 () => {
   let clicked = 0;
-  for (const node of Array.from(document.querySelectorAll('button, a, div[role="button"], span[role="button"]'))) {
-    const text = (node.innerText || '').trim();
-    if (!text) continue;
-    if (text !== 'Show more' && text !== 'See more' && text !== 'more') continue;
-    const rect = node.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) continue;
-    node.click();
-    clicked += 1;
+  const targetSelectors = [
+    'button.jobs-description__footer-button',
+    'button.show-more-less-html__button',
+    'button[data-tracking-control-name*="more"]',
+    'button[aria-label*="more" i]',
+    'button[aria-label*="más" i]',
+    'button[aria-label*="expand" i]',
+    '.artdeco-button[aria-expanded="false"]',
+    'button',
+    'a',
+    'div[role="button"]',
+    'span[role="button"]',
+  ];
+  const moreTextPatterns = [
+    'show more', 'see more', 'more',
+    'ver más', 'mostrar más', 'leer más',
+    'ver mas', 'mostrar mas', 'leer mas',
+    'see all', 'expand',
+  ];
+  const seen = new Set();
+  for (const selector of targetSelectors) {
+    for (const node of Array.from(document.querySelectorAll(selector))) {
+      if (seen.has(node)) continue;
+      const text = (node.innerText || node.getAttribute('aria-label') || '').trim().toLowerCase();
+      if (!text) continue;
+      const matches = moreTextPatterns.some(pat => text === pat || text.startsWith(pat) || text.endsWith(pat));
+      if (!matches && !node.classList.contains('jobs-description__footer-button') && !node.classList.contains('show-more-less-html__button')) {
+        continue;
+      }
+      const rect = node.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      try {
+        node.click();
+        seen.add(node);
+        clicked += 1;
+      } catch (_) {}
+    }
   }
   return clicked;
 }
@@ -121,20 +179,35 @@ GENERIC_NOISE_LINES = {
     "saved",
     "easy apply",
     "apply",
+    "apply now",
     "join now",
     "sign in",
     "show more",
     "show less",
     "see more",
     "see less",
+    "ver más",
+    "ver mas",
+    "ver menos",
+    "mostrar más",
+    "mostrar mas",
+    "mostrar menos",
+    "leer más",
+    "leer mas",
     "guardar",
     "solicitar",
+    "solicitar ahora",
     "solicitud sencilla",
     "visto",
     "empleos",
     "buscar",
     "adelántate a solicitar el empleo",
     "evaluando solicitudes de forma activa",
+    "alumni work here",
+    "antiguos alumnos trabajan aquí",
+    "early applicant",
+    "see how you compare",
+    "ve cómo encajas",
 }
 STOP_MARKERS = {
     "seniority level",
@@ -165,10 +238,32 @@ STOP_MARKERS = {
     "trending employee content",
 }
 
+START_DESCRIPTION_MARKERS = {
+    "about the job",
+    "job description",
+    "acerca del empleo",
+    "descripción del empleo",
+    "descripción del puesto",
+    "sobre el empleo",
+    "sobre el puesto",
+    "the role",
+    "about the role",
+    "about this role",
+    "role description",
+    "role overview",
+}
+
 DETAIL_SPLIT_MARKERS = (
     "About the job",
     "Acerca del empleo",
     "Job description",
+    "Descripción del empleo",
+    "Descripción del puesto",
+    "Sobre el empleo",
+    "Sobre el puesto",
+    "The role",
+    "About the role",
+    "Role description",
     "Save",
     "Apply",
     "Easy Apply",
@@ -674,7 +769,7 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
     header_lines = lines[:40]
     header_age_lines: list[str] = []
     for line in header_lines:
-        if line.lower() in {"about the job", "job description", "acerca del empleo"}:
+        if line.lower() in START_DESCRIPTION_MARKERS:
             break
         header_age_lines.append(line)
     header_preview = [_clean_location(line) for line in header_lines[:4]]
@@ -690,12 +785,12 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
 
     for line in header_lines:
         lowered = line.lower()
-        if lowered in {"about the job", "job description", "acerca del empleo"}:
+        if lowered in START_DESCRIPTION_MARKERS:
             break
-        if not title and lowered not in GENERIC_NOISE_LINES and "about the job" not in lowered and "acerca del empleo" not in lowered and not _looks_like_age_line(line) and not _looks_like_location(line):
+        if not title and lowered not in GENERIC_NOISE_LINES and lowered not in START_DESCRIPTION_MARKERS and not _looks_like_age_line(line) and not _looks_like_location(line) and not _is_header_chrome_line(lowered):
             title = line
             continue
-        if title and not company and lowered not in GENERIC_NOISE_LINES and line != title and not _looks_like_age_line(line) and not _looks_like_location(line):
+        if title and not company and lowered not in GENERIC_NOISE_LINES and line != title and not _looks_like_age_line(line) and not _looks_like_location(line) and not _is_header_chrome_line(lowered):
             company = line
             continue
         cleaned_line = _clean_location(line)
@@ -709,7 +804,7 @@ def _parse_detail_text(detail_text: str) -> dict[str, str]:
     if posted_line:
         posted_at = _relative_age_to_iso(posted_line) or ""
 
-    description = _extract_description(lines)
+    description = _extract_description(lines, title=title, company=company, location=location)
     accepting_applications = not _is_linkedin_closed(lines)
     return {
         "title": title,
@@ -730,23 +825,69 @@ def _find_best_posted_line(lines: list[str]) -> str:
     return next((line for line in lines if _looks_like_age_line(line)), "")
 
 
-def _extract_description(lines: list[str]) -> str:
-    start_idx = 0
+def _extract_description(
+    lines: list[str],
+    *,
+    title: str = "",
+    company: str = "",
+    location: str = "",
+) -> str:
+    start_idx = -1
     for index, line in enumerate(lines):
         lowered = line.lower()
-        if lowered in {"about the job", "job description", "acerca del empleo"}:
+        if lowered in START_DESCRIPTION_MARKERS:
             start_idx = index + 1
             break
 
+    title_norm = _normalize_title_token(title)
+    comp_norm = _normalize_title_token(company)
+    loc_norm = _normalize_title_token(location)
+
     kept: list[str] = []
-    for line in lines[start_idx:]:
+    source_lines = lines[start_idx:] if start_idx != -1 else lines
+    for line in source_lines:
         lowered = line.lower()
-        if lowered in GENERIC_NOISE_LINES:
+        if start_idx == -1:
+            line_norm = _normalize_title_token(line)
+            if line_norm and (line_norm == title_norm or line_norm == comp_norm or (loc_norm and line_norm == loc_norm)):
+                continue
+            if _is_header_chrome_line(lowered):
+                continue
+        if lowered in GENERIC_NOISE_LINES or _is_header_chrome_line(lowered):
             continue
         if lowered in STOP_MARKERS:
             break
         kept.append(line)
     return "\n".join(kept).strip()
+
+
+def _is_header_chrome_line(lowered: str) -> bool:
+    if not lowered:
+        return True
+    if lowered in GENERIC_NOISE_LINES or _starts_with_noise_prefix(lowered):
+        return True
+    if _looks_like_age_line(lowered) or _looks_like_location(lowered) or _looks_like_compensation_line(lowered):
+        return True
+    if any(phrase in lowered for phrase in (
+        "antiguos alumnos",
+        "alumnos trabajan",
+        "alumni work here",
+        "adelántate a solicitar",
+        "early applicant",
+        "solicitar el empleo",
+        "publicado hace",
+        "compartido hace",
+        "reposted",
+        "evaluando solicitudes",
+        "actively reviewing",
+        "actively hiring",
+        "connections work here",
+        "contactos trabajan",
+        "see how you compare",
+        "ve cómo encajas",
+    )):
+        return True
+    return False
 
 
 def _normalize_detail_text(value: str) -> str:

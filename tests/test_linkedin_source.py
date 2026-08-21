@@ -602,6 +602,40 @@ Build machine learning and analytics solutions with Python and SQL.
         card = {"posted_at": _relative_age_to_iso("2 days ago") or ""}
         self.assertFalse(_is_card_older_than_lookback(card, 7))
 
+    def test_parse_detail_text_with_spanish_headers(self) -> None:
+        parsed = _parse_detail_text(
+            """Software Engineer Intern
+SK hynix memory solutions America Inc.
+San José, CA
+12 antiguos alumnos trabajan aquí
+Publicado hace 7 horas
+Descripción del empleo
+Develop storage testing tools using C++, Python and JavaScript.
+Automate build and deployment pipelines.
+Seniority level
+Internship
+"""
+        )
+        self.assertEqual(parsed["title"], "Software Engineer Intern")
+        self.assertEqual(parsed["company"], "SK hynix memory solutions America Inc.")
+        self.assertIn("Develop storage testing tools using C++, Python and JavaScript.", parsed["description"])
+        self.assertNotIn("12 antiguos alumnos trabajan aquí", parsed["description"])
+
+    def test_extract_description_skips_chrome_header_lines_when_no_marker(self) -> None:
+        parsed = _parse_detail_text(
+            """Software Engineer Intern
+SK hynix memory solutions America Inc.
+San José, CA
+12 antiguos alumnos trabajan aquí
+Adelántate a solicitar el empleo
+Publicado hace 7 horas
+We are looking for a software engineer intern to build storage validation tools and APIs with Python and C++.
+"""
+        )
+        self.assertIn("We are looking for a software engineer intern", parsed["description"])
+        self.assertNotIn("12 antiguos alumnos", parsed["description"])
+        self.assertNotIn("Adelántate a solicitar", parsed["description"])
+
 
 if __name__ == "__main__":
     unittest.main()
