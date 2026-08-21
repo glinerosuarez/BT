@@ -13,8 +13,11 @@ artifacts/
 # Browser profiles and temporary data
 .*-profile/
 .tmp-*/
-.agents/
 .profiles/
+!.agents/
+!.agents/skills/
+!.agents/skills/**
+
 
 # Candidate credentials
 *workday_accounts.json
