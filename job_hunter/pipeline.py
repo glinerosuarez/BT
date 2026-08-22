@@ -842,13 +842,15 @@ def _passes_data_role_gate(
 
     backend_adjacent_title = any(pattern.search(title) for pattern in DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES.values())
     if backend_adjacent_title:
-        if DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES["software_engineer_intern"].search(title) and DEFAULT_NON_DATA_ROLE_TITLE_REGEXES[
-            "frontend_mobile_only"
-        ].search(desc_blob):
-            return False
-        if BACKEND_ADJACENT_TITLE_BOOST_REGEX.search(title):
-            return True
         if DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES["software_engineer_intern"].search(title):
+            has_backend_or_data_signals = (
+                any(p.search(desc_blob) for p in BACKEND_ADJACENT_DESCRIPTION_REGEXES.values())
+                or any(p.search(desc_blob) for p in HIGH_SIGNAL_KEYWORD_PATTERNS.values())
+            )
+            if DEFAULT_NON_DATA_ROLE_TITLE_REGEXES["frontend_mobile_only"].search(desc_blob) and not has_backend_or_data_signals:
+                return False
+            return True
+        if BACKEND_ADJACENT_TITLE_BOOST_REGEX.search(title):
             return True
         backend_signal_hits = 0
         for pattern in BACKEND_ADJACENT_DESCRIPTION_REGEXES.values():
