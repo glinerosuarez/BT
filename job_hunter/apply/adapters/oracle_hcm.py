@@ -823,23 +823,33 @@ class OracleHCMAdapter:
         if not email:
             return False
 
+        # Dismiss cookie consent if present
+        try:
+            cookie_btn = page.locator('button.cookie-consent__button.accept, button:has-text("Accept")').first
+            if cookie_btn.count() > 0 and cookie_btn.is_visible():
+                cookie_btn.click()
+                self._wait(page, 500)
+        except Exception:
+            pass
+
         # Wait up to 5s for the email input to appear on the SPA
         for _ in range(10):
             try:
                 filled = page.evaluate(
                     f"""() => {{
-                      const inputs = Array.from(document.querySelectorAll(
-                        'input.oj-text-field-input, input[type="email"], input.input-row__control, input[type="text"]'
-                      )).filter(el => {{
-                        const style = window.getComputedStyle(el);
-                        return style.display !== 'none' && style.visibility !== 'hidden' && !el.disabled;
-                      }});
-                      if (!inputs.length) return false;
-                      const el = inputs[0];
+                      const el = document.querySelector('input[type="email"], input#primary-email-0, input.oj-text-field-input');
+                      if (!el) return false;
                       el.focus();
                       el.value = {repr(email)};
                       el.dispatchEvent(new Event('input', {{bubbles: true}}));
                       el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                      
+                      // Check legal disclaimer checkbox if present
+                      const cb = document.getElementById('legal-disclaimer-checkbox') || document.querySelector('input[type="checkbox"]');
+                      if (cb && !cb.checked) {{
+                        cb.click();
+                        cb.dispatchEvent(new Event('change', {{bubbles: true}}));
+                      }}
                       return true;
                     }}"""
                 )
@@ -867,7 +877,9 @@ class OracleHCMAdapter:
         # Click Next to proceed past the email gate
         self._wait(page, 500)
         self._try_click_next(page)
+        self._wait(page, 1500)
         return True
+
 
 
     # ------------------------------------------------------------------

@@ -54,7 +54,16 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.handshake_recent_pages, 10)
         self.assertFalse(settings.handshake_use_keyword_supplemental)
         self.assertEqual(settings.handshake_direct_job_urls, [])
-        self.assertEqual(settings.handshake_recall_queries, ["ai engineering", "ai fellow"])
+        self.assertEqual(
+            settings.handshake_recall_queries,
+            [
+                "ai engineering",
+                "ai fellow",
+                "software engineer intern",
+                "software engineering intern",
+                "software engineer internship",
+            ],
+        )
         self.assertEqual(settings.browser_backend, "playwright")
         self.assertEqual(settings.tailoring_profile_root, "profiles")
         self.assertEqual(settings.tailoring_output_root, "artifacts/tailoring")

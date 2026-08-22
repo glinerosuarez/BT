@@ -7,7 +7,13 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 
-DEFAULT_HANDSHAKE_RECALL_QUERIES = ["ai engineering", "ai fellow"]
+DEFAULT_HANDSHAKE_RECALL_QUERIES = [
+    "ai engineering",
+    "ai fellow",
+    "software engineer intern",
+    "software engineering intern",
+    "software engineer internship",
+]
 
 
 def _env_bool(name: str, default: bool) -> bool:
