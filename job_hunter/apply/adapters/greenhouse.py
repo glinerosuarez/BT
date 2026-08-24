@@ -325,18 +325,22 @@ class GreenhouseAdapter:
             option = None
             for search_value in self._select_search_values(value):
                 locator.fill(search_value)
-                page.wait_for_timeout(500)
-                option = self._matching_select_option(
-                    page=page,
-                    value=value,
-                    allow_country_dial_code=is_phone_country,
-                    allow_contained_value=is_source_question,
-                    allow_acknowledgement_equivalence=is_consent_question,
-                )
+                for _ in range(8):
+                    page.wait_for_timeout(350)
+                    option = self._matching_select_option(
+                        page=page,
+                        value=value,
+                        allow_country_dial_code=is_phone_country,
+                        allow_contained_value=is_source_question,
+                        allow_acknowledgement_equivalence=is_consent_question,
+                    )
+                    if option is not None:
+                        break
                 if option is not None:
                     break
             if option is None:
                 raise RuntimeError(f"No matching select option for '{value}'")
+
             option.click()
             page.wait_for_timeout(300)
             selected_value = self._selected_select_value(locator)
@@ -410,13 +414,15 @@ class GreenhouseAdapter:
                   if (!normExp) return false;
                   
                   const selector = allowCountry 
-                    ? '.iti__country-list li, .iti__country, [role="option"]' 
-                    : '.select__menu div, .select__option, [class*="-option"], [role="option"]';
+                    ? '.select__option, [id*="-option-"], [role="option"]:not([id*="iti-"]), .iti__country-list li, .iti__country' 
+                    : '.select__option, [id*="-option-"], [role="option"]:not([id*="iti-"])';
+
                   
                   const options = Array.from(document.querySelectorAll(selector)).filter(el => {
                     const rect = el.getBoundingClientRect();
                     return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
                   });
+
                   if (!options.length) return false;
 
                   // 1. Exact match

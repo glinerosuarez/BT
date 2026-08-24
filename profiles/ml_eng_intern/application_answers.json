@@ -580,8 +580,14 @@
             "match_type": "contains",
             "pattern": "strong interest in a GE Vernova segment",
             "answer": "Electrification"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "willing to work in the office",
+            "answer": "Yes"
         }
     ],
+
 
 
 
