@@ -439,23 +439,29 @@ class JobStore:
                 candidate_url = str(candidate["url"] or "").strip()
                 if _normalize_handshake_storage_url(candidate_url) == normalized_url:
                     return str(candidate["dedupe_key"])
-        if source == "linkedin" and title.strip() and company.strip() and description.strip():
-            identity = _linkedin_description_identity(description)
+        if source == "linkedin" and title.strip() and company.strip():
+            identity = _linkedin_description_identity(description) if description.strip() else ""
+            rows = self._conn.execute(
+                """
+                SELECT dedupe_key, location, description
+                FROM jobs
+                WHERE lower(trim(title)) = lower(trim(?))
+                  AND lower(trim(company)) = lower(trim(?))
+                ORDER BY id DESC
+                """,
+                (title, company),
+            ).fetchall()
             if identity:
-                rows = self._conn.execute(
-                    """
-                    SELECT dedupe_key, description
-                    FROM jobs
-                    WHERE source = 'linkedin'
-                      AND lower(trim(title)) = lower(trim(?))
-                      AND lower(trim(company)) = lower(trim(?))
-                    ORDER BY id DESC
-                    """,
-                    (title, company),
-                ).fetchall()
                 for candidate in rows:
                     if _linkedin_description_identity(str(candidate["description"] or "")) == identity:
                         return str(candidate["dedupe_key"])
+            if location.strip():
+                normalized_location = _normalize_location_identity(location)
+                if normalized_location:
+                    for candidate in rows:
+                        cand_loc = _normalize_location_identity(str(candidate["location"] or ""))
+                        if cand_loc and cand_loc == normalized_location:
+                            return str(candidate["dedupe_key"])
         return ""
 
     def insert_job(self, job: JobRecord, dedupe_key: str) -> bool:
@@ -2447,7 +2453,9 @@ def _normalize_application_url(url: str) -> str:
 
 
 def _normalize_location_identity(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+    cleaned = value.split("·", 1)[0]
+    cleaned = re.sub(r"\s*\([^)]*\)", "", cleaned)
+    return re.sub(r"[^a-z0-9]+", " ", cleaned.lower()).strip()
 
 
 def _row_value(row: sqlite3.Row, key: str) -> object | None:

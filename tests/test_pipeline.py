@@ -985,6 +985,33 @@ class PipelineIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(duplicate_key, first_key)
 
+    def test_linkedin_dedupe_falls_back_to_title_company_location_when_description_truncated(self) -> None:
+        first = JobRecord(
+            source="linkedin",
+            external_id="linkedin-copart-1",
+            url="https://www.linkedin.com/jobs/view/4441251068",
+            title="Software Engineering Intern",
+            company="Copart",
+            location="Dallas, TX",
+            is_internship=True,
+            posted_at=recent_posted_at(),
+            description="Full long description for Copart software engineering intern role with responsibilities and tech stack.",
+            ingested_at="2026-07-30T00:00:00+00:00",
+        )
+        first_key = _dedupe_key(first)
+        self.assertTrue(self.store.insert_job(first, first_key))
+
+        duplicate_key = self.store.resolve_existing_dedupe_key(
+            source="linkedin",
+            dedupe_key="copart-different-key",
+            url="https://www.linkedin.com/jobs/view/4430726489",
+            title="Software Engineering Intern",
+            company="Copart",
+            location="Dallas, TX (Presencial)",
+            description="Software Engineering Intern Copart Dallas, TX 1 antiguo empleado trabaja aquí",
+        )
+        self.assertEqual(duplicate_key, first_key)
+
     def test_cross_source_dedupe_uses_normalized_external_apply_url(self) -> None:
         linkedin = JobRecord(
             source="linkedin",
