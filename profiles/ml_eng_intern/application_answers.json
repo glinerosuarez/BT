@@ -474,22 +474,22 @@
         {
             "match_type": "contains",
             "pattern": "Why are you interested in becoming an Enterprise Systems Software Engineering Intern",
-            "answer": "I am deeply inspired by Zipline’s mission to provide instant, equal access to vital medical supplies, food, and goods across the globe through autonomous logistics. What excites me about the Enterprise Systems team is the opportunity to work at the intersection of high-availability distributed software and mission-critical physical operations. The operational software powering manufacturing execution, parts traceability, and supply chain reliability is the nervous system of Zipline’s fleet. With my background in building resilient data pipelines at Perficient and EPAM and designing observable backend systems with OpenTelemetry, I want to take ownership of core product domains, eliminate manual bottlenecks, and help ensure 99.9% uptime as Zipline scales to deliver every 30 seconds worldwide."
+            "answer": "Building high-availability software that coordinates autonomous logistics at scale requires high-throughput data contracts, parts traceability, and continuous observability. The operational software powering manufacturing execution and supply chain reliability is the nervous system of Zipline’s fleet. With my background in building resilient data pipelines at Perficient and EPAM and designing observable backend systems with OpenTelemetry, I want to take ownership of core product domains, eliminate manual bottlenecks, and help ensure 99.9% uptime as Zipline scales to fulfill deliveries every 30 seconds worldwide."
         },
         {
             "match_type": "contains",
             "pattern": "project where something didn’t work as expected",
-            "answer": "At EPAM, while building an ingestion pipeline for high-velocity IoT telemetry data, we noticed unexpected schema drifts and out-of-order timestamps from field sensors causing corrupted aggregations and silent failures in downstream analytics dashboards. The existing system assumed semi-static schemas, which broke when hardware firmware updates rolled out. To resolve this, I first instrumented detailed metrics and log tracing to isolate the exact points of failure. I then designed an automated schema validation and anomaly detection staging layer with dead-letter queue routing. This intercepted malformed payloads before they reached production stores and caught 95% of invalid records upstream, while automatically alerting engineers to new firmware schema variations."
+            "answer": "At EPAM, while building an ingestion pipeline for high-velocity IoT telemetry data, unexpected schema drifts, out-of-order timestamps, and misrouted messages from upstream Kafka topics caused corrupted aggregations and silent failures in downstream analytics dashboards. The system broke when firmware updates introduced unannounced payload variations and upstream producer services sent records to incorrect topics. To resolve this, I instrumented distributed tracing and consumer group metrics to isolate failure boundaries and track message origins. I then designed an automated schema validation and anomaly detection staging layer with dead-letter queue routing. This intercepted malformed payloads and misrouted Kafka events before they reached production stores, catching 95% of invalid records upstream while automatically alerting engineering teams to schema mismatches and topic routing errors."
         },
         {
             "match_type": "contains",
             "pattern": "Describe a recent project where you used AI tools while building software",
-            "answer": "At Impatico, I built an automated document extraction pipeline leveraging Vision-Language Models (VLMs) and LLM orchestrators to ingest ESG and operational data from thousands of complex corporate reports. AI tools were exceptionally helpful for initial layout parsing, text extraction from unstructured tables, and drafting semantic schema mappings across disparate document formats. However, critical engineering judgment was essential for building the evaluation framework: I used Phoenix and OpenTelemetry to trace and benchmark model outputs, set deterministic validation boundaries to reject hallucinations on numerical compliance data, and engineered hybrid retrieval (RAG) strategies that increased precision from 50% to 80% while keeping latency and inference costs bounded."
+            "answer": "At Impatico, I built an agentic document extraction system to process operational and ESG data from over 1,000 corporate reports. The task was to leverage frontier LLMs to automate schema mapping across unstructured filings while guaranteeing strict data accuracy. I applied spec-driven development and context engineering to bound tool schemas, structure prompts, and eliminate ambiguity for coding and orchestration agents. Where AI accelerated boilerplate generation and multi-modal layout parsing, my engineering judgment was essential for building the evaluation infrastructure: I instrumented agent execution traces with Phoenix and OpenTelemetry, implemented deterministic validation rules to block numerical hallucinations, and designed hybrid RAG retrieval to close feedback loops. As a result, extraction precision increased from 50% with zero-shot prompting to 80% with our validated agentic pipeline. This project proved that agent reliability is not about raw model generation, but about enforcing strict context engineering, curated tool interfaces, and continuous evaluation guardrails."
         },
         {
             "match_type": "contains",
             "pattern": "most technically challenging project you’ve built",
-            "answer": "At Perficient, I was tasked with optimizing a multi-terabyte scientific data processing pipeline on AWS EMR that was taking nearly 24 hours per batch run, frequently failing due to memory pressure, and incurring significant cloud costs. I analyzed Spark execution plans to identify severe data skew and unnecessary shuffle operations. I repartitioned datasets using composite keys, tuned memory allocation parameters, and transitioned repetitive PySpark logic into a streamlined, reusable framework. This slashed runtime to under 1 hour and reduced monthly EMR costs by $10,000. If I were doing this project today, I would establish automated partition sizing and OpenTelemetry-based job profiling upfront to detect skew dynamically during ingestion rather than retroactively tuning after cost overruns."
+            "answer": "At Perficient, I was tasked with optimizing a multi-terabyte scientific data processing pipeline on AWS EMR that suffered from 24-hour runtimes, frequent out-of-memory crashes, and high infrastructure costs. Profiling Spark execution plans revealed two core bottlenecks: severe partition data skew causing redundant shuffles, and reliance on PySpark’s low-level RDD API, which forced costly JVM-to-Python socket serialization and duplicate memory allocations. To fix this, I adopted Apache Arrow's columnar in-memory format to enable zero-copy vectorized data sharing between the JVM and Python runtimes, transitioned operations to DataFrames repartitioned by composite keys, and tuned worker memory allocation. This slashed batch runtime from 24 hours to under 1 hour and reduced monthly AWS EMR spend by $10,000. If I were approaching this project today, I would establish automated partition sizing and comprehensive pipeline instrumentation upfront to catch serialization overhead and partition skew dynamically during ingestion rather than retroactively tuning after cost overruns."
         },
         {
             "match_type": "contains",
@@ -620,8 +620,24 @@
             "match_type": "contains",
             "pattern": "current work authorization status in the United States",
             "answer": "I am legally authorized to work for any employer in the United States."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "based in the SF Bay Area, or ready to relocate",
+            "answer": "Yes - I can relocate within 1–2 months (if offered the role)"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Have you worked with any startups previously",
+            "answer": "Yes, at Impatico (seed-stage AI startup), I built end-to-end multimodal data extraction pipelines using Vision-Language Models (VLMs) and LLM orchestrators. I owned the core ingestion pipeline, engineered hybrid RAG retrieval that increased precision from 50% to 80%, and built evaluation benchmarks with Phoenix and OpenTelemetry to ensure deterministic reliability and sub-second response times. I thrive in high-autonomy environments where engineers iterate and ship fast."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "What is your current visa status",
+            "answer": "US Citizen / Permanent Resident (Authorized to work for any US employer without sponsorship)"
         }
     ],
+
 
 
 
