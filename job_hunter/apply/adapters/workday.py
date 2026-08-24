@@ -1408,7 +1408,18 @@ class WorkdayAdapter:
             return True
         if field_name.strip().lower() == "degree":
             return _canonical_degree(current_value) == _canonical_degree(desired_value)
+        try:
+            val_float = float(desired)
+            range_match = re.search(r"(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)", current)
+            if range_match:
+                low = float(range_match.group(1))
+                high = float(range_match.group(2))
+                if low <= val_float <= high:
+                    return True
+        except ValueError:
+            pass
         return current == desired
+
 
     def _is_us_state_equivalent(self, *, field_name: str, current_value: str, desired_value: str) -> bool:
         if field_name.strip().lower() != "countryregion":

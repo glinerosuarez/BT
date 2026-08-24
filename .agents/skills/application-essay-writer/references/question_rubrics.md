@@ -7,22 +7,22 @@ This guide provides proven structural frameworks and evaluation criteria for com
 ## Rubric 1: "Why This Role / Why This Company?"
 *(e.g., "Why are you interested in becoming an Enterprise Systems Software Engineering Intern at Zipline?")*
 
-### Formula: The **Mission — Bridge — Impact** Framework
+### Formula: The **Problem Space — Candidate Bridge — Targeted Impact** Framework
 
-1. **Company Mission & Problem Space** (1-2 sentences):
-   - Acknowledge the company's real-world mission and specific technical challenge (e.g., Zipline's autonomous logistics delivering medical supplies every 30 seconds; AMETEK's mission-critical manufacturing and test instrumentation).
-   - Explain what specifically attracts you to *this* particular team/subsystem (e.g., the operational software powering parts traceability and supply chain uptime).
+1. **Specific Engineering Problem Space** (1 sentence):
+   - Jump straight into the concrete technical challenge or system need of the team (e.g., building high-reliability third-party data integrations, scaling parts traceability for autonomous logistics, or maintaining sub-second query latency over financial data).
+   - 🚫 **Do NOT summarize the company's business or mission back to them** (e.g. avoid *"Company X's mission to empower Y is an exciting challenge..."*).
 
 2. **The Candidate Bridge** (2-3 sentences):
    - Connect your direct prior experience (distributed Spark pipelines at Perficient, IoT anomaly detection at EPAM, or observability at Impatico) to the team's core problems.
-   - Mention specific relevant technologies and engineering philosophies (e.g., high availability, fault-tolerance, data contracts, OpenTelemetry).
+   - Mention specific relevant technologies, verified metrics, and engineering philosophies (e.g., high availability, fault-tolerance, data contracts, OpenTelemetry, precision gains).
 
 3. **Targeted Contribution & Impact** (1-2 sentences):
-   - State what you aim to deliver or learn during the role (e.g., eliminating manual operational bottlenecks, maintaining 99.9% uptime, accelerating production throughput).
+   - State what you aim to build, take ownership of, or deliver during the role (e.g., eliminating manual operational bottlenecks, streamlining API connections, maintaining high uptime).
 
 **Key Success Criteria**:
-- Avoid generic flattery like "I have always wanted to work for a fast-paced company."
-- Name the exact team or problem domain described in the job post.
+- 🚫 Zero company mission summaries or flattering corporate statements.
+- Direct engineering tone focused on architecture, data pipelines, and systems delivered.
 
 ---
 

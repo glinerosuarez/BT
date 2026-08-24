@@ -25,6 +25,7 @@ Activate this skill whenever:
 ## References & Candidate Knowledge
 
 Before generating responses, consult the following references:
+- **Agent Workflow & Blocker Resolver**: [`workflow_blocker_resolver.md`](./workflow_blocker_resolver.md) — Comprehensive execution runbook for both interactive Q&A and automated ATS blocker remediation.
 - **Candidate Experience Vault**: [`references/candidate_experience_vault.md`](./references/candidate_experience_vault.md) — Complete repository of verified work history, projects, metrics, tools, and achievements for Gabriel Linero (Impatico, EPAM, Perficient, USC).
 - **Question Rubrics & Frameworks**: [`references/question_rubrics.md`](./references/question_rubrics.md) — Structural formulas (Mission-Bridge-Impact, STAR-L, Depth & Tradeoffs, Leverage vs. Rigor).
 - **Sample Essays**: [`examples/sample_essays.md`](./examples/sample_essays.md) — Exemplar responses for real roles (Zipline, AMETEK, Intel, ONE Gas).
@@ -60,7 +61,9 @@ Apply the designated rubric from [Question Rubrics](./references/question_rubric
 | **"How You Use AI Tools"** | **Leverage vs. Rigor** | 1. Productivity boost (parsing/boilerplate)<br>2. Critical human engineering judgment (evals, boundaries, correctness) |
 
 ### 5. Enforce Core Writing Rules
+- 🚫 **No Company Mission Regurgitation**: Never start by summarizing the company's business or mission back to them (e.g., *"Company X's focus on Y is an exciting challenge..."* or *"Company X is known for Y..."*). Jump directly into the concrete engineering problem space or the candidate's technical bridge.
 - 🚫 **No Generic Fluff**: Never start with "I am thrilled to apply..." or "I have always been passionate about...".
+- 🚫 **No Meta-Commentary**: Never write "This directly aligns with..." or "This experience demonstrates my ability to...".
 - 🚫 **No Hallucinations**: Do NOT invent companies, metrics, or technologies not present in the Candidate Vault.
 - ✅ **First-Person & Active Voice**: Use crisp, professional, confident language ("I built...", "I optimized...", "I instrumented...").
 - ✅ **Verifiable Metrics**: Include specific numbers where appropriate (e.g., "95% of invalid records", "50% to 80% precision", "24 hours to under 1 hour").

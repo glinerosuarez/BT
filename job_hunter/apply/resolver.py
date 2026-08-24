@@ -265,15 +265,22 @@ class AnswerResolver:
         ):
             return "identity.phone"
         if (
-            field_name in {"state", "state/province", "region", "province"}
-            or question.rstrip("*").strip() in {"state", "state/province", "region", "province"}
+            field_name in {"state", "state/province", "region", "province", "countryregion"}
+            or question.rstrip("*").strip() in {"state", "state/province", "region", "province", "department"}
         ):
             return "identity.region"
+
         for patterns, key in _QUESTION_FIELD_MAP:
             if any(_question_contains_pattern(question, pattern) or pattern == field_name for pattern in patterns):
                 if key == "identity.city" and any(term in question for term in ("council", "government", "agency", "elected", "utility", "commission")):
                     continue
+                if key == "identity.portfolio_url" and any(term in question for term in ("former employee", "previously employed", "previous worker", "worked for", "affiliates", "subsidiaries")):
+                    continue
+                if key == "identity.email" and any(term in question for term in ("contact you by email", "consent", "retain", "retaining", "news", "opportunities", "updates")):
+                    continue
                 return key
+
+
         return ""
 
 
@@ -427,6 +434,8 @@ class AnswerResolver:
         ):
             return AnswerResolution(answer="No", source="policy:public_office.no")
 
+
+
         if (
             "discharged" in question
             and "resign" in question
@@ -436,6 +445,33 @@ class AnswerResolver:
 
         if "application acknowledgement" in question and "i acknowledge" in question:
             return AnswerResolution(answer="I acknowledge", source="policy:application_acknowledgement.accept")
+
+        if (
+            "will not disclose or use" in question
+            or ("confidential" in question and "proprietary information" in question)
+            or ("former employer" in question and "confidential" in question)
+        ):
+            return AnswerResolution(answer="I agree", source="policy:confidentiality_acknowledgement.agree")
+
+        if (
+            "retaining your candidate profile" in question
+            or "consent to ge vernova" in question
+            or ("consent" in question and "future roles" in question)
+            or ("consent" in question and "job opportunities" in question)
+            or ("consent" in question and "retaining" in question)
+        ):
+            return AnswerResolution(answer="I consent", source="policy:candidate_profile_retention.consent")
+
+        if "communication method" in question or "contacting you throughout the recruiting process" in question:
+            return AnswerResolution(answer="Email", source="policy:recruiting_communication.email")
+
+        if "ge vernova segment" in question or "strong interest in a ge vernova segment" in question:
+            return AnswerResolution(answer="Electrification", source="policy:ge_vernova_segment.electrification")
+
+
+
+
+
 
         if (
             "may waive my right to receive a copy" in question
@@ -508,10 +544,11 @@ class AnswerResolver:
         if "specific source" in question or normalized_field_name in {"specific_source", "specificsource"}:
             return AnswerResolution(answer="Company Website", source="policy:how_did_you_hear")
 
-        if normalized_field_name == "region2":
+        if normalized_field_name in {"region2", "countryregion"}:
             state = self._structured.get("identity.region", "").strip()
             if state:
                 return AnswerResolution(answer="California" if state.upper() == "CA" else state, source="structured:identity.region")
+
 
 
         if "compensation expectations" in question or "salary expectations" in question:

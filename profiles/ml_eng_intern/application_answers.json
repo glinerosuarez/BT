@@ -550,8 +550,45 @@
             "match_type": "contains",
             "pattern": "Are you Hispanic/Latino",
             "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "will not disclose or use",
+            "answer": "I agree"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "employee of any Government",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "retaining your Candidate profile",
+            "answer": "I consent"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "communication method would you like us to use",
+            "answer": "Email"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "What is your current overall GPA",
+            "answer": "3.5 - 4.0"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "strong interest in a GE Vernova segment",
+            "answer": "Electrification"
         }
     ],
+
+
+
+
+
+
+
 
 
     "field_defaults": {
