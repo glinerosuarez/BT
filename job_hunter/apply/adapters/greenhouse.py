@@ -295,19 +295,6 @@ class GreenhouseAdapter:
         field_type = str(field.get("field_type") or "text")
         if field_type == "file":
             locator = page.locator(selector)
-            input_id = ""
-            try:
-                input_id = locator.get_attribute("id") or ""
-            except Exception:
-                input_id = ""
-            if input_id:
-                attach_button = page.locator(f"label[for='{input_id}']").locator("xpath=preceding-sibling::button[1]")
-                if attach_button.count() > 0:
-                    with page.expect_file_chooser() as chooser_info:
-                        attach_button.first.click()
-                    chooser_info.value.set_files(value)
-                    page.wait_for_timeout(1500)
-                    return
             locator.set_input_files(value)
             try:
                 locator.dispatch_event("change")
@@ -317,7 +304,8 @@ class GreenhouseAdapter:
                 locator.dispatch_event("input")
             except Exception:
                 pass
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(300)
+
         elif field_type == "select-one":
             normalized = value.strip().lower()
             if normalized in {"true", "1", "yes", "on"}:
@@ -352,18 +340,21 @@ class GreenhouseAdapter:
             option.click()
             page.wait_for_timeout(300)
             selected_value = self._selected_select_value(locator)
-            if not selected_value or (
-                not is_phone_country
-                and not is_source_question
-                and not self._select_values_match(
-                    expected=value,
-                    actual=selected_value,
-                    allow_acknowledgement_equivalence=is_consent_question,
+            if not is_phone_country and (
+                not selected_value
+                or (
+                    not is_source_question
+                    and not self._select_values_match(
+                        expected=value,
+                        actual=selected_value,
+                        allow_acknowledgement_equivalence=is_consent_question,
+                    )
                 )
             ):
                 raise RuntimeError(
                     f"Select value was not committed for '{value}' (current value: '{selected_value or '<empty>'}')"
                 )
+
         elif field_type == "checkbox":
             desired = value.strip().lower() in {"1", "true", "yes", "on"}
             if bool(field.get("checked")) != desired:
@@ -410,46 +401,119 @@ class GreenhouseAdapter:
         allow_contained_value: bool = False,
         allow_acknowledgement_equivalence: bool = False,
     ):
-        for selector in ("[role='option']", "[id*='-option-']"):
-            options = page.locator(selector)
-            try:
-                option_count = options.count()
-            except Exception:
-                continue
-            for index in range(option_count):
-                option = options.nth(index)
-                try:
-                    if not option.is_visible():
-                        continue
-                    option_text = option.inner_text().strip()
-                except Exception:
-                    continue
-                if self._select_values_match(
-                    expected=value,
-                    actual=option_text,
-                    allow_acknowledgement_equivalence=allow_acknowledgement_equivalence,
-                ) or (
-                    allow_country_dial_code and self._country_option_matches(expected=value, actual=option_text)
-                ) or (
-                    allow_contained_value
-                    and self._normalize_select_value(value) in self._normalize_select_value(option_text)
-                ):
-                    return option
+        try:
+            matched = page.evaluate(
+                """({ expected, allowCountry, allowContained, allowAck }) => {
+                  document.querySelectorAll('[data-jh-matched-option]').forEach(el => el.removeAttribute('data-jh-matched-option'));
+                  const normalize = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                  const normExp = normalize(expected);
+                  if (!normExp) return false;
+                  
+                  const selector = allowCountry 
+                    ? '.iti__country-list li, .iti__country, [role="option"]' 
+                    : '.select__menu div, .select__option, [class*="-option"], [role="option"]';
+                  
+                  const options = Array.from(document.querySelectorAll(selector)).filter(el => {
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
+                  });
+                  if (!options.length) return false;
+
+                  // 1. Exact match
+                  for (const el of options) {
+                    const normAct = normalize(el.textContent);
+                    if (normExp === normAct || ((normExp === 'yes' || normExp === 'no') && normAct.startsWith(normExp + ' '))) {
+                      el.setAttribute('data-jh-matched-option', 'true');
+                      return true;
+                    }
+                  }
+
+                  // 2. Acknowledgement / consent match
+                  if (allowAck) {
+                    for (const el of options) {
+                      const normAct = normalize(el.textContent);
+                      if ((normExp === 'i agree' || normExp === 'agree' || normExp === 'yes') && (normAct.includes('agree') || normAct.includes('accept') || normAct.startsWith('yes'))) {
+                        el.setAttribute('data-jh-matched-option', 'true');
+                        return true;
+                      }
+                    }
+                  }
+
+                  // 3. Degree match
+                  const degLevels = ['associate', 'bachelor', 'master', 'doctor'];
+                  for (const deg of degLevels) {
+                    if (normExp.includes(deg)) {
+                      for (const el of options) {
+                        if (normalize(el.textContent).includes(deg)) {
+                          el.setAttribute('data-jh-matched-option', 'true');
+                          return true;
+                        }
+                      }
+                    }
+                  }
+
+                  // 4. Country match
+                  if (allowCountry) {
+                    for (const el of options) {
+                      const normAct = normalize(el.textContent);
+                      if (normAct.includes('united states') || normAct.includes('+1') || normAct.includes('usa')) {
+                        el.setAttribute('data-jh-matched-option', 'true');
+                        return true;
+                      }
+                    }
+                  }
+
+                  // 5. Contained / substring match
+                  for (const el of options) {
+                    const normAct = normalize(el.textContent);
+                    if (allowContained && normAct.includes(normExp)) {
+                      el.setAttribute('data-jh-matched-option', 'true');
+                      return true;
+                    }
+                    if (normExp.split(' ').length >= 2 && normAct.includes(normExp)) {
+                      el.setAttribute('data-jh-matched-option', 'true');
+                      return true;
+                    }
+                    if (normAct.split(' ').length >= 2 && normExp.includes(normAct)) {
+                      el.setAttribute('data-jh-matched-option', 'true');
+                      return true;
+                    }
+                  }
+
+                  return false;
+                }""",
+                {
+                    "expected": value,
+                    "allowCountry": allow_country_dial_code,
+                    "allowContained": allow_contained_value,
+                    "allowAck": allow_acknowledgement_equivalence,
+                },
+            )
+            if matched:
+                return page.locator("[data-jh-matched-option='true']").first
+        except Exception:
+            pass
         return None
+
+
 
     def _selected_select_value(self, locator) -> str:
         try:
             return str(
                 locator.evaluate(
                     """
-                    (el) => (
-                      el.closest('.select__container')?.querySelector('.select__single-value')?.textContent || ''
-                    ).trim()
+                    (el) => {
+                      const ctrl = el.closest('.select__control, .select__container, .field, fieldset') || el.parentElement?.parentElement;
+                      const valEl = ctrl?.querySelector('.select__single-value, [class*="singleValue"], .select__value-container--has-value, .select__value-container');
+                      return (valEl?.textContent || ctrl?.textContent || el.value || '').trim();
+                    }
                     """
                 )
             ).strip()
         except Exception:
             return ""
+
+
 
     @classmethod
     def _select_values_match(

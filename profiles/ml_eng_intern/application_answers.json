@@ -505,8 +505,54 @@
             "match_type": "contains",
             "pattern": "Voluntary Self-Identification - Veteran",
             "answer": "I am not a protected veteran"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Please re-confirm your expected graduation date",
+            "answer": "August 2027 - December 2027"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "What country do you currently reside in",
+            "answer": "United States of America"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "which US state do you reside in",
+            "answer": "California"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Are you legally authorized to work in the country where this role is based",
+            "answer": "Yes, I am authorized to work in this country for any employer"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Will you now or in the future require employer sponsorship for work authorization in this country",
+            "answer": "No, I will not require sponsorship now or in the future to work in this country"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "What are your preferred pronouns",
+            "answer": "He/Him"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "How did you hear about DV Trading",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Terms & Conditions",
+            "answer": "Yes, I have read and agree to DV Trading's Privacy Policy."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Are you Hispanic/Latino",
+            "answer": "Yes"
         }
     ],
+
 
     "field_defaults": {
         "ai_resume_screening_opt_in": true,
