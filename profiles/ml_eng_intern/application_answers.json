@@ -635,8 +635,14 @@
             "match_type": "contains",
             "pattern": "What is your current visa status",
             "answer": "US Citizen / Permanent Resident (Authorized to work for any US employer without sponsorship)"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Still Student",
+            "answer": "true"
         }
     ],
+
 
 
 

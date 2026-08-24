@@ -208,14 +208,32 @@ class AshbyAdapter:
               ));
               const labelFor = (el, entry) => {
                 const id = el.getAttribute('id') || '';
+                if (id) {
+                  const lbl = entry?.querySelector(`label[for="${CSS.escape(id)}"]`)?.textContent || document.querySelector(`label[for="${CSS.escape(id)}"]`)?.textContent;
+                  if (lbl) return lbl.trim();
+                  if (id.includes('degree')) return 'Degree';
+                  if (id.includes('major') || id.includes('discipline')) return 'Field of Study';
+                  if (id.includes('isCurrent')) return 'Still Student?';
+                }
+                const placeholder = el.getAttribute('placeholder') || '';
+                if (/school/i.test(placeholder)) return 'School';
+                
+                if (el.tagName === 'SELECT' && (entry?.getAttribute('data-field-path') === '_systemfield_education_history' || entry?.textContent?.includes('Education History'))) {
+                  const selects = Array.from(entry.querySelectorAll('select'));
+                  const sIdx = selects.indexOf(el);
+                  if (sIdx === 0) return 'Start date month';
+                  if (sIdx === 1) return 'Start date year';
+                  if (sIdx === 2) return 'End date month';
+                  if (sIdx === 3) return 'End date year';
+                }
+                
                 return (
-                  entry?.querySelector(`label[for="${CSS.escape(id)}"]`)?.textContent ||
-                  (id ? document.querySelector(`label[for="${CSS.escape(id)}"]`)?.textContent : '') ||
                   entry?.querySelector('.ashby-application-form-question-title, label')?.textContent ||
                   el.getAttribute('aria-label') ||
                   ''
                 ).trim();
               };
+
               const fields = [];
               let counter = 0;
               const selectorFor = (el) => {
@@ -268,9 +286,11 @@ class AshbyAdapter:
                     continue;
                   }
                 }
+                const isEducation = entry.getAttribute('data-field-path') === '_systemfield_education_history' || entry.querySelector('.ashby-application-form-input-education-add') !== null;
                 const checkboxInputs = Array.from(entry.querySelectorAll('input[type="checkbox"]'));
-                if (checkboxInputs.length) {
+                if (checkboxInputs.length && !isEducation) {
                   const options = checkboxInputs.map((input) => {
+
                     const id = input.getAttribute('id') || '';
                     return {
                       label: (entry.querySelector(`label[for="${CSS.escape(id)}"]`)?.textContent || '').trim(),
@@ -359,15 +379,42 @@ class AshbyAdapter:
             self._wait(page, 250)
             return
         if field_type == "select-one":
-            page.locator(selector).select_option(label=value)
+            sel = page.locator(selector)
+            try:
+                sel.select_option(label=value)
+            except Exception:
+                try:
+                    sel.select_option(value=value)
+                except Exception:
+                    month_map = {
+                        "01": "January", "1": "January", "02": "February", "2": "February",
+                        "03": "March", "3": "March", "04": "April", "4": "April",
+                        "05": "May", "5": "May", "06": "June", "6": "June",
+                        "07": "July", "7": "July", "08": "August", "8": "August",
+                        "09": "September", "9": "September", "10": "October",
+                        "11": "November", "12": "December"
+                    }
+                    m_label = month_map.get(value.strip())
+                    if m_label:
+                        sel.select_option(label=m_label)
+                    else:
+                        raise
             return
         if field_type == "combobox":
             self._set_combobox_field(page, selector, value)
             return
-        if field_type in {"radio-group", "checkbox", "checkbox-group"}:
+        if field_type == "checkbox":
+            if field.get("options"):
+                self._set_option_group(page, selector, field, value, multiple=False)
+            else:
+                desired = value.strip().lower() in {"1", "true", "yes", "on"}
+                page.locator(selector).set_checked(desired)
+            return
+        if field_type in {"radio-group", "checkbox-group"}:
             self._set_option_group(page, selector, field, value, multiple=field_type == "checkbox-group")
             return
         page.locator(selector).fill(value)
+
 
     def _set_combobox_field(self, page, selector: str, value: str) -> None:
         input_field = page.locator(selector)

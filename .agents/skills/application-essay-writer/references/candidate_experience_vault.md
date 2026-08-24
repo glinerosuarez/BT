@@ -34,17 +34,17 @@ This reference document contains verified factual experiences, metrics, technolo
 
 ### B. EPAM / Baker Hughes (Software Engineer) — *October 2024 – August 2025 (Remote)*
 - **Domain**: Cloud backend systems, SaaS platform integrations, industrial IoT data quality, and agentic tool-calling.
-- **Technologies**: Python, SQL, Apache Spark, Airflow, AWS, Docker, Kubernetes, OpenSearch, Model Context Protocol (MCP).
+- **Technologies**: Python, SQL, Apache Kafka, Apache Spark, Airflow, AWS, Docker, Kubernetes, OpenSearch, Model Context Protocol (MCP).
 - **Key Achievements & Metrics**:
-  - **Industrial IoT Anomaly Detection**: Built an automated anomaly detection and staging pipeline that intercepted malformed sensor telemetry before UI presentation, catching **95% of incorrect IoT records** upstream and preventing corrupt downstream analytics.
+  - **Industrial IoT Anomaly Detection**: Built an automated anomaly detection and staging pipeline that intercepted malformed sensor telemetry, firmware schema drifts, and misrouted Kafka topic messages before UI presentation, catching **95% of incorrect IoT records** upstream and preventing corrupt downstream analytics.
   - **Conversational SaaS Integrations**: Developed resilient microservice integrations enabling natural-language conversational queries across complex operational datasets on the Leucipa SaaS platform.
   - **Dynamic Data Tool-Calling**: Implemented tool-calling architectures (including Model Context Protocol) to dynamically query tenant-specific operational stores with full traceability and auditability.
 
 ### C. Perficient / American Chemical Society (Software Engineer) — *February 2023 – October 2024 (Remote)*
 - **Domain**: Large-scale distributed data engineering, cloud infrastructure cost optimization, and ETL modernization.
-- **Technologies**: Python, Java, SQL, Apache Spark, Airflow, AWS EMR, Docker, PostgreSQL.
+- **Technologies**: Python, Java, SQL, Apache Spark, Apache Arrow, Airflow, AWS EMR, Docker, PostgreSQL.
 - **Key Achievements & Metrics**:
-  - **Spark EMR Optimization**: Diagnosed severe partition data skew and memory bottlenecks in distributed Spark jobs processing multi-terabyte scientific datasets. Redesigned execution plans, repartitioned by composite keys, and tuned memory allocations.
+  - **Spark EMR Optimization**: Diagnosed severe partition data skew, redundant shuffle operations, and PySpark RDD socket serialization bottlenecks (JVM-Python memory duplication) in distributed batch jobs processing multi-terabyte scientific datasets. Adopted Apache Arrow columnar in-memory format for zero-copy data exchange, transitioned logic to DataFrames repartitioned by composite keys, and tuned memory allocation.
   - **Measurable Result**: Reduced batch job runtime from **~24 hours to under 1 hour** (95%+ speedup) and reduced AWS EMR infrastructure spend by **$10,000 per month**.
   - **Framework Modernization**: Built and led team-wide adoption of a modular Python data transformation framework, replacing thousands of lines of legacy Java boilerplate and cutting maintenance overhead.
 
@@ -56,3 +56,4 @@ This reference document contains verified factual experiences, metrics, technolo
 - **Data & Distributed Systems**: Apache Spark, Apache Airflow, PostgreSQL, OpenSearch, ETL/ELT pipelines, Kafka/queues, Data Modeling, Anomaly Detection.
 - **Cloud & DevOps**: AWS (EMR, S3, EC2, Lambda, IAM), GCP, Docker, Kubernetes, CI/CD, Git, Linux.
 - **Observability & AI Rigor**: OpenTelemetry, Phoenix, LangChain, PyTorch, Vision-Language Models, RAG evaluation, Model Context Protocol (MCP), SLA & uptime monitoring.
+- **Engineering Methodologies & Workflow**: Spec-Driven Development (SDD), Context Engineering (prompt structuring, retrieval chunking, tool schema curation for agentic systems), Test-Driven Verification, AI-assisted development (Claude Code, Cursor), Schema-First Data Contracts, Atomic Git branching, and Code Review rigor.

@@ -2,6 +2,9 @@
 
 This workflow runbook instructs autonomous and interactive agents on how to execute end-to-end question answering and automated ATS blocker remediation using the `application-essay-writer` skill.
 
+> [!IMPORTANT]
+> **Explicit Application Questions Only**: Never invent, guess, or predict hypothetical questions from the job description. The agent only generates answers for questions that are explicitly present in the application form (e.g. via `blocker.json` or explicitly provided by the user).
+
 ---
 
 ## 1. Overview & Operating Modes
@@ -40,8 +43,10 @@ flowchart TD
   - If no limit is specified, enforce the standard **120–180 words (1 cohesive paragraph / ~800–1,200 characters)**.
 - **Identify Role & Company Context**: Note target company domain (e.g., aerospace, fintech, enterprise SaaS, hardware/semiconductors).
 
-### Step 1.2: Select Grounded Pillar & Bridge
-Read `references/candidate_experience_vault.md` (and active profile `profiles/<profile>/resume.md`):
+### Step 1.2: Check Answer Bank & Select Grounded Pillar
+1. **Search Answer Bank First**: Check `references/answered_questions_index.md` for existing canonical responses matching the question pattern (e.g. development workflow, failure response, AI usage). Adapt and reuse verified narratives directly where applicable.
+2. **Read Candidate Vault**: Consult `references/candidate_experience_vault.md` (and active profile `profiles/<profile>/resume.md`):
+- **Development Workflow & Context Engineering**: Spec-Driven Development, Context Engineering, Phoenix/OTel, Docker, Atomic Git.
 - **Distributed Data / Spark / Cost Optimization**: *Perficient (ACS)* $\rightarrow$ 24h to <1h, $10k/mo EMR savings.
 - **IoT Data Quality / Anomaly Detection / MCP**: *EPAM (Baker Hughes)* $\rightarrow$ 95% anomaly catch rate.
 - **AI Agents / Document Extraction / Observability & Evals**: *Impatico* $\rightarrow$ 1,000+ reports, Phoenix/OpenTelemetry, precision 50% to 80%.
@@ -117,7 +122,15 @@ python -m job_hunter.apply_jobs resume --application-id <application_id>
 
 ---
 
-## 4. Error Handling & Edge Cases
+## 4. Storage & Logging Convention
+
+Generated essays are bundled directly with the job's tailoring artifacts:
+- **Markdown Document:** `artifacts/tailoring/<profile>/<job_id>-<company>-<title>/essays.md`
+- **Structured JSON:** `artifacts/tailoring/<profile>/<job_id>-<company>-<title>/essays.json`
+
+---
+
+## 5. Error Handling & Edge Cases
 
 | Scenario | Agent Resolution |
 | :--- | :--- |

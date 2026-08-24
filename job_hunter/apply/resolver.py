@@ -270,8 +270,13 @@ class AnswerResolver:
         ):
             return "identity.region"
 
+        if question.rstrip("*").strip() in {"location", "current location"}:
+            return "identity.city"
+
         for patterns, key in _QUESTION_FIELD_MAP:
             if any(_question_contains_pattern(question, pattern) or pattern == field_name for pattern in patterns):
+                if key == "identity.full_name" and any(term in question for term in ("related to", "referral", "who currently works", "referrer", "emergency contact", "relatives", "family")):
+                    continue
                 if key == "identity.city" and any(term in question for term in ("council", "government", "agency", "elected", "utility", "commission")):
                     continue
                 if key == "identity.portfolio_url" and any(term in question for term in ("former employee", "previously employed", "previous worker", "worked for", "affiliates", "subsidiaries")):
@@ -279,6 +284,7 @@ class AnswerResolver:
                 if key == "identity.email" and any(term in question for term in ("contact you by email", "consent", "retain", "retaining", "news", "opportunities", "updates")):
                     continue
                 return key
+
 
 
         return ""
@@ -467,6 +473,26 @@ class AnswerResolver:
 
         if "ge vernova segment" in question or "strong interest in a ge vernova segment" in question:
             return AnswerResolution(answer="Electrification", source="policy:ge_vernova_segment.electrification")
+
+        if "working onsite" in question or "onsite at our" in question or "onsite office" in question:
+
+            return AnswerResolution(answer="Yes", source="policy:onsite_work.yes")
+
+        if "related to anyone" in question or "who currently works at" in question:
+            return AnswerResolution(answer="No", source="policy:related_to_employee.no")
+
+        if "previous weave employee" in question or "previous employee" in question:
+            return AnswerResolution(answer="No", source="policy:previous_employee.no")
+
+        if "which categories describe you" in question:
+            return AnswerResolution(answer="Hispanic, Latinx or Spanish origin", source="policy:self_identify.ethnicity")
+
+        if "lesbian, gay or bisexual" in question or "lgb" in question:
+            return AnswerResolution(answer="No", source="policy:self_identify.lgb.no")
+
+        if "military veteran or service member" in question:
+            return AnswerResolution(answer="No", source="policy:self_identify.veteran.no")
+
 
 
 
@@ -812,7 +838,21 @@ class AnswerResolver:
             if major:
                 return AnswerResolution(answer=major, source="computed:education.major")
 
+        if "start date month" in question or field_name.startswith("start-month"):
+            start_date = self._structured.get("education.start_date", "").strip()
+            if start_date:
+                match = re.search(r"-(\d{1,2})$", start_date)
+                if match:
+                    month_num = int(match.group(1))
+                    if 1 <= month_num <= 12:
+                        return AnswerResolution(
+                            answer=datetime(2000, month_num, 1).strftime("%B"),
+                            source="structured:education.start_date",
+                        )
+            return AnswerResolution(answer="August", source="computed:education.start_month")
+
         if forced_intent == "education_end_month" or "end date month" in question or field_name.startswith("end-month"):
+
             month = _graduation_month_name(self._structured.get("education.graduation_date", ""))
             if month:
                 return AnswerResolution(answer=month, source="computed:education.end_month")

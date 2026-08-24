@@ -17,17 +17,21 @@ This skill guides the agent in crafting high-impact, authentic, and metric-backe
 
 Activate this skill whenever:
 1. An ATS application (Greenhouse, Workday, Lever, SuccessFactors, Oracle, Ashby) presents open-ended text questions (e.g., "Why are you interested in becoming an Enterprise Systems Software Engineering Intern?").
-2. The user asks to write, refine, or review responses for specific company application questions.
-3. Adding new custom question overrides to `profiles/<profile_name>/application_answers.json`.
+2. The user provides specific application questions asked by a company portal.
+3. Resolving a `blocked` application run that requires answers for specific form fields.
+
+> [!IMPORTANT]
+> **Explicit Form Prompts Only**: Do NOT synthesize, predict, or invent hypothetical questions from the job description. Only generate responses for questions that are explicitly present on the target application form or directly supplied by the user / ATS blocker.
 
 ---
 
 ## References & Candidate Knowledge
 
 Before generating responses, consult the following references:
+- **Answer Bank & Question Index**: [`references/answered_questions_index.md`](./references/answered_questions_index.md) — Pre-approved canonical answers to common application questions (search here first to adapt proven narratives).
 - **Agent Workflow & Blocker Resolver**: [`workflow_blocker_resolver.md`](./workflow_blocker_resolver.md) — Comprehensive execution runbook for both interactive Q&A and automated ATS blocker remediation.
 - **Candidate Experience Vault**: [`references/candidate_experience_vault.md`](./references/candidate_experience_vault.md) — Complete repository of verified work history, projects, metrics, tools, and achievements for Gabriel Linero (Impatico, EPAM, Perficient, USC).
-- **Question Rubrics & Frameworks**: [`references/question_rubrics.md`](./references/question_rubrics.md) — Structural formulas (Mission-Bridge-Impact, STAR-L, Depth & Tradeoffs, Leverage vs. Rigor).
+- **Question Rubrics & Frameworks**: [`references/question_rubrics.md`](./references/question_rubrics.md) — Structural formulas (STAR-L, Depth & Tradeoffs, Leverage vs. Rigor, Problem Space — Bridge — Impact).
 - **Sample Essays**: [`examples/sample_essays.md`](./examples/sample_essays.md) — Exemplar responses for real roles (Zipline, AMETEK, Intel, ONE Gas).
 
 ---
