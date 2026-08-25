@@ -85,6 +85,79 @@ EXTERNAL_APPLY_URL_SCRIPT = """
 }
 """
 
+# Selectors used when scraping an external ATS page directly for description text.
+ATS_DESCRIPTION_SELECTORS = [
+    # Workday
+    "[data-automation-id='jobPostingDescription']",
+    # Greenhouse
+    "#content",
+    "#job-description",
+    ".job-description",
+    # Ashby / Lever
+    "[class*='description']",
+    "[class*='job-detail']",
+    "[class*='posting-description']",
+    # SuccessFactors
+    ".sfdc_richtext",
+    # Generic
+    "article",
+    "main",
+]
+
+ATS_DESCRIPTION_SCRIPT = """
+() => {
+  const selectors = [
+    "[data-automation-id='jobPostingDescription']",
+    "#content",
+    "#job-description",
+    ".job-description",
+    "[class*='description']",
+    "[class*='job-detail']",
+    "[class*='posting-description']",
+    ".sfdc_richtext",
+    "article",
+    "main",
+  ];
+  for (const sel of selectors) {
+    const node = document.querySelector(sel);
+    if (node && (node.innerText || '').trim().length > 100) {
+      return (node.innerText || '').trim();
+    }
+  }
+  return (document.body ? (document.body.innerText || '') : '').trim();
+}
+"""
+
+# These ATS domains host external job descriptions that can be scraped
+# directly when the LinkedIn page shows only a redirect card.
+EXTERNAL_ATS_DOMAINS = (
+    "myworkdayjobs.com",
+    "greenhouse.io",
+    "job-boards.greenhouse.io",
+    "boards.greenhouse.io",
+    "ashbyhq.com",
+    "jobs.ashbyhq.com",
+    "lever.co",
+    "jobs.lever.co",
+    "jobvite.com",
+    "icims.com",
+    "smartrecruiters.com",
+    "taleo.net",
+    "successfactors.com",
+    "sap.com",
+    "bamboohr.com",
+    "rippling.com",
+    "recruitee.com",
+    "wd1.myworkdayjobs.com",
+    "wd3.myworkdayjobs.com",
+    "wd5.myworkdayjobs.com",
+    "wd12.myworkdayjobs.com",
+    "wd108.myworkdayjobs.com",
+)
+
+# Minimum description length to consider the detail fetch successful.
+_DETAIL_MIN_LENGTH = 200
+
 EXPAND_MORE_SCRIPT = """
 () => {
   let clicked = 0;
@@ -633,6 +706,27 @@ class LinkedInSource(SourceConnector):
             if not detail_text.strip():
                 detail_text = page_text
             external_apply_url = _extract_external_apply_url_from_page(detail_page)
+            # If description is too short, try polling a bit more in case React hydrated late.
+            if len(detail_text.strip()) < _DETAIL_MIN_LENGTH:
+                for _wait_ms in (1500, 2500):
+                    detail_page.wait_for_timeout(_wait_ms)
+                    retried = str(detail_page.evaluate(DETAIL_TEXT_SCRIPT) or "")
+                    if len(retried.strip()) > len(detail_text.strip()):
+                        detail_text = retried
+                    if len(detail_text.strip()) >= _DETAIL_MIN_LENGTH:
+                        break
+            # If description is still thin and the apply button leads to a known ATS,
+            # open that ATS page directly and extract its description.
+            if len(detail_text.strip()) < _DETAIL_MIN_LENGTH and _is_external_ats_url(external_apply_url):
+                ats_text = self._fetch_ats_description(context, external_apply_url)
+                if len(ats_text.strip()) > len(detail_text.strip()):
+                    LOG.info(
+                        "linkedin_ats_fallback_used job_url=%s ats_url=%s ats_len=%s",
+                        job_url,
+                        external_apply_url,
+                        len(ats_text),
+                    )
+                    detail_text = ats_text
             return detail_text, external_apply_url, False
         except self._timeout_error:
             LOG.warning("linkedin_direct_detail_timeout url=%s", job_url)
@@ -640,9 +734,26 @@ class LinkedInSource(SourceConnector):
         finally:
             detail_page.close()
 
+    def _fetch_ats_description(self, context, ats_url: str) -> str:
+        """Open the external ATS URL in a new page and return its description text."""
+        ats_page = context.new_page()
+        ats_page.set_default_timeout(self.page_timeout_seconds * 1000)
+        ats_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
+        try:
+            ats_page.goto(ats_url, wait_until="domcontentloaded")
+            ats_page.wait_for_timeout(3000)
+            text = str(ats_page.evaluate(ATS_DESCRIPTION_SCRIPT) or "")
+            return text.strip()
+        except Exception as exc:
+            LOG.warning("linkedin_ats_fetch_failed url=%s error=%s", ats_url, exc)
+            return ""
+        finally:
+            ats_page.close()
+
     def _goto_linkedin_page(self, page, url: str, *, post_wait_ms: int = 2500) -> None:
         page.goto(url, wait_until="domcontentloaded")
         page.wait_for_timeout(post_wait_ms)
+
 
 
 def _dedupe_rows(rows: list[dict]) -> list[dict]:
@@ -991,6 +1102,17 @@ def _linkedin_job_id(url: str) -> str:
     if not match:
         return ""
     return match.group(1)
+
+
+def _is_external_ats_url(url: str) -> bool:
+    """Return True if *url* is a known external ATS domain that can be scraped directly."""
+    if not url:
+        return False
+    try:
+        netloc = urlparse(url).netloc.lower()
+    except Exception:
+        return False
+    return any(domain in netloc for domain in EXTERNAL_ATS_DOMAINS)
 
 
 def _classify_compensation(*, card_text: str, detail_text: str) -> str:

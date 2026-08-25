@@ -6,6 +6,7 @@ from job_hunter.sources.linkedin import (
     _build_row,
     _canonical_linkedin_job_url,
     _is_card_older_than_lookback,
+    _is_external_ats_url,
     _is_linkedin_closed,
     _normalize_search_url,
     _parse_card_text,
@@ -635,6 +636,57 @@ We are looking for a software engineer intern to build storage validation tools 
         self.assertIn("We are looking for a software engineer intern", parsed["description"])
         self.assertNotIn("12 antiguos alumnos", parsed["description"])
         self.assertNotIn("Adelántate a solicitar", parsed["description"])
+
+    def test_is_external_ats_url_detects_known_ats_domains(self) -> None:
+        self.assertTrue(_is_external_ats_url("https://qdusa.wd108.myworkdayjobs.com/quantumdesigncareers/job/foo"))
+        self.assertTrue(_is_external_ats_url("https://copart.wd12.myworkdayjobs.com/copart/job/bar"))
+        self.assertTrue(_is_external_ats_url("https://job-boards.greenhouse.io/acme/jobs/12345"))
+        self.assertTrue(_is_external_ats_url("https://jobs.ashbyhq.com/company/abc"))
+        self.assertTrue(_is_external_ats_url("https://jobs.lever.co/company/abc123"))
+
+    def test_is_external_ats_url_rejects_linkedin_and_empty(self) -> None:
+        self.assertFalse(_is_external_ats_url("https://www.linkedin.com/jobs/view/12345"))
+        self.assertFalse(_is_external_ats_url(""))
+        self.assertFalse(_is_external_ats_url("https://careers.somecompany.com/jobs/123"))
+
+    def test_build_row_marks_detail_partial_when_description_short(self) -> None:
+        card = {
+            "title": "Software Engineering Intern",
+            "company": "Quantum Design",
+            "location": "San Diego, CA",
+            "posted_at": "",
+            "url": "https://www.linkedin.com/jobs/view/4438833520",
+            "card_text": "Software Engineering Intern Quantum Design San Diego, CA Publicado hace 22 horas",
+        }
+        detail_text = "Software Engineering Intern Quantum Design San Diego, CA Adelántate a solicitar el empleo"
+        row = _build_row(
+            card=card,
+            detail_text=detail_text,
+            search_url="https://www.linkedin.com/jobs/search/?keywords=software",
+            detail_fetch_attempted=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_metadata"]["detail_quality_status"], "detail_partial")
+
+    def test_build_row_marks_detail_complete_when_description_long(self) -> None:
+        card = {
+            "title": "Software Engineering Intern",
+            "company": "Acme Corp",
+            "location": "Dallas, TX",
+            "posted_at": "",
+            "url": "https://www.linkedin.com/jobs/view/9999999999",
+            "card_text": "",
+        }
+        long_description = "We are looking for a Software Engineering Intern. " * 10
+        detail_text = f"Software Engineering Intern\nAcme Corp\nDallas, TX\nPosted 1 hour ago\nAbout the job\n{long_description}"
+        row = _build_row(
+            card=card,
+            detail_text=detail_text,
+            search_url="https://www.linkedin.com/jobs/search/?keywords=software",
+            detail_fetch_attempted=True,
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_metadata"]["detail_quality_status"], "detail_complete")
 
 
 if __name__ == "__main__":
