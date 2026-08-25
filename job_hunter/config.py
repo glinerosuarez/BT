@@ -288,6 +288,9 @@ class Settings:
     handshake_use_keyword_supplemental: bool = False
     handshake_direct_job_urls: list[str] = field(default_factory=list)
     handshake_recall_queries: list[str] = field(default_factory=lambda: list(DEFAULT_HANDSHAKE_RECALL_QUERIES))
+    github_repo_headless: bool = True
+    github_repo_browser_fallback: bool = True
+    github_repo_page_timeout_seconds: int = 15
     browser_backend: str = "playwright"
 
 
@@ -459,5 +462,8 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         handshake_use_keyword_supplemental=_env_bool("JOB_HUNTER_HANDSHAKE_USE_KEYWORD_SUPPLEMENTAL", False),
         handshake_direct_job_urls=handshake_direct_job_urls,
         handshake_recall_queries=handshake_recall_queries,
+        github_repo_headless=_env_bool("JOB_HUNTER_GITHUB_REPO_HEADLESS", True),
+        github_repo_browser_fallback=_env_bool("JOB_HUNTER_GITHUB_REPO_BROWSER_FALLBACK", True),
+        github_repo_page_timeout_seconds=_env_int("JOB_HUNTER_GITHUB_REPO_PAGE_TIMEOUT_SECONDS", 15),
         browser_backend=os.getenv("JOB_HUNTER_BROWSER_BACKEND", "playwright"),
     )

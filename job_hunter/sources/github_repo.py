@@ -9,6 +9,9 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlparse
 
+from typing import Any
+
+from job_hunter.browser_api import load_browser_api, normalize_browser_backend
 from job_hunter.sources.base import SourceConnector, USER_AGENT, clamp_bulk_source_timeout
 
 LOG = logging.getLogger(__name__)
@@ -18,6 +21,30 @@ MARKDOWN_LINK_RE = re.compile(r"\[[^\]]*\]\((https?://[^)]+)\)")
 HTTP_URL_RE = re.compile(r"https?://[^\s)]+")
 MONTH_DAY_RE = re.compile(r"^(?P<month>[A-Za-z]{3,9})\s+(?P<day>\d{1,2})$")
 DETAIL_MIN_TEXT_LENGTH = 400
+
+ATS_DESCRIPTION_SCRIPT = """
+() => {
+  const selectors = [
+    "[data-automation-id='jobPostingDescription']",
+    "#content",
+    "#job-description",
+    ".job-description",
+    "[class*='description']",
+    "[class*='job-detail']",
+    "[class*='posting-description']",
+    ".sfdc_richtext",
+    "article",
+    "main",
+  ];
+  for (const sel of selectors) {
+    const node = document.querySelector(sel);
+    if (node && (node.innerText || '').trim().length > 100) {
+      return (node.innerText || '').trim();
+    }
+  }
+  return (document.body ? (document.body.innerText || '') : '').trim();
+}
+"""
 
 
 class _VisibleTextParser(HTMLParser):
@@ -42,71 +69,175 @@ class _VisibleTextParser(HTMLParser):
             self.parts.append(data)
 
 
+class _BrowserDetailFetcher:
+    def __init__(self, browser_backend: str, headless: bool, page_timeout_seconds: int) -> None:
+        self.browser_backend = normalize_browser_backend(browser_backend)
+        self.headless = headless
+        self.page_timeout_seconds = max(page_timeout_seconds, 5)
+        self._playwright_ctx: Any | None = None
+        self._browser: Any | None = None
+        self._context: Any | None = None
+
+    def _ensure_browser(self) -> None:
+        if self._context is not None:
+            return
+        browser_api = load_browser_api(self.browser_backend)
+        self._playwright_ctx = browser_api.sync_playwright()
+        playwright = self._playwright_ctx.start()
+        try:
+            self._browser = playwright.chromium.launch(headless=self.headless, channel="chrome")
+        except Exception:
+            self._browser = playwright.chromium.launch(headless=self.headless)
+        self._context = self._browser.new_context(user_agent=USER_AGENT)
+        self._context.set_default_timeout(self.page_timeout_seconds * 1000)
+        self._context.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
+
+    def fetch_text(self, url: str) -> str:
+        try:
+            self._ensure_browser()
+            if self._context is None:
+                return ""
+            page = self._context.new_page()
+            try:
+                page.goto(url, wait_until="domcontentloaded")
+                for wait_ms in (1500, 2000, 2500, 3000):
+                    page.wait_for_timeout(wait_ms)
+                    text = str(page.evaluate(ATS_DESCRIPTION_SCRIPT) or "").strip()
+                    if not text or len(text) < DETAIL_MIN_TEXT_LENGTH:
+                        text = str(page.locator("body").inner_text() or "").strip()
+                    text = re.sub(r"\s+", " ", text).strip()
+                    if len(text) >= DETAIL_MIN_TEXT_LENGTH:
+                        return text
+                return ""
+            finally:
+                page.close()
+        except Exception as exc:
+            LOG.info("github_repo_browser_detail_fetch_failed url=%s error=%s", url, exc)
+            return ""
+
+    def close(self) -> None:
+        if self._context is not None:
+            try:
+                self._context.close()
+            except Exception:
+                pass
+            self._context = None
+        if self._browser is not None:
+            try:
+                self._browser.close()
+            except Exception:
+                pass
+            self._browser = None
+        if self._playwright_ctx is not None:
+            try:
+                self._playwright_ctx.stop()
+            except Exception:
+                pass
+            self._playwright_ctx = None
+
+
 class GithubRepoSource(SourceConnector):
-    def __init__(self, readme_urls: list[str], max_posting_age_days: int = 7) -> None:
+    def __init__(
+        self,
+        readme_urls: list[str],
+        max_posting_age_days: int = 7,
+        browser_backend: str = "playwright",
+        headless: bool = True,
+        enable_browser_fallback: bool = True,
+        page_timeout_seconds: int = 15,
+    ) -> None:
         super().__init__(name="github_repo")
         self.readme_urls = readme_urls
         self.max_posting_age_days = max_posting_age_days
+        self.browser_backend = browser_backend
+        self.headless = headless
+        self.enable_browser_fallback = enable_browser_fallback
+        self.page_timeout_seconds = page_timeout_seconds
+        self._fetch_meta: dict[str, object] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
         results: list[dict] = []
         detail_timeout_seconds = clamp_bulk_source_timeout(timeout_seconds)
-        for readme_url in self.readme_urls:
-            try:
-                req = urllib.request.Request(readme_url, headers={"User-Agent": USER_AGENT})
-                with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
-                    markdown = resp.read().decode("utf-8", errors="replace")
-            except Exception as exc:
-                LOG.warning("github_repo_fetch_failed readme=%s error=%s", readme_url, exc)
-                continue
+        browser_fetcher: _BrowserDetailFetcher | None = None
+        if self.enable_browser_fallback:
+            browser_fetcher = _BrowserDetailFetcher(
+                browser_backend=self.browser_backend,
+                headless=self.headless,
+                page_timeout_seconds=self.page_timeout_seconds,
+            )
+        try:
+            for readme_url in self.readme_urls:
+                try:
+                    req = urllib.request.Request(readme_url, headers={"User-Agent": USER_AGENT})
+                    with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                        markdown = resp.read().decode("utf-8", errors="replace")
+                except Exception as exc:
+                    LOG.warning("github_repo_fetch_failed readme=%s error=%s", readme_url, exc)
+                    continue
 
-            for index, row in enumerate(_parse_markdown_table(markdown), start=1):
-                company = row["company"]
-                role = row["role"]
-                location = row["location"]
-                date_text = row["date_posted"]
-                url = row["application_url"] or f"{readme_url}#row-{index}"
-                if row["application_url"] and _is_generic_listing_url(url):
-                    LOG.info("github_repo_row_skipped_generic_listing_url url=%s role=%s", url, role)
-                    continue
-                external_id = row["application_url"] or _fallback_external_id(
-                    readme_url=readme_url,
-                    company=company,
-                    role=role,
-                    location=location,
-                    date_text=date_text,
-                )
-                posted_at = _normalize_posted_at(date_text)
-                if posted_at and not _is_within_lookback(posted_at, self.max_posting_age_days):
-                    continue
-                listing_description = (
-                    f"Imported from GitHub internship repository. "
-                    f"Repository-listed date: {date_text}."
-                )
-                detail_text = _fetch_detail_text(url, detail_timeout_seconds) if row["application_url"] else ""
-                detail_quality_status = "detail_complete" if detail_text else "summary_only"
-                results.append(
-                    {
-                        "source": self.name,
-                        "source_detail": readme_url,
-                        "external_id": external_id,
-                        "url": url,
-                        "title": role,
-                        "company": company,
-                        "location": location,
-                        "posted_at": posted_at,
-                        "description": detail_text or listing_description,
-                        "skills": [],
-                        "source_metadata": {
-                            "external_apply_url": row["application_url"],
-                            "detail_fetch_attempted": bool(row["application_url"]),
-                            "detail_quality_status": detail_quality_status,
-                            "description_provenance": "github_repo_detail" if detail_text else "github_repo_listing",
-                            "listing_description": listing_description,
-                        },
-                    }
-                )
+                for index, row in enumerate(_parse_markdown_table(markdown), start=1):
+                    company = row["company"]
+                    role = row["role"]
+                    location = row["location"]
+                    date_text = row["date_posted"]
+                    url = row["application_url"] or f"{readme_url}#row-{index}"
+                    if row["application_url"] and _is_generic_listing_url(url):
+                        LOG.info("github_repo_row_skipped_generic_listing_url url=%s role=%s", url, role)
+                        continue
+                    external_id = row["application_url"] or _fallback_external_id(
+                        readme_url=readme_url,
+                        company=company,
+                        role=role,
+                        location=location,
+                        date_text=date_text,
+                    )
+                    posted_at = _normalize_posted_at(date_text)
+                    if posted_at and not _is_within_lookback(posted_at, self.max_posting_age_days):
+                        continue
+                    listing_description = (
+                        f"Imported from GitHub internship repository. "
+                        f"Repository-listed date: {date_text}."
+                    )
+                    detail_text = ""
+                    provenance = "github_repo_listing"
+                    if row["application_url"]:
+                        detail_text = _fetch_detail_text(url, detail_timeout_seconds)
+                        if detail_text:
+                            provenance = "github_repo_detail"
+                        elif browser_fetcher is not None:
+                            detail_text = browser_fetcher.fetch_text(url)
+                            if detail_text:
+                                provenance = "github_repo_browser_detail"
+
+                    detail_quality_status = "detail_complete" if detail_text else "summary_only"
+                    results.append(
+                        {
+                            "source": self.name,
+                            "source_detail": readme_url,
+                            "external_id": external_id,
+                            "url": url,
+                            "title": role,
+                            "company": company,
+                            "location": location,
+                            "posted_at": posted_at,
+                            "description": detail_text or listing_description,
+                            "skills": [],
+                            "source_metadata": {
+                                "external_apply_url": row["application_url"],
+                                "detail_fetch_attempted": bool(row["application_url"]),
+                                "detail_quality_status": detail_quality_status,
+                                "description_provenance": provenance,
+                                "listing_description": listing_description,
+                            },
+                        }
+                    )
+        finally:
+            if browser_fetcher is not None:
+                browser_fetcher.close()
         return results
+
+    def get_fetch_meta(self) -> dict[str, object]:
+        return dict(self._fetch_meta)
 
 
 def _parse_markdown_table(markdown: str) -> list[dict[str, str]]:

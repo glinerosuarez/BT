@@ -230,6 +230,10 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
             GithubRepoSource(
                 readme_urls=github_repo_readmes,
                 max_posting_age_days=settings.max_posting_age_days,
+                browser_backend=getattr(settings, "browser_backend", "playwright"),
+                headless=getattr(settings, "github_repo_headless", True),
+                enable_browser_fallback=getattr(settings, "github_repo_browser_fallback", True),
+                page_timeout_seconds=getattr(settings, "github_repo_page_timeout_seconds", 15),
             )
         )
     if settings.use_ashby and ashby_boards:
