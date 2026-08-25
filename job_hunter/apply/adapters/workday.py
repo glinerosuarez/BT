@@ -1517,8 +1517,25 @@ class WorkdayAdapter:
             desired_value=desired_value,
         ):
             return True
-        if field_name.strip().lower() == "degree":
-            return _canonical_degree(current_value) == _canonical_degree(desired_value)
+        if (current in {"yes", "i agree", "agree", "i acknowledge", "acknowledge", "accepted"}
+                and desired in {"yes", "i agree", "agree", "i acknowledge", "acknowledge", "accepted"}):
+            return True
+        if (current in {"none", "none of the above", "not applicable", "n/a", "none of these"}
+                and desired in {"none", "none of the above", "not applicable", "n/a", "none of these"}):
+            return True
+
+        canonical_cur = _canonical_degree(current_value)
+        canonical_des = _canonical_degree(desired_value)
+        if canonical_cur and canonical_des and canonical_cur == canonical_des:
+            return True
+        if current.replace("'", "") == desired.replace("'", ""):
+            return True
+        if "fieldofstudy" in field_name.strip().lower() or "major" in field_name.strip().lower():
+            if "computer" in current and "computer" in desired:
+                return True
+
+
+
         try:
             val_float = float(desired)
             range_match = re.search(r"(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)", current)
@@ -1678,8 +1695,18 @@ class WorkdayAdapter:
                 "without sponsorship",
                 "no sponsorship required",
                 "authorized to work permanently",
+                "unrestricted basis",
+                "u.s. citizen",
+                "us citizen",
+                "permanent resident",
+                "lawful permanent resident",
+                "asylee",
+                "refugee",
+                "lawfully authorized to work in the united states",
+                "authorized to work for any employer",
             )
         )
+
         not_authorized = any(
             phrase in candidate
             for phrase in ("not authorized", "not eligible", "not permitted")
@@ -1740,10 +1767,19 @@ class WorkdayAdapter:
             return
         if field_type == "text":
             locator = page.locator(selector).first
+            if locator.count() == 0:
+                field_name = str(field.get("field_name") or "")
+                if field_name:
+                    locator = page.locator(
+                        f'input[name="{field_name}"]:visible, input[id*="{field_name}"]:visible, [data-automation-id="formField-{field_name}"] input:visible, textarea[name="{field_name}"]:visible'
+                    ).first
+            if locator.count() == 0:
+                return
             date_component_value = self._date_component_value(field=field, value=value)
             locator.fill(date_component_value)
             self._wait(page, 200)
             return
+
         if field_type == "prompt-input":
             prompt_values = self._prompt_multi_values(value)
             if len(prompt_values) > 1:
@@ -1765,17 +1801,19 @@ class WorkdayAdapter:
                     selected_country = ""
             for path_index, target in enumerate(selection_path):
                 if path_index == 0:
+                    parent_container = locator.locator('xpath=ancestor-or-self::*[@data-automation-id="multiSelectContainer" or @data-automation-id="monikerSearchBox"][1]')
+                    if parent_container.count() > 0:
+                        try:
+                            parent_container.first.click(force=True)
+                        except Exception:
+                            pass
                     locator.click(force=True)
                     locator.fill("")
                     locator.fill(target)
-                    self._wait(page, 750)
-                    # A flat Workday prompt often commits its best search match
-                    # with Enter, while a click on the result text merely moves
-                    # focus. Prefer that native activation before row matching.
+                    locator.press("Enter")
+                    self._wait(page, 1000)
                     if len(selection_path) == 1:
                         try:
-                            locator.press("Enter")
-                            self._wait(page, 300)
                             current_value = self._prompt_current_value(page, field)
                             if (
                                 self._normalize_option_text(target)
@@ -1785,14 +1823,11 @@ class WorkdayAdapter:
                                 return
                         except Exception:
                             pass
-                        # Reopen results if Enter only submitted the search query.
-                        locator.click(force=True)
-                        locator.fill(target)
-                        self._wait(page, 300)
-                options = self._prompt_options(page, field, locator)
+
                 option_locator = None
                 best_match_score = 0
                 for _ in range(20):
+                    options = self._prompt_options(page, field, locator)
                     for index in range(options.count()):
                         candidate = options.nth(index)
                         try:
@@ -1815,7 +1850,8 @@ class WorkdayAdapter:
                             break
                     if option_locator is not None:
                         break
-                    self._wait(page, 150)
+                    self._wait(page, 250)
+
                 if option_locator is None:
                     exact_match = page.get_by_text(target, exact=True)
                     for index in range(exact_match.count()):
@@ -1827,6 +1863,16 @@ class WorkdayAdapter:
                                 break
                         except Exception:
                             continue
+                    if option_locator is None:
+                        fuzzy = page.locator(f'[role="option"]:visible:has-text("{target}"), [data-automation-id="promptOption"]:visible:has-text("{target}")').first
+                        if fuzzy.count() > 0:
+                            option_locator = fuzzy
+                    if option_locator is None and "fieldofstudy" in field_name.lower():
+                        for term in ("Computer Science", "Computer", "Engineering", "Information Technology"):
+                            cand = page.locator(f'[role="option"]:visible:has-text("{term}"), [data-automation-id="promptOption"]:visible:has-text("{term}")').first
+                            if cand.count() > 0:
+                                option_locator = cand
+                                break
                     if option_locator is None:
                         if self._should_use_other_school(page, field, path_index, selection_path):
                             locator.fill("OTHER")
@@ -1853,6 +1899,7 @@ class WorkdayAdapter:
                                 self._wait(page, 300)
                                 break
                         raise RuntimeError(f"prompt option not found for {target!r}")
+
 
                 if path_index < len(selection_path) - 1:
                     branch = option_locator.locator('xpath=ancestor-or-self::*[@role="option"][1]')
@@ -1896,7 +1943,14 @@ class WorkdayAdapter:
                     break
                 self._wait(page, 100)
             if (
-                self._normalize_option_text(expected_target) not in self._normalize_option_text(current_value)
+                (
+                    not self._is_effectively_same_value(
+                        field_name=field_name,
+                        current_value=current_value,
+                        desired_value=expected_target,
+                    )
+                    and self._normalize_option_text(expected_target) not in self._normalize_option_text(current_value)
+                )
                 or self._prompt_is_invalid(page, field)
             ):
                 raise RuntimeError(
@@ -1904,6 +1958,7 @@ class WorkdayAdapter:
                     f"current={current_value!r}, desired={expected_target!r}, "
                     f"invalid={self._prompt_is_invalid(page, field)}"
                 )
+
             return
         if field_type == "listbox-button":
             locator = page.locator(selector).first

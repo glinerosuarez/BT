@@ -5,6 +5,43 @@
             "pattern": "Please select the ethnicity which most accurately describes how you identify yourself.*",
             "answer": "Hispanic or Latino"
         },
+        {
+            "match_type": "regex",
+            "pattern": ".*conflict of interest.*",
+            "answer": "No"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*minimum qualification.*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*active student.*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*source.*information influenced.*",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*available to start.*",
+            "answer": "05/18/2026"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*military.*",
+            "answer": "No"
+        },
+
+
+
+
+
+
+
 
         {
             "match_type": "exact",
@@ -669,8 +706,11 @@
         "disability_status": false,
         "street_address": "3030 Shrine Pl",
         "address_line_1": "3030 Shrine Pl",
+        "address_line_2": "Apt 212",
+        "apartment": "Apt 212",
         "zip_code": "90007",
         "postal_code": "90007",
-        "county": "Los Angeles"
+        "county": "Los Angeles",
+        "available_start_date": "05/18/2026"
     }
 }

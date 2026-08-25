@@ -377,11 +377,19 @@ class AnswerResolver:
         if "18 or older" in question or "at least 18 years old" in question or "18 years of age" in question:
             return AnswerResolution(answer="Yes", source="computed:eligibility.age_of_majority")
 
+        if "minimum qualification" in question or "basic qualification" in question or "meet the requirements" in question:
+            return AnswerResolution(answer="Yes", source="policy:eligibility.meets_minimum_qualifications")
+
+
         if "ernst & young" in question or "ernst and young" in question:
             return AnswerResolution(answer="No", source="policy:prior_employer.no")
 
         if "non-competition" in question or "non-disclosure" in question or "non-solicitation" in question:
             return AnswerResolution(answer="No", source="policy:employment.no_conflicting_agreement")
+
+        if "conflict of interest" in question or ("immediate family" in question and "relationships" in question):
+            return AnswerResolution(answer="No", source="policy:employment.no_conflict_of_interest")
+
 
         if "intellectual property rights" in question or "patents, trademarks" in question:
             return AnswerResolution(answer="No", source="policy:employment.no_ip_rights")
@@ -419,6 +427,30 @@ class AnswerResolver:
             cpa_intent = str(self.answers.field_defaults.get("pursue_cpa", "")).strip().lower()
             if cpa_intent in {"false", "no", "0"}:
                 return AnswerResolution(answer="No", source="policy:education.pursue_cpa")
+
+        if (
+            "active student" in question
+            or "currently enrolled" in question
+            or "current student" in question
+            or "graduated within the past" in question
+            or "enrolled in a degree" in question
+        ):
+            return AnswerResolution(answer="Yes", source="policy:education.active_student")
+
+        if "conferences/career fairs" in question or "conferences or career fairs" in question or ("conferences" in question and "career fairs" in question):
+            return AnswerResolution(answer="None of the above", source="policy:recruiting_events.none")
+
+        if "degree are you working towards" in question or "what degree are you working towards" in question or "highest degree obtained" in question:
+            degree = _canonical_degree(self._structured.get("education.degree", "").strip()) or "Master's Degree"
+            return AnswerResolution(answer=degree, source="computed:education.degree")
+
+        if "geographic mobility" in question or "willing to relocate" in question:
+            relocation_ok = self._structured.get("preferences.relocation_ok", "").strip().lower()
+            if relocation_ok in {"true", "yes", "1"}:
+                return AnswerResolution(answer="Yes", source="computed:preferences.relocation_ok")
+            return AnswerResolution(answer="No", source="computed:preferences.relocation_ok")
+
+
 
         if _is_close_relationship_question(question):
             close_relationship = str(
@@ -490,8 +522,10 @@ class AnswerResolver:
         if "lesbian, gay or bisexual" in question or "lgb" in question:
             return AnswerResolution(answer="No", source="policy:self_identify.lgb.no")
 
-        if "military veteran or service member" in question:
+        if "military veteran or service member" in question or "served as part of the military" in question or "currently serving" in question:
             return AnswerResolution(answer="No", source="policy:self_identify.veteran.no")
+
+
 
 
 
@@ -550,6 +584,17 @@ class AnswerResolver:
                 return AnswerResolution(answer=addr, source="policy:identity.address_line_1")
 
         if (
+            "address line 2" in question
+            or normalized_field_name in {"address_line_2", "addressline2", "address2", "apartment", "apt", "unit"}
+        ):
+            addr2 = str(self.answers.field_defaults.get("address_line_2") or
+                        self.answers.field_defaults.get("apartment") or
+                        self.answers.field_defaults.get("unit") or "").strip()
+            if addr2:
+                return AnswerResolution(answer=addr2, source="policy:identity.address_line_2")
+
+
+        if (
             "zip code" in question
             or "postal code" in question
             or normalized_field_name in {"zip_code", "zipcode", "postalcode", "postal_code", "zip"}
@@ -569,6 +614,22 @@ class AnswerResolver:
 
         if "specific source" in question or normalized_field_name in {"specific_source", "specificsource"}:
             return AnswerResolution(answer="Company Website", source="policy:how_did_you_hear")
+
+        if "source" in question and "influenced your decision" in question:
+            return AnswerResolution(answer="LinkedIn", source="policy:how_did_you_hear.linkedin")
+
+        if (
+            "available to start" in question
+            or "earliest start date" in question
+            or "availability to start" in question
+            or "availability start date" in question
+            or "when would you be available" in question
+        ):
+            start_date = str(self.answers.field_defaults.get("available_start_date", "05/18/2026")).strip()
+            return AnswerResolution(answer=start_date, source="policy:availability.start_date")
+
+
+
 
         if normalized_field_name in {"region2", "countryregion"}:
             state = self._structured.get("identity.region", "").strip()
@@ -605,7 +666,12 @@ class AnswerResolver:
             if sponsorship in {"false", "no", "0"}:
                 return AnswerResolution(answer="No", source="computed:work_authorization.requires_future_sponsorship")
 
-        if forced_intent == "employment_eligibility_us":
+        if (
+            forced_intent == "employment_eligibility_us"
+            or "please select the statement that best applies to you" in question
+            or "statement that best describes your work authorization" in question
+            or "statement that best applies to your authorization" in question
+        ):
             authorized = self._structured.get("work_authorization.us_work_authorized", "").strip().lower()
             sponsorship = self._structured.get("work_authorization.requires_future_sponsorship", "").strip().lower()
             if authorized in {"true", "yes", "1"} and sponsorship in {"false", "no", "0"}:
@@ -623,6 +689,7 @@ class AnswerResolver:
                     answer="__work_auth_us_not_authorized__",
                     source="computed:work_authorization.employment_eligibility",
                 )
+
 
         if forced_intent == "on_site_acknowledgement":
             return AnswerResolution(answer="Yes", source="computed:preferences.on_site_acknowledgement")
@@ -706,13 +773,14 @@ class AnswerResolver:
             if race_ethnicity:
                 return AnswerResolution(answer=race_ethnicity, source="computed:self_identify.ethnicity")
 
-        if "veteran status" in question or "veteran's status" in question:
+        if "veteran status" in question or "veteran's status" in question or "categories of protected veterans" in question or "veteran" in normalized_field_name:
             veteran_status = str(self.answers.field_defaults.get("veteran_status", "")).strip().lower()
             if veteran_status in {"false", "no", "0"}:
                 return AnswerResolution(
                     answer="I am not a protected veteran.",
                     source="computed:self_identify.veteran_status",
                 )
+
 
         if "disability" in question or "disabilitystatus" in normalized_field_name:
             disability_status = str(self.answers.field_defaults.get("disability_status", "")).strip().lower()
