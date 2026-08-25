@@ -84,7 +84,7 @@ class WorkdayAdapter:
                 pass
         current_url = str(getattr(page, "url", "") or "")
         account_sign_in_attempted = False
-        for _ in range(6):
+        for _ in range(12):
             self._wait_for_render(page)
             self._accept_legal_notice(page)
             confirmation = self._extract_confirmation(page)
@@ -96,18 +96,59 @@ class WorkdayAdapter:
                     adapter_name=self.adapter_name,
                 )
 
-            apply_url = self._workday_action_url(page, action="apply")
-            if "/apply" not in current_url.lower() and apply_url:
-                page.goto(apply_url, wait_until="domcontentloaded")
-                current_url = str(getattr(page, "url", "") or apply_url)
+            # If Workday renders the "Something went wrong. Please refresh the page" error, refresh
+            text = self._page_text(page).lower()
+            if "something went wrong" in text and "refresh" in text:
+                try:
+                    page.reload(wait_until="domcontentloaded")
+                    self._wait(page, 2000)
+                except Exception:
+                    pass
+                current_url = str(getattr(page, "url", "") or current_url)
                 continue
-            if "/apply" not in current_url.lower() and not apply_url:
-                # Some tenants render the public job shell before its Apply
-                # link hydrates. For a known Workday job URL, the manual
-                # endpoint is stable and avoids treating that transient state
-                # as an unsupported portal.
+
+            if hasattr(page, "locator"):
+                try:
+                    apply_manually_btn = page.locator(
+                        'a[href*="applyManually"]:visible, button[data-automation-id="applyManually"]:visible, a[data-automation-id="applyManually"]:visible, button:has-text("Apply Manually"):visible, a:has-text("Apply Manually"):visible'
+                    ).first
+                    if apply_manually_btn.count() > 0:
+                        apply_manually_btn.click(force=True)
+                        self._wait(page, 2000)
+                        current_url = str(getattr(page, "url", "") or current_url)
+                        continue
+
+                    if not self._is_form_stage(page):
+                        apply_btn = page.locator(
+                            '[data-automation-id="adventureButton"]:visible, button[data-automation-id="apply"]:visible, a[data-automation-id="apply"]:visible, button:has-text("Apply"):visible, a:has-text("Apply"):visible'
+                        ).first
+                        if apply_btn.count() > 0:
+                            apply_btn.click(force=True)
+                            self._wait(page, 1000)
+                            apply_manually_sub = page.locator(
+                                '[data-automation-id="applyManually"]:visible, a[href*="applyManually"]:visible, button[data-automation-id="applyManually"]:visible, a[data-automation-id="applyManually"]:visible, button:has-text("Apply Manually"):visible, a:has-text("Apply Manually"):visible'
+                            ).first
+                            if apply_manually_sub.count() > 0:
+                                apply_manually_sub.click(force=True)
+                                for _ in range(30):
+                                    if "/apply" in str(getattr(page, "url", "") or "").lower() or self._is_form_stage(page):
+                                        break
+                                    self._wait(page, 500)
+                            current_url = str(getattr(page, "url", "") or current_url)
+                            continue
+
+                except Exception:
+                    pass
+
+            apply_url = self._workday_action_url(page, action="apply")
+            if "/apply/applymanually" not in current_url.lower():
+                manual_url = self._workday_action_url(page, action="apply_manually")
+                if manual_url:
+                    page.goto(manual_url, wait_until="domcontentloaded")
+                    current_url = str(getattr(page, "url", "") or manual_url)
+                    continue
                 direct_manual_url = self._direct_manual_apply_url(current_url)
-                if direct_manual_url:
+                if direct_manual_url and direct_manual_url.lower() != current_url.lower():
                     page.goto(direct_manual_url, wait_until="domcontentloaded")
                     current_url = str(getattr(page, "url", "") or direct_manual_url)
                     continue
@@ -119,12 +160,6 @@ class WorkdayAdapter:
                     question_text="Could not locate the Workday Apply link on the public job page.",
                     details={"stage": "public_job_page"},
                 )
-
-            manual_url = self._workday_action_url(page, action="apply_manually")
-            if "/apply" in current_url.lower() and "/apply/applymanually" not in current_url.lower() and manual_url:
-                page.goto(manual_url, wait_until="domcontentloaded")
-                current_url = str(getattr(page, "url", "") or manual_url)
-                continue
 
             if self._is_start_application_page(page):
                 return self._blocked(
@@ -153,6 +188,19 @@ class WorkdayAdapter:
                     account_sign_in_attempted = True
                     if self._sign_in_to_candidate_account(page=page, context=context):
                         current_url = str(getattr(page, "url", "") or current_url)
+                        for _ in range(40):
+                            text = self._page_text(page).lower()
+                            if "something went wrong" in text and "refresh" in text:
+                                try:
+                                    page.reload(wait_until="domcontentloaded")
+                                    self._wait(page, 2000)
+                                except Exception:
+                                    pass
+                            if self._is_form_stage(page):
+                                return self._submit_form(page=page, resolver=resolver, context=context)
+                            if not self._has_account_gate(page):
+                                break
+                            self._wait(page, 500)
                         continue
                 return self._blocked(
                     "candidate_account_bootstrap_required",
@@ -165,15 +213,19 @@ class WorkdayAdapter:
                     },
                 )
 
-            if self._is_form_stage(page):
-                return self._submit_form(page=page, resolver=resolver, context=context)
 
-            break
+
+
+            for _ in range(15):
+                if self._is_form_stage(page):
+                    return self._submit_form(page=page, resolver=resolver, context=context)
+                self._wait(page, 500)
 
         return self._blocked(
             "unsupported_widget",
             page,
             question_text="Unsupported Workday flow shape.",
+
             details={"current_url": current_url},
         )
 
@@ -185,72 +237,46 @@ class WorkdayAdapter:
         if credential is None or not hasattr(page, "locator"):
             return False
         try:
-            # Locate this outside a possible stale/hidden dialog. Workday
-            # renders it as either an anchor or a button depending on tenant.
-            existing_account = page.locator('[data-automation-id="signInLink"]').first
-            # Copart renders the create-account shell before this link becomes
-            # interactive. Wait for the existing-account control instead of
-            # mistaking its duplicated email/password IDs for a sign-in form.
-            for _ in range(36):
-                if existing_account.count() > 0:
-                    break
-                self._wait(page, 250)
-            if existing_account.count() > 0:
-                try:
-                    # Some tenants wire this through React without accepting a
-                    # forced pointer click. Trigger its native button handler.
-                    existing_account.evaluate("element => element.click()")
-                except Exception:
-                    existing_account.click(force=True)
-                self._wait(page, 1250)
-
-            # Create Account and Sign In reuse the same email/password field
-            # IDs. Never populate credentials while the switch is still on
-            # screen, otherwise a failed click can mutate the account-creation
-            # form instead of logging in.
-            for _ in range(36):
-                if page.locator('[data-automation-id="signInLink"]').first.count() == 0:
-                    break
-                self._wait(page, 250)
-            else:
-                return False
-
-            sign_in_form = page.locator('form[data-automation-id="signInFormo"]:visible').first
-            scope = sign_in_form if sign_in_form.count() > 0 else self._sign_in_scope(page)
-            email = scope.locator('input[data-automation-id="email"]:visible').first
-            if email.count() == 0:
-                # Some tenants initially show a create-account pane inside the
-                # sign-in dialog. Switch it to the existing-account form before
-                # looking for credentials.
-                existing_account = scope.locator('a:has-text("Sign In"):visible').first
-                if existing_account.count() == 0:
-                    existing_account = scope.locator('button:has-text("Sign In"):visible').first
-                if existing_account.count() > 0:
-                    existing_account.click(force=True)
-                    self._wait(page, 750)
-                    scope = self._sign_in_scope(page)
-                email_flow = scope.locator('button[data-automation-id="SignInWithEmailButton"]:visible').first
-                if email_flow.count() == 0:
-                    header_sign_in = page.locator('[data-automation-id="utilityButtonSignIn"]:visible').first
-                    if header_sign_in.count() > 0:
-                        header_sign_in.click(force=True)
-                        self._wait(page, 500)
-                    scope = self._sign_in_scope(page)
-                    email_flow = scope.locator('button[data-automation-id="SignInWithEmailButton"]:visible').first
+            for _ in range(20):
+                email_flow = page.locator('button[data-automation-id="SignInWithEmailButton"]:visible').first
                 if email_flow.count() > 0:
-                    email_flow.click(force=True)
-                    # Some Workday tenants take several seconds to replace the
-                    # provider chooser with the email/password form.
+                    try:
+                        email_flow.click()
+                    except Exception:
+                        email_flow.click(force=True)
+                    self._wait(page, 1500)
+                    break
+                header_sign_in = page.locator('button[data-automation-id="utilityButtonSignIn"]:visible, button:has-text("Sign In"):visible').first
+                if header_sign_in.count() > 0:
+                    try:
+                        header_sign_in.click()
+                    except Exception:
+                        header_sign_in.click(force=True)
                     self._wait(page, 1000)
+                    email_flow = page.locator('button[data-automation-id="SignInWithEmailButton"]:visible').first
+                    if email_flow.count() > 0:
+                        try:
+                            email_flow.click()
+                        except Exception:
+                            email_flow.click(force=True)
+                        self._wait(page, 1500)
+                        break
+                existing_account = page.locator('[data-automation-id="signInLink"]:visible').first
+                if existing_account.count() > 0:
+                    try:
+                        existing_account.evaluate("element => element.click()")
+                    except Exception:
+                        existing_account.click(force=True)
+                    self._wait(page, 1250)
+                    break
+                self._wait(page, 500)
+
+            scope = self._sign_in_scope(page)
             for _ in range(60):
-                sign_in_form = page.locator('form[data-automation-id="signInFormo"]:visible').first
-                scope = sign_in_form if sign_in_form.count() > 0 else self._sign_in_scope(page)
                 email = scope.locator('input[data-automation-id="email"]:visible').first
-                password = scope.locator('input[data-automation-id="password"]:visible').first
                 if email.count() == 0:
-                    email = scope.locator(
-                        'input[type="email"]:visible, input[autocomplete="username"]:visible, input[name*="email" i]:visible'
-                    ).first
+                    email = scope.locator('input[type="email"]:visible, input[name*="email" i]:visible').first
+                password = scope.locator('input[data-automation-id="password"]:visible').first
                 if password.count() == 0:
                     password = scope.locator('input[type="password"]:visible').first
                 submit = scope.locator('[data-automation-id="click_filter"]:visible').first
@@ -260,29 +286,95 @@ class WorkdayAdapter:
                     submit = scope.locator('button:has-text("Sign In"):visible').first
                 if email.count() > 0 and password.count() > 0 and submit.count() > 0:
                     break
+                scope = self._sign_in_scope(page)
                 self._wait(page, 250)
             if email.count() == 0 or password.count() == 0 or submit.count() == 0:
                 return False
+
+
             email.fill(credential.email)
             password.fill(credential.password)
-            # Workday's visible action is often a div over a hidden submit
-            # button. Use a normal click on the foreground control so tenant
-            # pointer handlers run without touching a background account form.
-            form = scope.locator('form[data-automation-id="signInFormo"]:visible').first
-            try:
-                submit.click()
-            except Exception:
+            self._wait(page, 500)
+            click_filter = scope.locator('[data-automation-id="click_filter"]:visible').first
+            if click_filter.count() > 0:
+                try:
+                    click_filter.click()
+                except Exception:
+                    click_filter.click(force=True)
+            elif submit.count() > 0:
+                try:
+                    submit.click()
+                except Exception:
+                    submit.click(force=True)
+
+            else:
                 try:
                     password.press("Enter")
                 except Exception:
-                    if form.count() > 0 and hasattr(form, "evaluate"):
-                        form.evaluate("form => form.requestSubmit()")
-                    else:
-                        return False
-            self._wait(page, 6000)
+                    pass
+            self._wait(page, 3000)
+
+            # Wait for sign-in submit button or password to disappear (indicating successful login)
+            for _ in range(40):
+                if (
+                    page.locator('button[data-automation-id="signInSubmitButton"]:visible').count() == 0
+                    and page.locator('input[data-automation-id="password"]:visible').count() == 0
+                ):
+                    break
+                self._wait(page, 250)
+
+            if hasattr(page, "reload"):
+                try:
+                    page.reload(wait_until="domcontentloaded")
+                    self._wait(page, 2500)
+                except Exception:
+                    pass
+
+
+
+
+
+
+            # Check if there is an explicit credential error indicating account does not exist
+            error_banner = page.locator('[data-automation-id*="error" i]:visible, [role="alert"]:visible').first
+            error_text = ""
+            if error_banner.count() > 0:
+                try:
+                    error_text = str(error_banner.inner_text() or "").lower()
+                except Exception:
+                    error_text = ""
+
+            if any(token in error_text for token in ("invalid user name", "invalid username", "account does not exist", "incorrect")):
+                create_link = page.locator('button[data-automation-id="createAccountLink"]:visible, a[data-automation-id="createAccountLink"]:visible').first
+                if create_link.count() > 0:
+                    create_link.click(force=True)
+                    self._wait(page, 1500)
+                    c_email = page.locator('input[data-automation-id="email"]:visible').first
+                    c_password = page.locator('input[data-automation-id="password"]:visible').first
+                    c_verify = page.locator('input[data-automation-id="verifyPassword"]:visible').first
+                    if c_email.count() > 0 and c_password.count() > 0:
+                        c_email.fill(credential.email)
+                        c_password.fill(credential.password)
+                        if c_verify.count() > 0:
+                            c_verify.fill(credential.password)
+                        cbox = page.locator('input[type="checkbox"]:visible, [data-automation-id*="checkbox" i]:visible').first
+                        if cbox.count() > 0:
+                            try:
+                                cbox.check()
+                            except Exception:
+                                cbox.click(force=True)
+                        c_submit = page.locator('button[data-automation-id="createAccountSubmitButton"]:visible').first
+                        if c_submit.count() > 0:
+                            c_submit.click(force=True)
+                            self._wait(page, 6000)
+
             return True
+
+
         except Exception:
             return False
+
+
 
     def _sign_in_scope(self, page):
         """Prefer the foreground sign-in dialog over a background create-account form."""
@@ -499,7 +591,10 @@ class WorkdayAdapter:
         path = parsed.path.rstrip("/")
         if not path:
             return ""
+        if path.lower().endswith("/apply"):
+            path = path[:-len("/apply")]
         return parsed._replace(path=f"{path}/apply/applyManually", query="", fragment="").geturl()
+
 
     def _is_public_job_page(self, page) -> bool:
         current_url = str(getattr(page, "url", "") or "").lower()
@@ -512,16 +607,29 @@ class WorkdayAdapter:
         return "/apply" in current_url and any(marker in text for marker in _START_APPLICATION_MARKERS)
 
     def _has_account_gate(self, page) -> bool:
-        text = self._page_text(page).lower()
+        if hasattr(page, "locator"):
+            try:
+                if page.locator('button[data-automation-id="SignInWithEmailButton"]:visible').count() > 0:
+                    return True
+                if page.locator('input[data-automation-id="password"]:visible').count() > 0:
+                    return True
+                if page.locator('button[data-automation-id="signInSubmitButton"]:visible').count() > 0:
+                    return True
+                if page.locator('button[data-automation-id="createAccountSubmitButton"]:visible').count() > 0:
+                    return True
+            except Exception:
+                pass
         current_url = str(getattr(page, "url", "") or "").lower()
         if "/login" in current_url or "/register" in current_url:
             return True
+        text = self._page_text(page).lower()
         return (
-            "sign in with email" in text
-            or ("email address*" in text and "password*" in text)
-            or "create account" in text
+            ("email address*" in text and "password*" in text)
             or "password requirements:" in text
         )
+
+
+
 
     def _has_email_verification_gate(self, page) -> bool:
         text = self._page_text(page).lower()
@@ -564,8 +672,11 @@ class WorkdayAdapter:
         return "resend code" in text or "submit" in text
 
     def _is_loading_application_shell(self, page) -> bool:
+        if self._has_application_form_widgets(page):
+            return False
         text = self._page_text_once(page).lower()
         return "loading" in text and any(marker in text for marker in _FORM_STAGE_MARKERS)
+
 
     def _has_application_form_widgets(self, page) -> bool:
         helper = getattr(page, "has_workday_form_widgets", None)
@@ -1510,7 +1621,7 @@ class WorkdayAdapter:
             return eligibility_score
         if normalized_candidate == normalized_target:
             return 3
-        if field_name.strip().lower() == "source":
+        if "source" in field_name.strip().lower():
             # Workday tenants label the LinkedIn parent category differently
             # (for example, "A Job Board", "Job Boards", or "Job Sites").
             # Treat only those equivalent category labels as a match; the
@@ -1521,9 +1632,12 @@ class WorkdayAdapter:
                 "job boards",
                 "job site",
                 "job sites",
+                "internet",
+                "social media",
             }
             if normalized_target in source_category_aliases and normalized_candidate in source_category_aliases:
                 return 2
+
         if f"not {normalized_target}" in normalized_candidate:
             # Avoid a partial match selecting the explicit negation of the
             # requested value, such as "Not Hispanic or Latino".
@@ -1720,7 +1834,26 @@ class WorkdayAdapter:
                             expected_target = "OTHER"
                             self._wait(page, 400)
                             continue
+                        if "source" in field_name.lower() and "linkedin" in [p.lower() for p in selection_path]:
+                            locator.fill("LinkedIn")
+                            locator.press("Enter")
+                            self._wait(page, 500)
+                            options = self._prompt_options(page, field, locator)
+                            for idx in range(options.count()):
+                                cand = options.nth(idx)
+                                try:
+                                    if "linkedin" in cand.inner_text().lower():
+                                        option_locator = cand
+                                        expected_target = "LinkedIn"
+                                        break
+                                except Exception:
+                                    continue
+                            if option_locator is not None:
+                                option_locator.click()
+                                self._wait(page, 300)
+                                break
                         raise RuntimeError(f"prompt option not found for {target!r}")
+
                 if path_index < len(selection_path) - 1:
                     branch = option_locator.locator('xpath=ancestor-or-self::*[@role="option"][1]')
                     side_charm = branch.locator(

@@ -3,8 +3,9 @@
         {
             "match_type": "exact",
             "pattern": "Please select the ethnicity which most accurately describes how you identify yourself.*",
-            "answer": "I prefer not to answer"
+            "answer": "Hispanic or Latino"
         },
+
         {
             "match_type": "exact",
             "pattern": "This is an on-site opportunity in Dallas, TX. Will you be able to report to this location?*",
