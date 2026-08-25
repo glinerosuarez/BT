@@ -104,8 +104,12 @@ class AshbyAdapter:
             question_text = str(field.get("question_text") or field.get("label") or field_name).strip()
             field_type = str(field.get("field_type") or "text")
             required = bool(field.get("required", True))
-            if not required or str(field.get("current_value") or "").strip():
+            is_resume_field = field_name == "_systemfield_resume" or (field_type == "file" and "resume" in question_text.lower())
+            if not is_resume_field and (not required or str(field.get("current_value") or "").strip()):
                 continue
+            if is_resume_field and any(s.field_name == field_name or "resume" in s.step_key.lower() for s in steps if s.field_type == "file"):
+                continue
+
 
             if field_type == "unsupported":
                 return (

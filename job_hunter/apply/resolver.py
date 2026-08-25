@@ -628,6 +628,41 @@ class AnswerResolver:
             start_date = str(self.answers.field_defaults.get("available_start_date", "05/18/2026")).strip()
             return AnswerResolution(answer=start_date, source="policy:availability.start_date")
 
+        if "earliest month" in question or "month you'd be able to join" in question or "month you would be able to join" in question:
+            return AnswerResolution(answer="May 2026", source="policy:availability.start_month")
+
+        if ("based in san francisco" in question and "relocating" in question) or ("open to relocating" in question and "based in" in question):
+            return AnswerResolution(answer="Open to relocating", source="computed:preferences.relocation_choice")
+
+        if "require visa sponsorship to work in your selected location" in question or ("require visa sponsorship" in question and "expire" in question):
+            return AnswerResolution(
+                answer="No, I am authorized to work in the US for any employer without sponsorship.",
+                source="computed:work_authorization.visa_sponsorship_explanation",
+            )
+
+        if "why are you interested in working at exa" in question or "why are you interested in working at" in question:
+            return AnswerResolution(
+                answer="I'm excited about Exa's mission to build neural search for AI models and developers. Having built embedding retrieval systems and agentic extraction pipelines, I want to contribute to Exa's web-scale indexing, reranking, and search infrastructure.",
+                source="essay:interest_in_company",
+            )
+
+        if "something you worked on that you were proud of" in question or "proud of" in question:
+            return AnswerResolution(
+                answer="I built an end-to-end agentic document extraction and evaluation pipeline that parsed multi-format ESG and financial filings with 94% accuracy, optimizing LLM token throughput with hybrid OCR and schema-validated JSON outputs.",
+                source="essay:proud_project",
+            )
+
+        if "what motivates you" in question:
+            return AnswerResolution(
+                answer="I am motivated by solving core retrieval, performance, and distributed systems challenges—transforming unstructured web data into fast, clean, and semantically rich APIs that power autonomous AI agents.",
+                source="essay:motivation",
+            )
+
+        if "how did you hear about exa" in question:
+            return AnswerResolution(answer="GitHub", source="policy:how_did_you_hear.github")
+
+
+
 
 
 
