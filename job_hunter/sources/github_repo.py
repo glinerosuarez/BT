@@ -74,7 +74,7 @@ class _BrowserDetailFetcher:
         self.browser_backend = normalize_browser_backend(browser_backend)
         self.headless = headless
         self.page_timeout_seconds = max(page_timeout_seconds, 5)
-        self._playwright_ctx: Any | None = None
+        self._playwright: Any | None = None
         self._browser: Any | None = None
         self._context: Any | None = None
 
@@ -82,12 +82,11 @@ class _BrowserDetailFetcher:
         if self._context is not None:
             return
         browser_api = load_browser_api(self.browser_backend)
-        self._playwright_ctx = browser_api.sync_playwright()
-        playwright = self._playwright_ctx.start()
+        self._playwright = browser_api.sync_playwright().start()
         try:
-            self._browser = playwright.chromium.launch(headless=self.headless, channel="chrome")
+            self._browser = self._playwright.chromium.launch(headless=self.headless, channel="chrome")
         except Exception:
-            self._browser = playwright.chromium.launch(headless=self.headless)
+            self._browser = self._playwright.chromium.launch(headless=self.headless)
         self._context = self._browser.new_context(user_agent=USER_AGENT)
         self._context.set_default_timeout(self.page_timeout_seconds * 1000)
         self._context.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
@@ -128,12 +127,12 @@ class _BrowserDetailFetcher:
             except Exception:
                 pass
             self._browser = None
-        if self._playwright_ctx is not None:
+        if self._playwright is not None:
             try:
-                self._playwright_ctx.stop()
+                self._playwright.stop()
             except Exception:
                 pass
-            self._playwright_ctx = None
+            self._playwright = None
 
 
 class GithubRepoSource(SourceConnector):
