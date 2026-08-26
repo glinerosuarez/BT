@@ -44,12 +44,37 @@
       "match_type": "exact",
       "pattern": "Are you interested in our Women's Winternship program?*",
       "answer": "No"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "when do you graduate",
+      "answer": "Sept - Dec 2027"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "what is your gpa",
+      "answer": "3.7 - 4.0"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "prefer a winter or summer",
+      "answer": "Summer 2027"
     }
   ],
+
   "field_defaults": {
     "veteran_status": false,
     "gender": "Male",
     "race_ethnicity": "Hispanic or Latino",
-    "disability_status": false
+    "disability_status": false,
+    "street_address": "3030 Shrine Pl",
+    "address_line_1": "3030 Shrine Pl",
+    "address_line_2": "Apt 212",
+    "apartment": "Apt 212",
+    "zip_code": "90007",
+    "postal_code": "90007",
+    "county": "Los Angeles",
+    "available_start_date": "05/18/2026"
   }
 }
+

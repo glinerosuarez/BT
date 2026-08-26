@@ -576,8 +576,9 @@ class GreenhouseAdapter:
 
     @classmethod
     def _select_search_values(cls, value: str) -> tuple[str, ...]:
-        primary = cls._select_search_value(value)
+        primary = cls._select_search_value(value).rstrip(".,;:!?")
         normalized = cls._normalize_select_value(value)
+
         for pronoun_prefix, search_value in (
             ("he him", "He/Him"),
             ("she her", "She/Her"),

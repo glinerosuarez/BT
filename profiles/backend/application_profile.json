@@ -32,5 +32,9 @@
     "salary_min_usd": "50000",
     "remote_ok": true,
     "relocation_ok": true
+  },
+  "uploads": {
+    "transcript": "artifacts/docs/Unofficial Transcript.pdf"
   }
 }
+

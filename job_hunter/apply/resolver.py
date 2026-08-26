@@ -796,12 +796,13 @@ class AnswerResolver:
             if gender:
                 return AnswerResolution(answer=gender, source="policy:self_identify.gender")
 
-        if "hispanic or latino" in question:
+        if "hispanic or latino" in question or "hispanic/latino" in question or normalized_field_name in {"hispanic_ethnicity", "hispanicethnicity"}:
             race_ethnicity = str(self.answers.field_defaults.get("race_ethnicity", "")).strip().lower()
             if "hispanic" in race_ethnicity or "latino" in race_ethnicity:
                 return AnswerResolution(answer="Yes", source="computed:self_identify.hispanic_or_latino")
             if race_ethnicity:
                 return AnswerResolution(answer="No", source="computed:self_identify.hispanic_or_latino")
+
 
         if "ethnicity" in question or normalized_field_name in {"ethnicity", "raceethnicity"}:
             race_ethnicity = str(self.answers.field_defaults.get("race_ethnicity", "")).strip()
@@ -815,6 +816,8 @@ class AnswerResolver:
                     answer="I am not a protected veteran.",
                     source="computed:self_identify.veteran_status",
                 )
+
+
 
 
         if "disability" in question or "disabilitystatus" in normalized_field_name:
@@ -991,7 +994,17 @@ class AnswerResolver:
                 return AnswerResolution(answer=year, source="computed:education.end_year")
 
 
+        if "when do you graduate" in question or "graduation timeframe" in question:
+            return AnswerResolution(answer="Sept - Dec 2027", source="computed:education.graduation_timeframe")
+
+        if "what is your gpa" in question or question.rstrip("* ").strip() == "gpa":
+            return AnswerResolution(answer="3.7 - 4.0", source="computed:education.gpa_range")
+
+        if "winter or summer internship" in question or "prefer a winter or summer" in question or "internship term" in question:
+            return AnswerResolution(answer="Summer 2027", source="policy:preferences.internship_term")
+
         if forced_intent == "identity_linkedin_url" or "linkedin profile" in question:
+
             value = self._structured.get("identity.linkedin_url", "").strip()
             if value:
                 return AnswerResolution(answer=value, source="computed:identity.linkedin_url")
