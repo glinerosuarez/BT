@@ -997,11 +997,23 @@ class AnswerResolver:
         if "when do you graduate" in question or "graduation timeframe" in question:
             return AnswerResolution(answer="Sept - Dec 2027", source="computed:education.graduation_timeframe")
 
+        if "expected graduation date" in question or "expected graduation" in question:
+            grad_date = self._structured.get("education.graduation_date", "").strip()
+            match = re.match(r"^(\d{4})-(\d{1,2})$", grad_date)
+            if match:
+                month_name = datetime(2000, int(match.group(2)), 1).strftime("%B")
+                return AnswerResolution(answer=f"{month_name} {match.group(1)}", source="computed:education.graduation_date")
+            return AnswerResolution(answer="May 2027", source="computed:education.graduation_date")
+
         if "what is your gpa" in question or question.rstrip("* ").strip() == "gpa":
             return AnswerResolution(answer="3.7 - 4.0", source="computed:education.gpa_range")
 
         if "winter or summer internship" in question or "prefer a winter or summer" in question or "internship term" in question:
             return AnswerResolution(answer="Summer 2027", source="policy:preferences.internship_term")
+
+        if "provide more detail" in question and ("sponsorship" in question or "answered yes" in question):
+            return AnswerResolution(answer="N/A - Authorized to work in the US with no visa sponsorship required.", source="computed:work_authorization.sponsorship_detail")
+
 
         if forced_intent == "identity_linkedin_url" or "linkedin profile" in question:
 

@@ -762,7 +762,12 @@ class ApplicationService:
         if self.greenhouse_adapter.is_greenhouse_target(target_url, page=page):
             return "greenhouse", self.greenhouse_adapter, target_url
         if self.ashby_adapter.is_ashby_target(target_url, page=page):
+            underlying_apply_url = self.ashby_adapter.extract_underlying_apply_url(page)
+            if underlying_apply_url:
+                page.goto(underlying_apply_url, wait_until="domcontentloaded")
+                target_url = underlying_apply_url
             return "ashby", self.ashby_adapter, target_url
+
         if self.phenom_adapter.is_phenom_target(target_url, page=page):
             underlying_apply_url = self.phenom_adapter.extract_underlying_apply_url(page)
             if underlying_apply_url:

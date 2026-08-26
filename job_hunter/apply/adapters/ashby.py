@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 import re
 from urllib.parse import urlparse
+
 
 from job_hunter.apply.resolver import AnswerResolver, ResolutionError
 from job_hunter.apply.types import AnswerResolution, Blocker, StepSnapshot, SubmitResult
@@ -25,10 +27,35 @@ class AshbyAdapter:
 
     def is_ashby_target(self, url: str, page=None) -> bool:
         host = urlparse(url).netloc.lower()
-        if "ashbyhq.com" in host:
+        if "ashbyhq.com" in host or "ashby_jid=" in url.lower():
             return True
         checker = getattr(page, "detect_ashby", None) if page is not None else None
-        return bool(checker()) if callable(checker) else False
+        if callable(checker) and bool(checker()):
+            return True
+        if page is not None:
+            try:
+                if page.locator("iframe[src*='jobs.ashbyhq.com'], iframe[src*='ashbyhq.com'], [data-ashby-embed]").count() > 0:
+                    return True
+                current_url = getattr(page, "url", "")
+                if "ashby_jid=" in current_url.lower() or "ashbyhq.com" in current_url.lower():
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def extract_underlying_apply_url(self, page) -> str:
+        if page is None:
+            return ""
+        try:
+            iframe = page.locator("iframe[src*='jobs.ashbyhq.com'], iframe[src*='ashbyhq.com']").first
+            if iframe.count() > 0:
+                src = iframe.get_attribute("src") or ""
+                if src:
+                    return re.sub(r"[?&]embed=[^&]+", "", src)
+        except Exception:
+            pass
+        return ""
+
 
     def submit(self, *, page, resolver: AnswerResolver, context) -> SubmitResult:
         steps: list[StepSnapshot] = []
@@ -125,7 +152,29 @@ class AshbyAdapter:
                 )
 
             if field_type == "file":
-                upload_path = context.cover_letter_pdf_path if "cover" in question_text.lower() else context.resume_pdf_path
+                if "transcript" in question_text.lower():
+                    upload_path = context.transcript_path
+                elif "cover" in question_text.lower():
+                    upload_path = context.cover_letter_pdf_path
+                else:
+                    upload_path = context.resume_pdf_path
+
+                if not upload_path or not Path(upload_path).exists():
+                    if required:
+                        return (
+                            self._blocked(
+                                "unsupported_required_document",
+                                page,
+                                steps,
+                                field_name=field_name,
+                                field_type=field_type,
+                                question_text=question_text,
+                                details={"message": "A job-specific document is required and no safe upload artifact is available."},
+                            ),
+                            filled_count,
+                        )
+                    continue
+
                 self._set_field(page, field, upload_path)
                 steps.append(
                     StepSnapshot(
@@ -141,6 +190,7 @@ class AshbyAdapter:
                 )
                 filled_count += 1
                 continue
+
 
             try:
                 resolution = self._resolve_field_value(
