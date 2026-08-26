@@ -59,8 +59,14 @@
       "match_type": "contains",
       "pattern": "prefer a winter or summer",
       "answer": "Summer 2027"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "prophet security",
+      "answer": "Autonomous security operations require high-throughput telemetry ingestion, low-latency alert triage, and deterministic verification to prevent false positives in high-stakes environments. Having built streaming anomaly detection pipelines at EPAM that intercepted 95% of malformed telemetry before reaching downstream stores, and engineered observable agentic extraction workflows at Impatico with OpenTelemetry, I want to contribute directly to Prophet Security's investigation engine and backend data pipelines to help automate alert investigation at scale."
     }
   ],
+
 
   "field_defaults": {
     "veteran_status": false,

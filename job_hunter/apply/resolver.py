@@ -640,7 +640,14 @@ class AnswerResolver:
                 source="computed:work_authorization.visa_sponsorship_explanation",
             )
 
+        if "why are you interested in this role at prophet security" in question or "prophet security" in question:
+            return AnswerResolution(
+                answer="Autonomous security operations require high-throughput telemetry ingestion, low-latency alert triage, and deterministic verification to prevent false positives in high-stakes environments. Having built streaming anomaly detection pipelines at EPAM that intercepted 95% of malformed telemetry before reaching downstream stores, and engineered observable agentic extraction workflows at Impatico with OpenTelemetry, I want to contribute directly to Prophet Security's investigation engine and backend data pipelines to help automate alert investigation at scale.",
+                source="essay:interest_in_company.prophet_security",
+            )
+
         if "why are you interested in working at exa" in question or "why are you interested in working at" in question:
+
             return AnswerResolution(
                 answer="I'm excited about Exa's mission to build neural search for AI models and developers. Having built embedding retrieval systems and agentic extraction pipelines, I want to contribute to Exa's web-scale indexing, reranking, and search infrastructure.",
                 source="essay:interest_in_company",
