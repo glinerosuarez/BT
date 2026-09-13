@@ -19,9 +19,11 @@ from job_hunter.keywords import (
     BACKEND_ADJACENT_DESCRIPTION_PATTERNS,
     BACKEND_ADJACENT_TITLE_PATTERNS,
     DATA_ROLE_TITLE_PATTERNS,
+    FULL_TIME_BACKEND_ADJACENT_TITLE_PATTERNS,
     HIGH_SIGNAL_ML_DATA_KEYWORDS,
     INTERNSHIP_DESCRIPTION_PATTERNS,
     INTERNSHIP_TITLE_PATTERNS,
+    MANAGEMENT_TITLE_PATTERNS,
     ML_DATA_KEYWORDS,
     NEGATIVE_WORK_AUTH_PATTERNS,
     NON_DATA_ROLE_TITLE_PATTERNS,
@@ -72,6 +74,14 @@ DEFAULT_DATA_ROLE_TITLE_REGEXES = {
 DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
     for name, pattern in BACKEND_ADJACENT_TITLE_PATTERNS.items()
+}
+DEFAULT_FULL_TIME_BACKEND_ADJACENT_TITLE_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in FULL_TIME_BACKEND_ADJACENT_TITLE_PATTERNS.items()
+}
+DEFAULT_MANAGEMENT_TITLE_REGEXES = {
+    name: re.compile(pattern, flags=re.IGNORECASE)
+    for name, pattern in MANAGEMENT_TITLE_PATTERNS.items()
 }
 DEFAULT_NON_DATA_ROLE_TITLE_REGEXES = {
     name: re.compile(pattern, flags=re.IGNORECASE)
@@ -183,8 +193,39 @@ PHD_EXCLUSIVE_REQUIREMENT_RE = re.compile(
 )
 
 
+def _derive_handshake_full_time_urls(search_urls: list[str], query_terms: list[str]) -> list[str]:
+    base_url = search_urls[0] if search_urls else "https://app.joinhandshake.com/job-search/11120409"
+    parsed = urlparse(base_url)
+    base_pairs = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key not in {"query", "page", "jobType"}
+    ]
+    base_pairs.append(("jobType", "1"))
+    urls: list[str] = []
+    for term in query_terms:
+        if not term.strip():
+            continue
+        q = urlencode([*base_pairs, ("query", term.strip()), ("page", "1")], doseq=True)
+        urls.append(urlunparse(parsed._replace(query=q)))
+    return urls
+
+
+def _merge_unique_items(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        k = item.strip().lower()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        result.append(item.strip())
+    return result
+
+
 def build_sources(settings: Settings, store: JobStore | None = None) -> list[SourceConnector]:
     sources: list[SourceConnector] = []
+    target_type = getattr(settings, "job_target_type", "all").strip().lower()
     greenhouse_boards = settings.greenhouse_boards
     lever_companies = settings.lever_companies
     rss_feeds = settings.rss_feeds
@@ -225,10 +266,14 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
         sources.append(LeverSource(companies=lever_companies))
     if settings.use_rss and rss_feeds:
         sources.append(RssSource(feeds=rss_feeds))
-    if settings.use_github_repos and github_repo_readmes:
+
+    # GitHub Repositories
+    if target_type in {"all", "internship"} and settings.use_github_repos and github_repo_readmes:
         sources.append(
             GithubRepoSource(
                 readme_urls=github_repo_readmes,
+                name="github_repo",
+                job_type="internship",
                 max_posting_age_days=settings.max_posting_age_days,
                 browser_backend=getattr(settings, "browser_backend", "playwright"),
                 headless=getattr(settings, "github_repo_headless", True),
@@ -236,13 +281,43 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 page_timeout_seconds=getattr(settings, "github_repo_page_timeout_seconds", 15),
             )
         )
+    if (
+        target_type in {"all", "full_time"}
+        and getattr(settings, "use_github_new_grad_repos", False)
+        and getattr(settings, "github_new_grad_repo_readmes", [])
+    ):
+        sources.append(
+            GithubRepoSource(
+                readme_urls=settings.github_new_grad_repo_readmes,
+                name="github_repo_new_grad",
+                job_type="full_time",
+                max_posting_age_days=settings.max_posting_age_days,
+                browser_backend=getattr(settings, "browser_backend", "playwright"),
+                headless=getattr(settings, "github_repo_headless", True),
+                enable_browser_fallback=getattr(settings, "github_repo_browser_fallback", True),
+                page_timeout_seconds=getattr(settings, "github_repo_page_timeout_seconds", 15),
+            )
+        )
+
     if settings.use_ashby and ashby_boards:
         sources.append(AshbySource(board_slugs=ashby_boards))
+
+    # Handshake
     handshake_direct_job_urls = getattr(settings, "handshake_direct_job_urls", [])
-    if settings.use_handshake and (handshake_search_urls or handshake_direct_job_urls):
+    effective_handshake_urls: list[str] = []
+    if target_type in {"all", "internship"}:
+        effective_handshake_urls.extend(handshake_search_urls)
+    if target_type in {"all", "full_time"}:
+        ft_handshake_queries = getattr(settings, "handshake_full_time_recall_queries", [])
+        if ft_handshake_queries:
+            effective_handshake_urls.extend(_derive_handshake_full_time_urls(handshake_search_urls, ft_handshake_queries))
+    if handshake_direct_job_urls:
+        effective_handshake_urls.extend(handshake_direct_job_urls)
+    effective_handshake_urls = _merge_unique_items(effective_handshake_urls)
+    if settings.use_handshake and effective_handshake_urls:
         sources.append(
             HandshakeSource(
-                search_urls=[*handshake_search_urls, *handshake_direct_job_urls],
+                search_urls=effective_handshake_urls,
                 profile_dir=settings.handshake_profile_dir,
                 headless=settings.handshake_headless,
                 max_results=settings.handshake_max_results,
@@ -254,10 +329,18 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 browser_backend=getattr(settings, "browser_backend", "playwright"),
             )
         )
-    if settings.use_linkedin and linkedin_search_urls:
+
+    # LinkedIn
+    effective_linkedin_urls: list[str] = []
+    if target_type in {"all", "internship"}:
+        effective_linkedin_urls.extend(linkedin_search_urls)
+    if target_type in {"all", "full_time"}:
+        effective_linkedin_urls.extend(getattr(settings, "linkedin_full_time_search_urls", []))
+    effective_linkedin_urls = _merge_unique_items(effective_linkedin_urls)
+    if settings.use_linkedin and effective_linkedin_urls:
         sources.append(
             LinkedInSource(
-                search_urls=linkedin_search_urls,
+                search_urls=effective_linkedin_urls,
                 profile_dir=settings.linkedin_profile_dir,
                 headless=settings.linkedin_headless,
                 max_results=settings.linkedin_max_results,
@@ -267,7 +350,9 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 browser_backend=getattr(settings, "browser_backend", "playwright"),
             )
         )
-    if settings.use_interstride and settings.interstride_search_urls:
+
+    # Interstride (internships/student)
+    if target_type in {"all", "internship"} and settings.use_interstride and settings.interstride_search_urls:
         sources.append(
             InterstrideSource(
                 search_urls=settings.interstride_search_urls,
@@ -280,20 +365,36 @@ def build_sources(settings: Settings, store: JobStore | None = None) -> list[Sou
                 browser_backend=getattr(settings, "browser_backend", "playwright"),
             )
         )
-    if settings.use_apple and settings.apple_queries:
+
+    # Apple
+    effective_apple_queries: list[str] = []
+    if target_type in {"all", "internship"}:
+        effective_apple_queries.extend(settings.apple_queries)
+    if target_type in {"all", "full_time"}:
+        effective_apple_queries.extend(getattr(settings, "apple_full_time_queries", []))
+    effective_apple_queries = _merge_unique_items(effective_apple_queries)
+    if settings.use_apple and effective_apple_queries:
         sources.append(
             AppleJobsSource(
-                queries=settings.apple_queries,
+                queries=effective_apple_queries,
                 max_results=settings.apple_max_results,
                 headless=settings.apple_headless,
                 page_timeout_seconds=settings.apple_page_timeout_seconds,
                 browser_backend=getattr(settings, "browser_backend", "playwright"),
             )
         )
-    if getattr(settings, "use_hiring_cafe", False) and getattr(settings, "hiring_cafe_search_urls", []):
+
+    # HiringCafe
+    effective_hiring_cafe_urls: list[str] = []
+    if target_type in {"all", "internship"}:
+        effective_hiring_cafe_urls.extend(settings.hiring_cafe_search_urls)
+    if target_type in {"all", "full_time"}:
+        effective_hiring_cafe_urls.extend(getattr(settings, "hiring_cafe_full_time_search_urls", []))
+    effective_hiring_cafe_urls = _merge_unique_items(effective_hiring_cafe_urls)
+    if getattr(settings, "use_hiring_cafe", False) and effective_hiring_cafe_urls:
         sources.append(
             HiringCafeSource(
-                search_urls=settings.hiring_cafe_search_urls,
+                search_urls=effective_hiring_cafe_urls,
                 max_results=settings.hiring_cafe_max_results,
             )
         )
@@ -344,6 +445,11 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
         _compile_title_blacklist(settings.non_data_title_patterns),
     )
     policy_reject_regexes = _merge_compiled_patterns(_compile_title_blacklist(settings.policy_reject_patterns))
+    management_title_regexes = _merge_compiled_patterns(
+        list(DEFAULT_MANAGEMENT_TITLE_REGEXES.values()),
+        _compile_title_blacklist(getattr(settings, "management_title_patterns", [])),
+    )
+    full_time_backend_adjacent_title_regexes = list(DEFAULT_FULL_TIME_BACKEND_ADJACENT_TITLE_REGEXES.values())
 
     for source in build_sources(settings, store=store):
         source_stats = outcome.source_stats.setdefault(source.name, SourceRunStats())
@@ -456,11 +562,32 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                     if query_stats is not None:
                         query_stats.recovered_source_quality_count += 1
 
-            if not _is_internship(job):
-                source_stats.rejected_internship_count += 1
+            # Check target type constraint
+            target_type = getattr(settings, "job_target_type", "all").strip().lower()
+            if target_type == "internship" and job.job_type != "internship":
+                source_stats.rejected_job_type_count += 1
                 if query_stats is not None:
-                    query_stats.rejected_internship_count += 1
+                    query_stats.rejected_job_type_count += 1
                 continue
+            elif target_type == "full_time" and job.job_type != "full_time":
+                source_stats.rejected_job_type_count += 1
+                if query_stats is not None:
+                    query_stats.rejected_job_type_count += 1
+                continue
+
+            if job.job_type == "internship":
+                if not _is_internship(job):
+                    source_stats.rejected_internship_count += 1
+                    if query_stats is not None:
+                        query_stats.rejected_internship_count += 1
+                    continue
+            elif job.job_type == "full_time":
+                if _is_blacklisted_title(job, management_title_regexes):
+                    source_stats.rejected_management_title_count += 1
+                    if query_stats is not None:
+                        query_stats.rejected_management_title_count += 1
+                    continue
+
             if not _is_us_scope(job):
                 source_stats.rejected_us_scope_count += 1
                 if query_stats is not None:
@@ -476,6 +603,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
                 data_role_title_regexes=data_role_title_regexes,
                 non_data_role_title_regexes=non_data_role_title_regexes,
                 min_data_signal_count=settings.min_data_signal_count,
+                full_time_backend_adjacent_title_regexes=full_time_backend_adjacent_title_regexes,
             ):
                 source_stats.rejected_data_role_count += 1
                 if query_stats is not None:
@@ -487,7 +615,7 @@ def run_pipeline(settings: Settings, store: JobStore, notifier: TelegramNotifier
             source_stats.after_stage_1b_count += 1
             if query_stats is not None:
                 query_stats.after_stage_1b_count += 1
-            if _fails_policy_gate(job, policy_reject_regexes):
+            if _fails_policy_gate(job, policy_reject_regexes, is_full_time=(job.job_type == "full_time")):
                 source_stats.rejected_policy_gate_count += 1
                 if query_stats is not None:
                     query_stats.rejected_policy_gate_count += 1
@@ -648,6 +776,19 @@ def _build_semantic_shadow_scorer():
         raise RuntimeError("semantic_shadow_scorer_init_failed")
 
 
+def _detect_job_type_from_provenance(source_name: str, source_detail: str, title: str, description: str) -> str:
+    detail_lower = source_detail.lower()
+    if "jobtype=1" in detail_lower or "f_jt=f" in detail_lower or "new-grad" in detail_lower:
+        return "full_time"
+    if "jobtype=3" in detail_lower or "jobtype=4" in detail_lower or "summer202" in detail_lower or "f_jt=i" in detail_lower:
+        return "internship"
+    title_match = any(pattern.search(title or "") for pattern in INTERNSHIP_TITLE_REGEXES.values())
+    desc_match = any(pattern.search(description or "") for pattern in INTERNSHIP_DESCRIPTION_REGEXES.values())
+    if title_match or desc_match:
+        return "internship"
+    return "full_time"
+
+
 def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
     description = _clean_text(str(raw.get("description", "")))
     title = _clean_text(str(raw.get("title", "")))
@@ -672,6 +813,20 @@ def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
     else:
         source_metadata = {}
 
+    raw_job_type = str(raw.get("job_type") or source_metadata.get("job_type") or "").strip().lower()
+    raw_is_internship = raw.get("is_internship")
+    if raw_is_internship is not None:
+        is_internship = bool(raw_is_internship)
+        job_type = raw_job_type or ("internship" if is_internship else "full_time")
+    elif raw_job_type in {"internship", "full_time"}:
+        job_type = raw_job_type
+        is_internship = (job_type == "internship")
+    else:
+        source_detail = str(raw.get("source_detail", ""))
+        source_name = str(raw.get("source", ""))
+        job_type = _detect_job_type_from_provenance(source_name, source_detail, title, description)
+        is_internship = (job_type == "internship")
+
     return JobRecord(
         source=str(raw.get("source", "")),
         external_id=str(raw.get("external_id", "")),
@@ -679,7 +834,8 @@ def _normalize_record(raw: dict, ingested_at: str) -> JobRecord:
         title=title,
         company=company,
         location=location,
-        is_internship=False,
+        is_internship=is_internship,
+        job_type=job_type,
         posted_at=_nullable_str(raw.get("posted_at")),
         description=description,
         compensation_type=compensation_type,
@@ -833,6 +989,7 @@ def _passes_data_role_gate(
     data_role_title_regexes: list[re.Pattern[str]],
     non_data_role_title_regexes: list[re.Pattern[str]],
     min_data_signal_count: int,
+    full_time_backend_adjacent_title_regexes: list[re.Pattern[str]] | None = None,
 ) -> bool:
     title = job.title or ""
     desc_blob = (job.description or "").lower()
@@ -863,6 +1020,17 @@ def _passes_data_role_gate(
                 if backend_signal_hits >= 2:
                     return True
 
+    if getattr(job, "job_type", "") == "full_time" and full_time_backend_adjacent_title_regexes:
+        ft_adjacent = any(pattern.search(title) for pattern in full_time_backend_adjacent_title_regexes)
+        if ft_adjacent:
+            has_backend_or_data_signals = (
+                any(p.search(desc_blob) for p in BACKEND_ADJACENT_DESCRIPTION_REGEXES.values())
+                or any(p.search(desc_blob) for p in HIGH_SIGNAL_KEYWORD_PATTERNS.values())
+            )
+            if DEFAULT_NON_DATA_ROLE_TITLE_REGEXES["frontend_mobile_only"].search(desc_blob) and not has_backend_or_data_signals:
+                return False
+            return True
+
     high_signal_hits = 0
     for keyword, pattern in HIGH_SIGNAL_KEYWORD_PATTERNS.items():
         if pattern.search(desc_blob):
@@ -872,7 +1040,7 @@ def _passes_data_role_gate(
     return False
 
 
-def _fails_policy_gate(job: JobRecord, policy_reject_regexes: list[re.Pattern[str]]) -> bool:
+def _fails_policy_gate(job: JobRecord, policy_reject_regexes: list[re.Pattern[str]], is_full_time: bool = False) -> bool:
     blob = " ".join(
         [
             job.title or "",
@@ -882,9 +1050,10 @@ def _fails_policy_gate(job: JobRecord, policy_reject_regexes: list[re.Pattern[st
             job.source_detail or "",
         ]
     )
-    for pattern in BUILTIN_POLICY_REJECT_REGEXES.values():
-        if pattern.search(blob):
-            return True
+    if not is_full_time:
+        for pattern in BUILTIN_POLICY_REJECT_REGEXES.values():
+            if pattern.search(blob):
+                return True
     for pattern in policy_reject_regexes:
         if _is_generic_phd_pattern(pattern) and not _is_phd_exclusive(job):
             continue
@@ -905,7 +1074,8 @@ def _is_phd_exclusive(job: JobRecord) -> bool:
 
 
 def _role_relevance_reason_codes(job: JobRecord) -> list[str]:
-    reasons = ["internship_gate_pass", "us_scope_pass", "data_role_gate_pass"]
+    gate_name = "full_time_gate_pass" if getattr(job, "job_type", "") == "full_time" else "internship_gate_pass"
+    reasons = [gate_name, "us_scope_pass", "data_role_gate_pass"]
     title = (job.title or "").lower()
     if any(token in title for token in ("machine learning", "data science", "data engineer", "analytics engineer", "ai/ml")):
         reasons.append("target_title_signal")
@@ -1030,7 +1200,13 @@ def _score_relevance(job: JobRecord) -> tuple[float, list[str]]:
             score += adjusted
             hits.append(keyword)
 
-    if DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES["software_engineer_intern"].search(job.title or ""):
+    if (
+        DEFAULT_BACKEND_ADJACENT_TITLE_REGEXES["software_engineer_intern"].search(job.title or "")
+        or (
+            getattr(job, "job_type", "") == "full_time"
+            and DEFAULT_FULL_TIME_BACKEND_ADJACENT_TITLE_REGEXES["software_engineer"].search(job.title or "")
+        )
+    ):
         score += 3.0
         hits.append("software_engineering")
 

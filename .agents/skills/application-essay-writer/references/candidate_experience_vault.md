@@ -48,6 +48,10 @@ This reference document contains verified factual experiences, metrics, technolo
   - **Measurable Result**: Reduced batch job runtime from **~24 hours to under 1 hour** (95%+ speedup) and reduced AWS EMR infrastructure spend by **$10,000 per month**.
   - **Framework Modernization**: Built and led team-wide adoption of a modular Python data transformation framework, replacing thousands of lines of legacy Java boilerplate and cutting maintenance overhead.
 
+### D. Hackathons & Competitive AI Engineering
+- **Techstars Startup Weekend (SWUSC)** — **1st Place Winner**: Over a 54-hour sprint, built a multi-agent AI system that aggregated grant opportunities, matched small business profiles, and generated an end-to-end 17-page grant proposal for an actual client on the spot.
+- **SHPE National Convention Rockwell Automation Hackathon** — **National Finalist (Top 27 Nationwide)**: Selected as a national finalist heading to Indianapolis for designing an enterprise voice operations architecture for technical support featuring streaming STT with real-time PII redaction, a knowledge retrieval layer, zero-trust citations, and human-in-the-loop confirmation.
+
 ---
 
 ## 3. Technical Core Strengths

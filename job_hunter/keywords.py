@@ -64,6 +64,25 @@ BACKEND_ADJACENT_TITLE_PATTERNS = {
     "platform_engineer_intern": r"\bplatform engineer\b.*\bintern(ship)?\b|\bintern(ship)?\b.*\bplatform engineer\b",
 }
 
+FULL_TIME_BACKEND_ADJACENT_TITLE_PATTERNS = {
+    "software_engineer": r"\b(software\s+(development|engineer(?:ing)?)|swe|sde)\b",
+    "backend_engineer": r"\bbackend(\s+(software\s+)?engineer(?:ing)?)?\b",
+    "platform_engineer": r"\bplatform(\s+(software\s+)?engineer(?:ing)?)?\b",
+    "systems_engineer": r"\bsystems?(\s+(software\s+)?engineer(?:ing)?)?\b",
+    "infrastructure_engineer": r"\binfrastructure(\s+(software\s+)?engineer(?:ing)?)?\b",
+    "full_stack_engineer": r"\bfull[- ]?stack(\s+(software\s+)?engineer(?:ing)?)?\b",
+}
+
+MANAGEMENT_TITLE_PATTERNS = {
+    "manager": r"\b(engineering\s+manager|manager|tech\s+lead\s+manager|software\s+manager|em)\b",
+    "director": r"\b(director|head\s+of)\b",
+    "executive": r"\b(vp|vice\s+president|chief|cto|cio|ciso)\b",
+    "staff": r"\bstaff\b",
+    "principal": r"\bprincipal\b",
+    "distinguished": r"\bdistinguished\b",
+    "fellow": r"\btechnical\s+fellow\b",
+}
+
 BACKEND_ADJACENT_DESCRIPTION_PATTERNS = {
     "backend": r"\bbackend systems?\b|\bbackend\b",
     "api": r"\bapis?\b|\brest APIs?\b",

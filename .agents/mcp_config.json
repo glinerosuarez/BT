@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "sqlite": {
+      "command": "uvx",
+      "args": [
+        "--with",
+        "mcp==0.9.1",
+        "mcp-server-sqlite",
+        "--db-path",
+        "/Users/gabriel.linero/repos/job-hunter/job_hunter.db"
+      ]
+    }
+  }
+}

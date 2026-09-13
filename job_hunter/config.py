@@ -68,6 +68,49 @@ DEFAULT_RSS_FEEDS = [
 DEFAULT_GITHUB_REPO_READMES = [
     "https://raw.githubusercontent.com/vanshb03/Summer2027-Internships/dev/README.md",
 ]
+DEFAULT_GITHUB_NEW_GRAD_READMES = [
+    "https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/README.md",
+]
+DEFAULT_HANDSHAKE_FULL_TIME_RECALL_QUERIES = [
+    "software engineer",
+    "backend engineer",
+    "data engineer",
+    "machine learning engineer",
+    "ai engineer",
+]
+DEFAULT_LINKEDIN_FULL_TIME_SEARCH_URLS = [
+    "https://www.linkedin.com/jobs/search-results/?keywords=backend+engineer&f_TPR=r86400&f_JT=F&sortBy=DD",
+    "https://www.linkedin.com/jobs/search-results/?keywords=software+engineer&f_TPR=r86400&f_JT=F&sortBy=DD",
+    "https://www.linkedin.com/jobs/search-results/?keywords=data+engineer&f_TPR=r86400&f_JT=F&sortBy=DD",
+    "https://www.linkedin.com/jobs/search-results/?keywords=machine+learning+engineer&f_TPR=r86400&f_JT=F&sortBy=DD",
+    "https://www.linkedin.com/jobs/search-results/?keywords=ai+engineer&f_TPR=r86400&f_JT=F&sortBy=DD",
+]
+DEFAULT_APPLE_FULL_TIME_QUERIES = [
+    "software engineer",
+    "backend engineer",
+    "data engineer",
+    "machine learning engineer",
+    "ai engineer",
+    "applied scientist",
+]
+DEFAULT_HIRING_CAFE_FULL_TIME_SEARCH_URLS = [
+    "https://hiring.cafe/jobs/software-engineer-united-states",
+    "https://hiring.cafe/jobs/backend-engineer-united-states",
+    "https://hiring.cafe/jobs/data-engineer-united-states",
+    "https://hiring.cafe/jobs/machine-learning-engineer-united-states",
+    "https://hiring.cafe/jobs/ai-engineer-united-states",
+]
+DEFAULT_MANAGEMENT_TITLE_PATTERNS = [
+    r"\bmanager\b",
+    r"\bdirector\b",
+    r"\bvp\b",
+    r"\bvice\s+president\b",
+    r"\bhead\s+of\b",
+    r"\bprincipal\b",
+    r"\bstaff\b",
+    r"\bchief\b",
+    r"\barchitect\b",
+]
 DEFAULT_ASHBY_BOARDS = [
     "Etched",
     "apex-technology-inc",
@@ -292,6 +335,14 @@ class Settings:
     github_repo_browser_fallback: bool = True
     github_repo_page_timeout_seconds: int = 15
     browser_backend: str = "playwright"
+    job_target_type: str = "all"
+    use_github_new_grad_repos: bool = True
+    github_new_grad_repo_readmes: list[str] = field(default_factory=lambda: list(DEFAULT_GITHUB_NEW_GRAD_READMES))
+    linkedin_full_time_search_urls: list[str] = field(default_factory=lambda: list(DEFAULT_LINKEDIN_FULL_TIME_SEARCH_URLS))
+    handshake_full_time_recall_queries: list[str] = field(default_factory=lambda: list(DEFAULT_HANDSHAKE_FULL_TIME_RECALL_QUERIES))
+    apple_full_time_queries: list[str] = field(default_factory=lambda: list(DEFAULT_APPLE_FULL_TIME_QUERIES))
+    hiring_cafe_full_time_search_urls: list[str] = field(default_factory=lambda: list(DEFAULT_HIRING_CAFE_FULL_TIME_SEARCH_URLS))
+    management_title_patterns: list[str] = field(default_factory=lambda: list(DEFAULT_MANAGEMENT_TITLE_PATTERNS))
 
 
 DEFAULT_DB_PATH = "job_hunter.db"
@@ -466,4 +517,12 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         github_repo_browser_fallback=_env_bool("JOB_HUNTER_GITHUB_REPO_BROWSER_FALLBACK", True),
         github_repo_page_timeout_seconds=_env_int("JOB_HUNTER_GITHUB_REPO_PAGE_TIMEOUT_SECONDS", 15),
         browser_backend=os.getenv("JOB_HUNTER_BROWSER_BACKEND", "playwright"),
+        job_target_type=os.getenv("JOB_HUNTER_JOB_TARGET_TYPE", "all").strip().lower(),
+        use_github_new_grad_repos=_env_bool("JOB_HUNTER_SOURCE_GITHUB_NEW_GRAD_REPOS", True),
+        github_new_grad_repo_readmes=_env_csv("JOB_HUNTER_GITHUB_NEW_GRAD_REPO_README", DEFAULT_GITHUB_NEW_GRAD_READMES),
+        linkedin_full_time_search_urls=_env_csv("JOB_HUNTER_LINKEDIN_FULL_TIME_SEARCH_URLS", DEFAULT_LINKEDIN_FULL_TIME_SEARCH_URLS),
+        handshake_full_time_recall_queries=_env_csv("JOB_HUNTER_HANDSHAKE_FULL_TIME_RECALL_QUERIES", DEFAULT_HANDSHAKE_FULL_TIME_RECALL_QUERIES),
+        apple_full_time_queries=_env_csv("JOB_HUNTER_APPLE_FULL_TIME_QUERIES", DEFAULT_APPLE_FULL_TIME_QUERIES),
+        hiring_cafe_full_time_search_urls=_env_csv("JOB_HUNTER_HIRING_CAFE_FULL_TIME_SEARCH_URLS", DEFAULT_HIRING_CAFE_FULL_TIME_SEARCH_URLS),
+        management_title_patterns=_env_csv("JOB_HUNTER_MANAGEMENT_TITLE_PATTERNS", DEFAULT_MANAGEMENT_TITLE_PATTERNS),
     )

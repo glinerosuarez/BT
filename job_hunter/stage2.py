@@ -186,7 +186,23 @@ def _score_shadow_rules(job: JobRecord, job_text: str, flags: list[str]) -> tupl
     title = (job.title or "").lower()
     blob = job_text.lower()
 
-    if any(token in title for token in ("data engineer", "machine learning", "ml ", "data science", "ai/ml", "applied scientist")):
+    if any(
+        token in title
+        for token in (
+            "data engineer",
+            "machine learning",
+            "ml ",
+            "data science",
+            "ai/ml",
+            "applied scientist",
+            "software engineer",
+            "backend",
+            "platform engineer",
+            "systems engineer",
+            "ai engineer",
+            "full stack",
+        )
+    ):
         score += 0.2
         reasons.append("target_title_alignment")
     if _has_builder_signals(blob):
@@ -197,7 +213,7 @@ def _score_shadow_rules(job: JobRecord, job_text: str, flags: list[str]) -> tupl
     if "mentions_phd" in flags:
         score -= 0.35
         reasons.append("flag_phd")
-    if "mentions_undergraduate_only" in flags:
+    if "mentions_undergraduate_only" in flags and getattr(job, "job_type", "") != "full_time":
         score -= 0.35
         reasons.append("flag_undergraduate_only")
     if "mentions_research" in flags:

@@ -40,10 +40,18 @@ def main() -> int:
         default=25,
         help="Max suspect Handshake rows to refresh when --handshake-suspect-refresh-days is enabled",
     )
+    parser.add_argument(
+        "--job-type",
+        choices=["all", "internship", "full_time"],
+        default=None,
+        help="Target job type to process: 'all' (default), 'internship', or 'full_time'",
+    )
     args = parser.parse_args()
 
     configure_logging(verbose=args.verbose)
     settings = load_settings(load_dotenv=True)
+    if args.job_type:
+        settings = replace(settings, job_target_type=args.job_type)
     ensure_parent_dir(settings.db_path)
     store = JobStore(settings.db_path)
 

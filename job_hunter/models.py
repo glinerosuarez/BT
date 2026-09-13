@@ -29,6 +29,8 @@ class SourceRunStats:
     dead_token_count: int = 0
     feed_error_count: int = 0
     security_verification_blocked_count: int = 0
+    rejected_job_type_count: int = 0
+    rejected_management_title_count: int = 0
 
 
 @dataclass(slots=True)
@@ -40,8 +42,9 @@ class JobRecord:
     company: str
     location: str
     is_internship: bool
-    posted_at: str | None
-    description: str
+    job_type: str = "internship"
+    posted_at: str | None = None
+    description: str = ""
     compensation_type: str = "unknown"
     work_auth_signals: list[str] = field(default_factory=list)
     sponsorship_signals: list[str] = field(default_factory=list)

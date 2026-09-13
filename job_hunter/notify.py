@@ -50,9 +50,10 @@ def _format_alert(job: JobRecord) -> str:
     work_auth = ", ".join(job.work_auth_signals[:3]) if job.work_auth_signals else "none"
     posted = job.posted_at or "unknown"
     compensation = job.compensation_type or "unknown"
+    tag = "[Full-Time Alert]" if getattr(job, "job_type", "") == "full_time" else "[Internship Alert]"
 
     return (
-        f"[Internship Alert] {job.title}\n"
+        f"{tag} {job.title}\n"
         f"Company: {job.company}\n"
         f"Location: {job.location or 'unknown'}\n"
         f"Posted: {posted}\n"

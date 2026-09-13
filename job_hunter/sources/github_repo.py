@@ -144,14 +144,17 @@ class GithubRepoSource(SourceConnector):
         headless: bool = True,
         enable_browser_fallback: bool = True,
         page_timeout_seconds: int = 15,
+        name: str = "github_repo",
+        job_type: str = "internship",
     ) -> None:
-        super().__init__(name="github_repo")
+        super().__init__(name=name)
         self.readme_urls = readme_urls
         self.max_posting_age_days = max_posting_age_days
         self.browser_backend = browser_backend
         self.headless = headless
         self.enable_browser_fallback = enable_browser_fallback
         self.page_timeout_seconds = page_timeout_seconds
+        self.job_type = job_type
         self._fetch_meta: dict[str, object] = {}
 
     def fetch(self, timeout_seconds: int) -> list[dict]:
@@ -219,10 +222,13 @@ class GithubRepoSource(SourceConnector):
                             "company": company,
                             "location": location,
                             "posted_at": posted_at,
+                            "is_internship": self.job_type == "internship",
+                            "job_type": self.job_type,
                             "description": detail_text or listing_description,
                             "skills": [],
                             "source_metadata": {
                                 "external_apply_url": row["application_url"],
+                                "job_type": self.job_type,
                                 "detail_fetch_attempted": bool(row["application_url"]),
                                 "detail_quality_status": detail_quality_status,
                                 "description_provenance": provenance,

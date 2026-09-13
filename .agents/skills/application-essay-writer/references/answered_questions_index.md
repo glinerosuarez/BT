@@ -1,6 +1,6 @@
 # Answer Bank & Question Index
 
-This reference contains canonical, pre-approved responses to real job application prompts. The agent should search this index first when processing a new application prompt to adapt or reuse proven narratives for similar questions.
+This reference contains canonical, pre-approved responses to real job and hackathon application prompts. The agent should search this index first when processing a new prompt to adapt or reuse proven narratives for similar questions.
 
 ---
 
@@ -13,6 +13,7 @@ This reference contains canonical, pre-approved responses to real job applicatio
 5. [Technically Challenging Projects & Distributed Systems](#5-technically-challenging-projects--distributed-systems)
 6. [Engineering Opinions & Philosophy](#6-engineering-opinions--philosophy)
 7. [Leadership, Community & Non-Technical Achievements](#7-leadership-community--non-technical-achievements)
+8. [Hackathons, Builders & Creative Sprints](#8-hackathons-builders--creative-sprints)
 
 ---
 
@@ -98,9 +99,27 @@ This reference contains canonical, pre-approved responses to real job applicatio
 - **Canonical Answer**:
 > Outside of software, I am most proud of my work as the Director of the Society of Hispanic Professional Engineers (SHPE) at the University of Southern California. Moving from Colombia to pursue my Master's degree at USC taught me how critical mentorship and strong community support systems are when navigating unfamiliar academic and professional environments. In my role with SHPE, I focused on building structured mentorship pipelines for first-generation and underrepresented STEM students, organizing hands-on career development workshops, and creating an environment where members could share resources and prepare for technical interviews. Seeing students who initially doubted their technical trajectory gain confidence, land competitive engineering internships, and return to mentor newer members has been deeply rewarding. It reinforced my belief that sustainable leadership is about building supportive infrastructure that empowers others to succeed long after you step down.
 
-### Q5.2: Proudest Software Achievement (Spark EMR Pipeline Optimization)
-- **Question Patterns**: `"What are you most proud of (software)?"`, `"Tell us about your greatest engineering accomplishment"`, `"Describe a technical success you led"`
-- **Core Pillars**: Distributed Systems, Spark EMR, Partition Skew Tuning, 24h to <1h Runtime (95% speedup), $10k/mo Cost Savings, Modular Python Framework Adoption.
-- **Words**: 147 | **Characters**: 1,148
+---
+
+## 8. Hackathons, Builders & Creative Sprints
+
+### Q8.1: Unique Value Add to a Hackathon / Fast-Paced Sprint
+- **Question Patterns**: `"What's something unique that you'd bring to Cal Hacks / hackathon?"`, `"Why should we pick you for this hackathon / builder program?"`
+- **Core Pillars**: 1st Place Techstars Startup Weekend, SHPE Rockwell Automation National Finalist, Live Demo Reliability, Customer-First Discovery.
+- **Words**: 139 | **Characters**: 969
 - **Canonical Answer**:
-> In software, I am most proud of diagnosing and optimizing a multi-terabyte scientific data processing pipeline on AWS EMR at Perficient. The existing distributed batch job was taking nearly 24 hours per run, frequently crashing under memory pressure, and generating high infrastructure costs. By analyzing Spark execution plans, I identified severe partition data skew and redundant shuffle stages across cluster nodes. I rearchitected the job execution by repartitioning datasets with composite keys, tuning memory allocation parameters, and transitioning repetitive legacy Java boilerplate into a modular, reusable Python data transformation framework. This reduced batch runtimes from 24 hours to under 1 hour (over a 95% speedup), reduced AWS EMR infrastructure spend by $10,000 per month, and gave the team a standardized framework for authoring future pipelines. The experience demonstrated the power of deep system profiling over simply adding more compute.
+> I bring the experience of building AI prototypes under 54-hour pressure that actually survive live demos. At Techstars Startup Weekend, our team won 1st place because we skipped toy mockups, talked directly to small business owners on day one, and built a multi-agent system that generated an actual 17-page grant proposal for a real client before Sunday night. At the SHPE Rockwell Automation hackathon, I reached the national finals by designing a voice support architecture with streaming speech-to-text, real-time PII redaction, and human verification instead of a brittle chatbot. At Cal Hacks, I bring that same instinct: cutting through the noise to pick a real problem, writing clean data contracts so agent workflows do not break on stage, and helping my team ship something judges can test with their own hands.
+
+### Q8.2: Hackathon Intentions & Post-Event Goals
+- **Question Patterns**: `"What would you like to get out of Cal Hacks / this hackathon?"`, `"What are your goals for this builder weekend?"`
+- **Core Pillars**: High-Agency Collaboration, Live Product Durability, Long-Term Engineering Network.
+- **Words**: 111 | **Characters**: 749
+- **Canonical Answer**:
+> I want to build with teammates who obsess over execution, stress-test new model APIs under pressure, and ship something that outlives the weekend. My best hackathon experiences have come from working with people who debate data contracts at midnight, divide hard milestones without ego, and care about solving an actual problem rather than chasing buzzwords. At Cal Hacks, I want to take a raw idea in agentic workflows, turn it into a deployed product judges can break and test live, and get sharp technical critiques from engineers building at the frontier. Most of all, I want to leave with long-term collaborators I can keep hacking with after the event ends.
+
+### Q8.3: Lifetime Goals & Founder Ambition (Building a Tech Company)
+- **Question Patterns**: `"What is a lifetime goal of yours?"`, `"Where do you see yourself in 10 years?"`, `"What are your long-term entrepreneurial ambitions?"`
+- **Core Pillars**: Building a Software Company, Colombia to USC Journey, Turning Code into Economic Value, Mentorship & Inclusion.
+- **Words**: 114 | **Characters**: 762
+- **Canonical Answer**:
+> My lifetime goal is to build and scale a software company from the ground up. Moving from Colombia to pursue my Master's in Computer Science at USC and leading SHPE showed me the compounding impact of building tools and institutions that outlive you. Whether optimizing multi-terabyte data pipelines or hacking together a winning multi-agent MVP in 54 hours, I get the most energy from taking an ambiguous problem, talking to users, and turning code into tangible economic value. I want to lead a company that attacks complex, data-heavy problems for underserved markets, while building a team culture that mentors first-generation engineers and gives them the foundation to become technical leaders.

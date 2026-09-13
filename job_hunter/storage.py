@@ -57,6 +57,7 @@ class JobStore:
                 company TEXT NOT NULL,
                 location TEXT,
                 is_internship INTEGER NOT NULL,
+                job_type TEXT NOT NULL DEFAULT 'internship',
                 posted_at TEXT,
                 description TEXT,
                 compensation_type TEXT NOT NULL DEFAULT 'unknown',
@@ -140,6 +141,8 @@ class JobStore:
                 rejected_age_count INTEGER NOT NULL,
                 after_stage_1a_count INTEGER NOT NULL DEFAULT 0,
                 rejected_internship_count INTEGER NOT NULL,
+                rejected_job_type_count INTEGER NOT NULL DEFAULT 0,
+                rejected_management_title_count INTEGER NOT NULL DEFAULT 0,
                 rejected_us_scope_count INTEGER NOT NULL,
                 rejected_title_blacklist_count INTEGER NOT NULL DEFAULT 0,
                 rejected_data_role_count INTEGER NOT NULL DEFAULT 0,
@@ -172,6 +175,8 @@ class JobStore:
                 rejected_age_count INTEGER NOT NULL,
                 after_stage_1a_count INTEGER NOT NULL DEFAULT 0,
                 rejected_internship_count INTEGER NOT NULL,
+                rejected_job_type_count INTEGER NOT NULL DEFAULT 0,
+                rejected_management_title_count INTEGER NOT NULL DEFAULT 0,
                 rejected_us_scope_count INTEGER NOT NULL,
                 rejected_title_blacklist_count INTEGER NOT NULL DEFAULT 0,
                 rejected_data_role_count INTEGER NOT NULL DEFAULT 0,
@@ -297,6 +302,7 @@ class JobStore:
         self._ensure_column("jobs", "scorer_version", "TEXT")
         self._ensure_column("jobs", "job_text_version", "TEXT")
         self._ensure_column("jobs", "job_text_snapshot", "TEXT")
+        self._ensure_column("jobs", "job_type", "TEXT NOT NULL DEFAULT 'internship'")
         self._ensure_column("jobs", "semantic_match_score", "REAL NOT NULL DEFAULT 0.0")
         self._ensure_column("jobs", "semantic_match_label", "TEXT")
         self._ensure_column("jobs", "semantic_match_reason_codes", "TEXT")
@@ -316,6 +322,8 @@ class JobStore:
         self._ensure_column("source_run_logs", "normalized_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "rejected_missing_core_fields_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "after_stage_1a_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "rejected_job_type_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_run_logs", "rejected_management_title_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "rejected_title_blacklist_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "rejected_data_role_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_run_logs", "after_stage_1b_count", "INTEGER NOT NULL DEFAULT 0")
@@ -330,6 +338,8 @@ class JobStore:
         self._ensure_column("source_query_run_logs", "unique_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_query_run_logs", "rejected_missing_core_fields_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_query_run_logs", "after_stage_1a_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "rejected_job_type_count", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("source_query_run_logs", "rejected_management_title_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_query_run_logs", "rejected_title_blacklist_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_query_run_logs", "rejected_data_role_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("source_query_run_logs", "after_stage_1b_count", "INTEGER NOT NULL DEFAULT 0")
@@ -476,7 +486,7 @@ class JobStore:
                 """
                 INSERT INTO jobs (
                     dedupe_key, source, external_id, url, title, company,
-                    location, is_internship, posted_at, description,
+                    location, is_internship, job_type, posted_at, description,
                     compensation_type,
                     work_auth_signals, sponsorship_signals, skills, ingested_at,
                     relevance_score, eligibility_confidence, eligibility_status,
@@ -490,7 +500,7 @@ class JobStore:
                     semantic_text_hash, stage2_combined_label, age_days, age_unknown, source_detail,
                     source_metadata, source_quality_status, source_quality_reason_codes,
                     source_quality_prev_status, source_quality_recovered_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     dedupe_key,
@@ -501,6 +511,7 @@ class JobStore:
                     payload["company"],
                     payload["location"],
                     int(payload["is_internship"]),
+                    str(payload.get("job_type") or ("internship" if payload.get("is_internship") else "full_time")),
                     payload["posted_at"],
                     payload["description"],
                     payload["compensation_type"],
@@ -661,6 +672,7 @@ class JobStore:
                 company=job.company,
                 location=job.location,
                 is_internship=job.is_internship,
+                job_type=job.job_type,
                 posted_at=job.posted_at,
                 description=description,
                 compensation_type=job.compensation_type,
@@ -724,6 +736,8 @@ class JobStore:
                 description = ?,
                 compensation_type = ?,
                 location = ?,
+                is_internship = ?,
+                job_type = ?,
                 posted_at = ?,
                 work_auth_signals = ?,
                 sponsorship_signals = ?,
@@ -771,6 +785,8 @@ class JobStore:
                 description,
                 job.compensation_type,
                 job.location,
+                int(job.is_internship),
+                str(job.job_type or ("internship" if job.is_internship else "full_time")),
                 job.posted_at,
                 json.dumps(job.work_auth_signals),
                 json.dumps(job.sponsorship_signals),
@@ -871,14 +887,15 @@ class JobStore:
                     run_log_id, source_name, fetched_count, normalized_count,
                     rejected_missing_core_fields_count, rejected_age_count,
                     after_stage_1a_count,
-                    rejected_internship_count, rejected_us_scope_count, rejected_title_blacklist_count,
+                    rejected_internship_count, rejected_job_type_count, rejected_management_title_count,
+                    rejected_us_scope_count, rejected_title_blacklist_count,
                     rejected_data_role_count, after_stage_1b_count, rejected_policy_gate_count,
                     after_stage_1c_count,
                     rejected_eligibility_count, rejected_relevance_count, rejected_source_quality_count,
                     recovered_source_quality_count,
                     persisted_count, notified_count, duplicate_count, error_count,
                     dead_token_count, feed_error_count, security_verification_blocked_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_log_id,
@@ -889,6 +906,8 @@ class JobStore:
                     stats.rejected_age_count,
                     stats.after_stage_1a_count,
                     stats.rejected_internship_count,
+                    stats.rejected_job_type_count,
+                    stats.rejected_management_title_count,
                     stats.rejected_us_scope_count,
                     stats.rejected_title_blacklist_count,
                     stats.rejected_data_role_count,
@@ -916,14 +935,15 @@ class JobStore:
                         run_log_id, source_name, query_key, fetched_count, unique_count, normalized_count,
                         rejected_missing_core_fields_count, rejected_age_count,
                         after_stage_1a_count,
-                        rejected_internship_count, rejected_us_scope_count, rejected_title_blacklist_count,
+                        rejected_internship_count, rejected_job_type_count, rejected_management_title_count,
+                        rejected_us_scope_count, rejected_title_blacklist_count,
                         rejected_data_role_count, after_stage_1b_count, rejected_policy_gate_count,
                         after_stage_1c_count,
                         rejected_eligibility_count, rejected_relevance_count, rejected_source_quality_count,
                         recovered_source_quality_count,
                         persisted_count, notified_count, duplicate_count, error_count,
                         dead_token_count, feed_error_count, security_verification_blocked_count
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         run_log_id,
@@ -936,6 +956,8 @@ class JobStore:
                         stats.rejected_age_count,
                         stats.after_stage_1a_count,
                         stats.rejected_internship_count,
+                        stats.rejected_job_type_count,
+                        stats.rejected_management_title_count,
                         stats.rejected_us_scope_count,
                         stats.rejected_title_blacklist_count,
                         stats.rejected_data_role_count,
