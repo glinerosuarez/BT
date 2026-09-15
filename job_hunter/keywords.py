@@ -71,6 +71,7 @@ FULL_TIME_BACKEND_ADJACENT_TITLE_PATTERNS = {
     "systems_engineer": r"\bsystems?(\s+(software\s+)?engineer(?:ing)?)?\b",
     "infrastructure_engineer": r"\binfrastructure(\s+(software\s+)?engineer(?:ing)?)?\b",
     "full_stack_engineer": r"\bfull[- ]?stack(\s+(software\s+)?engineer(?:ing)?)?\b",
+    "forward_deployed_engineer": r"\b(forward\s+deploy(ed|ment)?|deploy(ed|ment)?\s+forward)\b.*?\bengineer(?:ing)?\b|\bengineer(?:ing)?\b.*?\b(forward\s+deploy(ed|ment)?|deploy(ed|ment)?\s+forward)\b|\bfde\b",
 }
 
 MANAGEMENT_TITLE_PATTERNS = {

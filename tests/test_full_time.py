@@ -89,6 +89,9 @@ class FullTimeModuleTests(unittest.TestCase):
             "Distributed Systems Engineer",
             "Platform Engineer",
             "Infrastructure Engineer",
+            "Forward Deployed Engineer",
+            "Forward Deployed Software Engineer",
+            "Deployed Forward Engineer",
         ]
         for title in allowed_titles:
             with self.subTest(title=title):

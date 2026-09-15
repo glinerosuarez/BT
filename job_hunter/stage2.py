@@ -201,6 +201,8 @@ def _score_shadow_rules(job: JobRecord, job_text: str, flags: list[str]) -> tupl
             "systems engineer",
             "ai engineer",
             "full stack",
+            "forward deployed",
+            "deployed forward",
         )
     ):
         score += 0.2
