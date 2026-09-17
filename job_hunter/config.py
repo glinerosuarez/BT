@@ -77,7 +77,6 @@ DEFAULT_HANDSHAKE_FULL_TIME_RECALL_QUERIES = [
     "data engineer",
     "machine learning engineer",
     "ai engineer",
-    "forward deployed engineer",
 ]
 DEFAULT_LINKEDIN_FULL_TIME_SEARCH_URLS = [
     "https://www.linkedin.com/jobs/search-results/?keywords=backend+engineer&f_TPR=r86400&f_JT=F&sortBy=DD",
@@ -85,7 +84,6 @@ DEFAULT_LINKEDIN_FULL_TIME_SEARCH_URLS = [
     "https://www.linkedin.com/jobs/search-results/?keywords=data+engineer&f_TPR=r86400&f_JT=F&sortBy=DD",
     "https://www.linkedin.com/jobs/search-results/?keywords=machine+learning+engineer&f_TPR=r86400&f_JT=F&sortBy=DD",
     "https://www.linkedin.com/jobs/search-results/?keywords=ai+engineer&f_TPR=r86400&f_JT=F&sortBy=DD",
-    "https://www.linkedin.com/jobs/search-results/?keywords=forward+deployed+engineer&f_TPR=r86400&f_JT=F&sortBy=DD",
 ]
 DEFAULT_APPLE_FULL_TIME_QUERIES = [
     "software engineer",
@@ -94,7 +92,6 @@ DEFAULT_APPLE_FULL_TIME_QUERIES = [
     "machine learning engineer",
     "ai engineer",
     "applied scientist",
-    "forward deployed engineer",
 ]
 DEFAULT_HIRING_CAFE_FULL_TIME_SEARCH_URLS = [
     "https://hiring.cafe/jobs/software-engineer-united-states",
@@ -102,7 +99,6 @@ DEFAULT_HIRING_CAFE_FULL_TIME_SEARCH_URLS = [
     "https://hiring.cafe/jobs/data-engineer-united-states",
     "https://hiring.cafe/jobs/machine-learning-engineer-united-states",
     "https://hiring.cafe/jobs/ai-engineer-united-states",
-    "https://hiring.cafe/jobs/forward-deployed-engineer-united-states",
 ]
 DEFAULT_MANAGEMENT_TITLE_PATTERNS = [
     r"\bmanager\b",
