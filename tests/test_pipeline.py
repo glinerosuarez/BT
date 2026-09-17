@@ -531,6 +531,49 @@ class PipelineUnitTests(unittest.TestCase):
             )
             self.assertFalse(_is_us_scope(job), f"Expected {loc} to be rejected by _is_us_scope")
 
+    def test_us_scope_rejects_foreign_domain_and_remote_uk_description(self) -> None:
+        job_uk_domain = JobRecord(
+            source="x",
+            external_id="uk_1",
+            url="https://www.arbeitnow.co.uk/jobs/companies/mozilla/senior-software-engineer-add-ons-254647",
+            title="Senior Software Engineer, Add-Ons",
+            company="Mozilla",
+            location="",
+            is_internship=False,
+            posted_at=None,
+            description="Software engineering with Python and Django",
+            ingested_at="now",
+        )
+        self.assertFalse(_is_us_scope(job_uk_domain))
+
+        job_uk_remote = JobRecord(
+            source="x",
+            external_id="uk_2",
+            url="https://example.com/job",
+            title="Senior Software Engineer",
+            company="Mozilla",
+            location="Remote",
+            is_internship=False,
+            posted_at=None,
+            description="Hiring Ranges: Remote UK £66,000 — £87,000 GBP",
+            ingested_at="now",
+        )
+        self.assertFalse(_is_us_scope(job_uk_remote))
+
+        job_foreign_title = JobRecord(
+            source="x",
+            external_id="de_1",
+            url="https://example.com/job",
+            title="AI Engineering Intern (Berlin / Munich)",
+            company="Bain",
+            location="",
+            is_internship=True,
+            posted_at=None,
+            description="Machine learning and Python",
+            ingested_at="now",
+        )
+        self.assertFalse(_is_us_scope(job_foreign_title))
+
     def test_us_scope_accepts_us_edge_cases(self) -> None:
         valid_us_locations = [
             "Melbourne, FL",

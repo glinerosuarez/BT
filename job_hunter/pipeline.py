@@ -121,6 +121,14 @@ US_CITY_STATE_RE = re.compile(
 US_LOCATION_RE = re.compile(US_LOCATION_PATTERN, flags=re.IGNORECASE)
 NON_US_LOCATION_RE = re.compile(NON_US_LOCATION_PATTERN, flags=re.IGNORECASE)
 US_MAJOR_CITIES_RE = re.compile(US_MAJOR_CITIES_PATTERN, flags=re.IGNORECASE)
+NON_US_DOMAIN_RE = re.compile(
+    r"\.(?:co\.uk|de|ca|fr|com\.au|in|eu|es|it|ch|nl)(?:/|$)",
+    flags=re.IGNORECASE,
+)
+NON_US_REMOTE_RE = re.compile(
+    r"\bremote\s+(?:uk|united kingdom|london|germany|deutschland|canada|australia|france|europe|emea)\b",
+    flags=re.IGNORECASE,
+)
 NEGATED_SPONSORSHIP_REGEXES = {
     "no_sponsorship": re.compile(r"\b(no|not|without)\s+(visa\s+)?sponsorships?\b", flags=re.IGNORECASE),
     "cannot_sponsor": re.compile(r"\b(cannot|can't|unable to)\s+sponsor\b", flags=re.IGNORECASE),
@@ -1156,18 +1164,30 @@ def _is_internship(job: JobRecord) -> bool:
 
 
 def _is_us_scope(job: JobRecord) -> bool:
-    location = _normalize_scope_text(job.location)
-    if not location:
-        return True
-    if US_CITY_STATE_RE.search(location):
-        return True
-    if NON_US_LOCATION_RE.search(location):
+    if job.url and NON_US_DOMAIN_RE.search(job.url):
         return False
-    if US_LOCATION_RE.search(location):
+
+    title = _normalize_scope_text(job.title)
+    if NON_US_LOCATION_RE.search(title):
+        return False
+
+    location = _normalize_scope_text(job.location)
+    if location and US_CITY_STATE_RE.search(location):
         return True
-    if "remote" in location:
+    if location and NON_US_LOCATION_RE.search(location):
+        return False
+    if job.description and NON_US_REMOTE_RE.search(job.description):
+        return False
+    if location and US_LOCATION_RE.search(location):
         return True
-    if US_MAJOR_CITIES_RE.search(location):
+    if location and "remote" in location:
+        return True
+    if location and US_MAJOR_CITIES_RE.search(location):
+        return True
+    if not location:
+        desc_start = _normalize_scope_text(job.description[:600]) if job.description else ""
+        if NON_US_LOCATION_RE.search(desc_start):
+            return False
         return True
     return False
 
