@@ -2020,6 +2020,31 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(page.values["file:attach_your_cover_letter_input"], self._adapter_context().cover_letter_pdf_path)
         self.assertTrue(page.submitted)
 
+    def test_handshake_adapter_skips_optional_cover_letter_when_section_missing(self) -> None:
+        adapter = HandshakeAdapter()
+
+        class NoCoverLetterPage(FakePage):
+            def document_file_inputs(self, section_name: str) -> list[str]:
+                if "cover" in section_name.lower():
+                    return []
+                return super().document_file_inputs(section_name)
+
+        page = NoCoverLetterPage(
+            url="https://app.joinhandshake.com/jobs/111",
+            confirmation={"application_id": "hs-123"},
+            easy_apply=False,
+            greenhouse=False,
+            icims=False,
+        )
+
+        result = adapter.submit(page=page, resolver=self._resolver(), context=self._adapter_context())
+
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(result.confirmation_payload["application_id"], "hs-123")
+        self.assertEqual(page.values["file:attach_your_resume_input"], self._adapter_context().resume_pdf_path)
+        self.assertNotIn("file:attach_your_cover_letter_input", page.values)
+        self.assertTrue(page.submitted)
+
     def test_handshake_adapter_recognizes_native_post_submit_job_page(self) -> None:
         adapter = HandshakeAdapter()
 

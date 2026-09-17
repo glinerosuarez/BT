@@ -78,20 +78,25 @@ class HandshakeAdapter:
             )
         )
 
-        if not self._upload_document(page, section_name="Attach your cover letter", upload_path=context.cover_letter_pdf_path):
-            return self._blocked("cover_letter_upload_missing", page, steps)
-        steps.append(
-            StepSnapshot(
-                step_key="handshake:cover_letter",
-                step_label="Upload cover letter",
-                status="completed",
-                field_name="cover_letter",
-                field_type="file",
-                question_text="Attach your cover letter",
-                answer_source="artifact",
-                answer_value=context.cover_letter_pdf_path,
+        if self._has_document_section(page, section_name="Attach your cover letter"):
+            if not self._upload_document(page, section_name="Attach your cover letter", upload_path=context.cover_letter_pdf_path):
+                return self._blocked("cover_letter_upload_missing", page, steps)
+            steps.append(
+                StepSnapshot(
+                    step_key="handshake:cover_letter",
+                    step_label="Upload cover letter",
+                    status="completed",
+                    field_name="cover_letter",
+                    field_type="file",
+                    question_text="Attach your cover letter",
+                    answer_source="artifact",
+                    answer_value=context.cover_letter_pdf_path,
+                )
             )
-        )
+
+        blocker = self._fill_form_fields(page, resolver=resolver, context=context, steps=steps)
+        if blocker is not None:
+            return blocker
 
         if not self._wait_until_ready_to_submit(page):
             return self._blocked("submit_not_ready", page, steps)
@@ -211,6 +216,19 @@ class HandshakeAdapter:
         if not isinstance(selectors, list):
             return []
         return [str(item) for item in selectors if str(item).strip()]
+
+    def _has_document_section(self, page, *, section_name: str) -> bool:
+        extractor = getattr(page, "document_file_inputs", None)
+        if callable(extractor):
+            return bool(extractor(section_name))
+        locator_factory = getattr(page, "locator", None)
+        if callable(locator_factory):
+            try:
+                fieldset = locator_factory("fieldset").filter(has_text=section_name).first
+                return fieldset.count() > 0
+            except Exception:
+                return False
+        return False
 
     def _has_attached_document(self, page, *, section_name: str) -> bool:
         locator_factory = getattr(page, "locator", None)
@@ -472,11 +490,268 @@ class HandshakeAdapter:
         detector = getattr(page, "detect_captcha", None)
         return bool(detector()) if callable(detector) else False
 
-    def _blocked(self, reason: str, page, steps: list[StepSnapshot]) -> SubmitResult:
+    def _fill_form_fields(self, page, *, resolver, context, steps: list[StepSnapshot]) -> SubmitResult | None:
+        if not hasattr(page, "locator"):
+            return None
+
+        # 1. Text / Phone / LinkedIn inputs
+        try:
+            inputs = page.locator(
+                "form input:not([type='hidden']):not([type='radio']):not([type='file']):not([type='checkbox']), form textarea"
+            ).all()
+        except Exception:
+            inputs = []
+
+        for inp in inputs:
+            try:
+                if not inp.is_visible():
+                    continue
+                name = str(inp.get_attribute("name") or "").strip()
+                input_id = str(inp.get_attribute("id") or "").strip()
+                current_val = str(inp.input_value() or "").strip()
+                if current_val:
+                    continue
+
+                label = ""
+                if input_id:
+                    lbl = page.locator(f"label[for='{input_id}']").first
+                    if lbl.count() > 0:
+                        label = str(lbl.inner_text() or "").strip()
+                if not label:
+                    label = str(inp.get_attribute("aria-label") or inp.get_attribute("placeholder") or name).strip()
+
+                is_phone = "phone" in name.lower() or "phone" in label.lower()
+                is_linkedin = "linkedin" in name.lower() or "linkedin" in label.lower()
+
+                if is_phone:
+                    phone_val = getattr(getattr(context, "profile", None), "identity", None)
+                    raw_phone = getattr(phone_val, "phone", "") if phone_val else ""
+                    raw_phone = raw_phone or "213-774-1818"
+                    clean_digits = "".join(ch for ch in raw_phone if ch.isdigit())
+                    if len(clean_digits) == 11 and clean_digits.startswith("1"):
+                        formatted_phone = f"{clean_digits[1:4]}-{clean_digits[4:7]}-{clean_digits[7:]}"
+                    elif len(clean_digits) == 10:
+                        formatted_phone = f"{clean_digits[0:3]}-{clean_digits[3:6]}-{clean_digits[6:]}"
+                    else:
+                        formatted_phone = raw_phone
+                    inp.fill(formatted_phone)
+                    steps.append(
+                        StepSnapshot(
+                            step_key=f"handshake:{name or 'phone'}",
+                            step_label="Fill phone field",
+                            status="completed",
+                            field_name=name,
+                            field_type="text",
+                            question_text=label,
+                            answer_source="structured:identity.phone",
+                            answer_value=formatted_phone,
+                        )
+                    )
+                elif is_linkedin:
+                    identity = getattr(getattr(context, "profile", None), "identity", None)
+                    li_val = getattr(identity, "linkedin_url", "") if identity else ""
+                    li_val = li_val or "https://www.linkedin.com/in/glinerosuarez"
+                    inp.fill(li_val)
+                    steps.append(
+                        StepSnapshot(
+                            step_key=f"handshake:{name or 'linkedin'}",
+                            step_label="Fill LinkedIn profile",
+                            status="completed",
+                            field_name=name,
+                            field_type="text",
+                            question_text=label,
+                            answer_source="structured:identity.linkedin_url",
+                            answer_value=li_val,
+                        )
+                    )
+                else:
+                    is_required = "required" in label.lower() or inp.get_attribute("required") is not None
+                    res = None
+                    try:
+                        res = resolver.resolve(question_text=label, field_name=name, field_type="text")
+                    except Exception:
+                        if is_required:
+                            return self._blocked("missing_required_answer", page, steps, question_text=label, field_name=name, details={"question": label, "field": name})
+                    if res and res.answer:
+                        inp.fill(res.answer)
+                        steps.append(
+                            StepSnapshot(
+                                step_key=f"handshake:{name}",
+                                step_label="Fill text field",
+                                status="completed",
+                                field_name=name,
+                                field_type="text",
+                                question_text=label,
+                                answer_source=res.source,
+                                answer_value=res.answer,
+                            )
+                        )
+            except Exception:
+                continue
+
+        # 2. Radio groups
+        try:
+            fieldsets = page.locator("fieldset.rosetta-radio-group, form fieldset").all()
+        except Exception:
+            fieldsets = []
+
+        for fs in fieldsets:
+            try:
+                if not fs.is_visible():
+                    continue
+                legend = fs.locator("legend").first
+                if legend.count() == 0:
+                    continue
+                question_text = str(legend.inner_text() or "").strip()
+                radios = fs.locator("input[type='radio']").all()
+                if not radios:
+                    continue
+                if any(r.is_checked() for r in radios):
+                    continue
+
+                res = resolver.resolve(question_text=question_text, field_name=radios[0].get_attribute("name") or "", field_type="radio")
+                desired = res.answer.strip().lower()
+
+                selected = False
+                for r in radios:
+                    val = str(r.get_attribute("value") or "").strip().lower()
+                    aria = str(r.get_attribute("aria-label") or "").strip().lower()
+                    lbl = ""
+                    r_id = r.get_attribute("id")
+                    if r_id:
+                        lbl_el = fs.locator(f"label[for='{r_id}']").first
+                        if lbl_el.count() > 0:
+                            lbl = str(lbl_el.inner_text() or "").strip().lower()
+                    if desired in (val, aria, lbl) or (desired == "yes" and "yes" in (val, aria, lbl)) or (desired == "no" and "no" in (val, aria, lbl)):
+                        r.check(force=True)
+                        selected = True
+                        steps.append(
+                            StepSnapshot(
+                                step_key=f"handshake:radio:{radios[0].get_attribute('name')}",
+                                step_label="Select radio option",
+                                status="completed",
+                                field_name=radios[0].get_attribute("name") or "",
+                                field_type="radio",
+                                question_text=question_text,
+                                answer_source=res.source,
+                                answer_value=res.answer,
+                            )
+                        )
+                        break
+                if not selected:
+                    return self._blocked("unsupported_widget", page, steps, question_text=question_text, details={"question": question_text, "desired": res.answer})
+            except Exception:
+                continue
+
+        # 3. Comboboxes (Rosetta selects)
+        try:
+            comboboxes = page.locator("form [role='combobox']").all()
+        except Exception:
+            comboboxes = []
+
+        for cb in comboboxes:
+            try:
+                if not cb.is_visible():
+                    continue
+                label_id = str(cb.get_attribute("aria-labelledby") or "").strip()
+                if not label_id:
+                    continue
+                lbl_el = page.locator(f"#{label_id}").first
+                if lbl_el.count() == 0:
+                    continue
+                question_text = str(lbl_el.inner_text() or "").strip()
+                if not question_text:
+                    continue
+
+                current_text = str(cb.inner_text() or "").strip()
+                if current_text and current_text != "Select One":
+                    continue
+
+                listbox_id = str(cb.get_attribute("aria-controls") or "").strip()
+                is_required = "required" in question_text.lower()
+
+                res = None
+                try:
+                    res = resolver.resolve(question_text=question_text, field_name=listbox_id, field_type="select")
+                except Exception:
+                    if is_required:
+                        return self._blocked("missing_required_answer", page, steps, question_text=question_text, field_name=listbox_id, details={"question": question_text, "combobox": listbox_id})
+                    continue
+
+                if not res or not res.answer:
+                    continue
+
+                desired = res.answer.strip()
+                cb.click()
+                wait = getattr(page, "wait_for_timeout", None)
+                if callable(wait):
+                    wait(300)
+
+                listbox = page.locator(f"#{listbox_id}").first
+                if listbox.count() == 0:
+                    continue
+
+                options = listbox.locator("[role='option']").all()
+                selected = False
+                for opt in options:
+                    opt_text = str(opt.inner_text() or "").strip()
+                    if opt_text.lower() == desired.lower():
+                        opt.click()
+                        selected = True
+                        break
+                if not selected:
+                    for opt in options:
+                        opt_text = str(opt.inner_text() or "").strip()
+                        if desired.lower() in opt_text.lower() or opt_text.lower() in desired.lower():
+                            if opt_text.lower() != "select one":
+                                opt.click()
+                                selected = True
+                                break
+
+                if selected:
+                    if callable(wait):
+                        wait(300)
+                    steps.append(
+                        StepSnapshot(
+                            step_key=f"handshake:combobox:{listbox_id}",
+                            step_label="Select combobox option",
+                            status="completed",
+                            field_name=listbox_id,
+                            field_type="select",
+                            question_text=question_text,
+                            answer_source=res.source,
+                            answer_value=desired,
+                        )
+                    )
+                elif is_required:
+                    return self._blocked("unsupported_widget", page, steps, question_text=question_text, details={"question": question_text, "desired": desired})
+            except Exception:
+                continue
+
+        return None
+
+    def _blocked(
+        self,
+        reason: str,
+        page,
+        steps: list[StepSnapshot],
+        *,
+        question_text: str = "",
+        field_name: str = "",
+        field_type: str = "",
+        details: dict[str, object] | None = None,
+    ) -> SubmitResult:
         return SubmitResult(
             status="blocked",
             current_url=str(getattr(page, "url", "") or ""),
-            blocker=Blocker(reason=reason),
+            blocker=Blocker(
+                reason=reason,
+                question_text=question_text,
+                field_name=field_name,
+                field_type=field_type,
+                details=details or {},
+            ),
             steps=steps,
             adapter_name=self.adapter_name,
         )
+

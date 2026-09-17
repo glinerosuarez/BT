@@ -2,6 +2,116 @@
   "question_overrides": [
     {
       "match_type": "exact",
+      "pattern": "Do you have or are you pursuing a degree in Computer Science?",
+      "answer": "Yes"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Have you ever worked for Robinhood as an employee, intern or contractor? Note that providing false or misleading information may result in disqualification from the hiring process. (required)",
+      "answer": "I have never worked at Robinhood"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Are you legally work authorized to work in the US? (required)",
+      "answer": "Yes"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Will you now (or in the future) require visa sponsorship in order to work in the US? (required)",
+      "answer": "No"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Do you have: a) any Personal/Familial Relationships (current Robinhood employees or employees of Robinhood’s vendors); b) any Outside Business Activities that you wish to continue; c) any investment that is greater than 5% of the outstanding shares of a publicly-traded company; d) any investment in a private company that has a business relationship or that is a current competitor of Robinhood; or e) any Intellectual Property Ownership (patents, trademarks, copyrights) that you wish to retain and/or create/develop while at Robinhood? (required)",
+      "answer": "No"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Robinhood adheres to applicable laws and regulations in relation to government officials given inherent bribery and/or corruption risk. A government official is any person that performs a public function on any level or acts in any official capacity on behalf of a government or government owned entity. a) Do you currently hold or have you held, within the last 5 years, a position as a government official? b) Have you been referred or recommended for this position by a government official? c) Are you related to or have a close personal relationship with a government official? (required)",
+      "answer": "No"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "What is your gender identity? (required)",
+      "answer": "Cisgender man"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "What is your race or ethnicity? (required)",
+      "answer": "Hispanic or Latino"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "What is your military status? (required)",
+      "answer": "I have never served in the military"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "What is your disability status? (required)",
+      "answer": "No, I don't have a disability"
+    },
+    {
+      "match_type": "exact",
+      "pattern": "Do you identify as part of the LGBTQ+ community?",
+      "answer": "No"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "degree in Computer Science",
+      "answer": "Yes"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "worked for Robinhood",
+      "answer": "I have never worked at Robinhood"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "Personal/Familial Relationships",
+      "answer": "No"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "government official",
+      "answer": "No"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "gender identity",
+      "answer": "Cisgender man"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "race or ethnicity",
+      "answer": "Hispanic or Latino"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "military status",
+      "answer": "I have never served in the military"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "disability status",
+      "answer": "No, I don't have a disability"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "LGBTQ",
+      "answer": "No"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "legally work authorized to work in the US",
+      "answer": "Yes"
+    },
+    {
+      "match_type": "contains",
+      "pattern": "require visa sponsorship in order to work in the US",
+      "answer": "No"
+    },
+    {
+      "match_type": "exact",
       "pattern": "How Did You Hear About Us?*",
       "answer": "Career Website"
     },
