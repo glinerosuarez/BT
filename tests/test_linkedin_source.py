@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import unittest
 
+from unittest.mock import MagicMock
+
 from job_hunter.sources.linkedin import (
+    LinkedInSource,
     _build_row,
     _canonical_linkedin_job_url,
     _is_card_older_than_lookback,
     _is_external_ats_url,
     _is_linkedin_closed,
+    _is_reposted_text,
     _normalize_search_url,
     _parse_card_text,
     _parse_detail_text,
@@ -687,6 +691,38 @@ We are looking for a software engineer intern to build storage validation tools 
         )
         self.assertIsNotNone(row)
         self.assertEqual(row["source_metadata"]["detail_quality_status"], "detail_complete")
+
+    def test_is_reposted_text_variations(self) -> None:
+        self.assertTrue(_is_reposted_text("Tennessee, United States · Reposted 13 hours ago · Over 100 people clicked apply"))
+        self.assertTrue(_is_reposted_text("Re-posted 2 days ago"))
+        self.assertTrue(_is_reposted_text("Compartido hace 1 día"))
+        self.assertTrue(_is_reposted_text("se volvió a publicar hace 3 días"))
+        self.assertTrue(_is_reposted_text("vuelto a publicar"))
+        self.assertFalse(_is_reposted_text("Posted 2 days ago"))
+        self.assertFalse(_is_reposted_text("Publicado hace 3 horas"))
+
+    def test_fetch_detail_text_redirect_treated_as_closed(self) -> None:
+        source = LinkedInSource(
+            search_urls=["https://www.linkedin.com/jobs/search"],
+            profile_dir="/tmp/fake_profile",
+            headless=True,
+            max_results=10,
+            page_timeout_seconds=5,
+            max_posting_age_days=3,
+        )
+        mock_context = MagicMock()
+        mock_page = MagicMock()
+        mock_context.new_page.return_value = mock_page
+        mock_page.url = "https://www.linkedin.com/jobs/search-results/?keywords=Applied%20AI&origin=JOB_DETAILS_SIMILAR_JOBS_SEE_MORE"
+
+        detail_text, external_apply_url, is_closed, is_reposted = source._fetch_detail_text_from_job_url(
+            mock_context,
+            "https://www.linkedin.com/jobs/view/4463900869",
+        )
+        self.assertEqual(detail_text, "")
+        self.assertEqual(external_apply_url, "")
+        self.assertTrue(is_closed)
+        self.assertFalse(is_reposted)
 
 
 if __name__ == "__main__":

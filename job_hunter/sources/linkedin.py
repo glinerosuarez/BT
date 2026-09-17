@@ -601,9 +601,12 @@ class LinkedInSource(SourceConnector):
                             job_url = _canonical_linkedin_job_url(str(selected_links[0].get("href") or ""))
                     if job_url:
                         card["url"] = job_url
-                        detail_text, external_apply_url, is_closed = self._fetch_detail_text_from_job_url(page.context, job_url)
+                        detail_text, external_apply_url, is_closed, is_reposted = self._fetch_detail_text_from_job_url(page.context, job_url)
                         if is_closed:
                             LOG.info("linkedin_job_skipped_closed url=%s", job_url)
+                            continue
+                        if is_reposted:
+                            LOG.info("linkedin_job_skipped_reposted url=%s", job_url)
                             continue
             parsed = _build_row(
                 card=card,
@@ -655,12 +658,27 @@ class LinkedInSource(SourceConnector):
         self._goto_linkedin_page(page, job_url)
         if _page_requires_login(page.url):
             raise RuntimeError("LinkedIn session not authenticated. Run `python -m job_hunter.linkedin_login` first.")
+        if "/jobs/view/" not in page.url.lower():
+            LOG.info("linkedin_job_skipped_redirected url=%s dest_url=%s", job_url, page.url)
+            return None
         expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
         if expanded:
             page.wait_for_timeout(750)
         page_text = str(page.locator("body").inner_text() or "")
         if _is_linkedin_closed(page_text.splitlines()):
             LOG.info("linkedin_job_skipped_closed url=%s", job_url)
+            return None
+        header_lines = [l.strip() for l in page_text.splitlines()[:60] if l.strip()]
+        header_blob = " \n ".join(header_lines)
+        is_reposted = _is_reposted_text(header_blob)
+        if not is_reposted:
+            try:
+                if page.locator("strong:has-text('reposted'), span:has-text('reposted'), strong:has-text('re-posted'), span:has-text('re-posted')").count() > 0:
+                    is_reposted = True
+            except Exception:
+                pass
+        if is_reposted:
+            LOG.info("linkedin_job_skipped_reposted url=%s", job_url)
             return None
         detail_text = str(page.evaluate(DETAIL_TEXT_SCRIPT) or "")
         if not detail_text.strip():
@@ -688,20 +706,56 @@ class LinkedInSource(SourceConnector):
             external_apply_url=external_apply_url,
         )
 
-    def _fetch_detail_text_from_job_url(self, context, job_url: str) -> tuple[str, str, bool]:
+    def _fetch_detail_text_from_job_url(self, context, job_url: str) -> tuple[str, str, bool, bool]:
         detail_page = context.new_page()
         detail_page.set_default_timeout(self.page_timeout_seconds * 1000)
         detail_page.set_default_navigation_timeout(self.page_timeout_seconds * 1000)
         try:
             self._goto_linkedin_page(detail_page, job_url)
             if _page_requires_login(detail_page.url):
-                return "", "", False
+                return "", "", False, False
+            if "/jobs/view/" not in detail_page.url.lower():
+                LOG.info(
+                    "linkedin_job_redirected_away job_url=%s dest_url=%s",
+                    job_url,
+                    detail_page.url,
+                )
+                return "", "", True, False
+            try:
+                detail_page.wait_for_selector(
+                    ".job-details-jobs-unified-top-card, .jobs-unified-top-card, .topcard, #job-details, .jobs-description, main, strong:has-text('posted')",
+                    timeout=5000,
+                )
+            except Exception:
+                pass
             expanded = int(detail_page.evaluate(EXPAND_MORE_SCRIPT) or 0)
             if expanded:
                 detail_page.wait_for_timeout(750)
-            page_text = str(detail_page.locator("body").inner_text() or "")
+
+            # Wait until body has rendered real content beyond the top navigation chrome
+            page_text = ""
+            for _ in range(5):
+                page_text = str(detail_page.locator("body").inner_text() or "").strip()
+                if len(page_text) > 200:
+                    break
+                detail_page.wait_for_timeout(1000)
+
             if _is_linkedin_closed(page_text.splitlines()):
-                return "", "", True
+                return "", "", True, False
+
+            # Check for repost on the full detail page header
+            header_lines = [l.strip() for l in page_text.splitlines()[:60] if l.strip()]
+            header_blob = " \n ".join(header_lines)
+            is_reposted = _is_reposted_text(header_blob)
+            if not is_reposted:
+                try:
+                    if detail_page.locator("strong:has-text('reposted'), span:has-text('reposted'), strong:has-text('re-posted'), span:has-text('re-posted')").count() > 0:
+                        is_reposted = True
+                except Exception:
+                    pass
+            if is_reposted:
+                return "", "", False, True
+
             detail_text = str(detail_page.evaluate(DETAIL_TEXT_SCRIPT) or "")
             if not detail_text.strip():
                 detail_text = page_text
@@ -727,10 +781,10 @@ class LinkedInSource(SourceConnector):
                         len(ats_text),
                     )
                     detail_text = ats_text
-            return detail_text, external_apply_url, False
+            return detail_text, external_apply_url, False, False
         except self._timeout_error:
             LOG.warning("linkedin_direct_detail_timeout url=%s", job_url)
-            return "", "", False
+            return "", "", False, False
         finally:
             detail_page.close()
 
@@ -1159,7 +1213,7 @@ def _is_reposted_text(value: str) -> bool:
     lowered = value.lower()
     return bool(
         re.search(
-            r"\b(?:reposted|compartido|se\s+volvi[oó]\s+a\s+publicar|vuelto\s+a\s+publicar)\b",
+            r"\b(?:re[- ]?posted|compartido|se\s+volvi[oó]\s+a\s+publicar|vuelto\s+a\s+publicar)\b",
             lowered,
         )
     )
