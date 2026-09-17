@@ -21,6 +21,101 @@
             "answer": "Career Fair"
         },
         {
+            "match_type": "exact",
+            "pattern": "country phone code*",
+            "answer": "United States of America (+1)"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "currently an employee of activision blizzard",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "worked for activision blizzard",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "served in the military",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "worked for microsoft corporation",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "relative or person with whom you have a close personal relationship",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "degree or certification you most recently received",
+            "answer": "Masters"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "graduation year*",
+            "answer": "2027 Fall"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "returning to school after this program",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "are you currently living in the country of this program or open to relocating yourself to the country of this program?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "open to conducting your program in-person",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "what is the link to your portfolio/reel/code samples/website? if you do not have a portfolio/reel/code samples/website to share, please input 'na'*",
+            "answer": "https://github.com/glinerosuarez"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "applicant consent and privacy policy",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "phone device type*",
+            "answer": "Home Mobile"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "degree or certification*",
+            "answer": "Master’s or Post Graduate Degree – Incomplete"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "degree*",
+            "answer": "Master’s or Post Graduate Degree – Incomplete"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "gpa",
+            "answer": "3.67"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "start date*",
+            "answer": "08/2024"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "end date*",
+            "answer": "12/2027"
+        },
+        {
             "match_type": "regex",
             "pattern": "pronouns?",
             "answer": "He, him, his"

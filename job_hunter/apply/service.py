@@ -681,7 +681,7 @@ class ApplicationService:
         if artifact is None:
             generated = self.tailoring_service.generate_for_job(job_id=job_id, profile_name=profile_name, force=False)
             artifact = self.store.get_tailoring_artifact(generated.artifact_id)
-        elif force and not Path(str(artifact["output_dir"])).exists():
+        elif not Path(str(artifact["output_dir"])).exists():
             generated = self.tailoring_service.generate_for_job(job_id=job_id, profile_name=profile_name, force=False)
             artifact = self.store.get_tailoring_artifact(generated.artifact_id)
         if artifact is None:
