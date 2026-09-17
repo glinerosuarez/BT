@@ -67,6 +67,76 @@
         },
         {
             "match_type": "contains",
+            "pattern": "why are you looking for new opportunities",
+            "answer": "As a Master’s student in Computer Science at USC graduating in December 2027, I am seeking a Summer 2027 internship where I can apply predictive machine learning and distributed data systems to mission-critical supply chain challenges. My background building real-time anomaly detection pipelines (95% catch rate at EPAM) and predictive analytics frameworks aligns directly with Motorola Solutions’ focus on supply resilience."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "best way to contact you",
+            "answer": "Email: linero@usc.edu / Phone: 213-774-1818"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What is your base salary range expectations?*",
+            "answer": "$25 - $30 / hour"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Are you open to relocation? If so, please list your geographical areas/cities of choice.*",
+            "answer": "Yes, open to relocation. Preferred locations include Chicago, IL, Elgin, IL, or hybrid/remote arrangements."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "unrestricted employment authorization",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "non-compete agreement that might effect your ability to accept employment",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "excluded from federal procurement",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "currently working for a government entity",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "currently a student and will be returning to school",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "current g.p.a",
+            "answer": "3.67"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "require housing if hired",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "internship program begins monday, may 24, 2027",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "how did you hear about this program",
+            "answer": "Handshake"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "please check one of the boxes below",
+            "answer": "No, I do not have a disability and have not had one in the past"
+        },
+        {
+            "match_type": "contains",
             "pattern": "hear about us",
             "answer": "LinkedIn"
         },
@@ -78,7 +148,7 @@
         {
             "match_type": "exact",
             "pattern": "how did you hear about us?*",
-            "answer": "Career Fair"
+            "answer": "Handshake"
         },
         {
             "match_type": "exact",

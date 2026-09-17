@@ -50,13 +50,13 @@ def _canonical_country(country: str) -> str:
 
 def _canonical_degree(degree: str) -> str:
     normalized = re.sub(r"[^a-z]", "", (degree or "").lower())
-    if normalized in {"bachelor", "bachelors", "bachelorsdegree"}:
-        return "bachelor"
-    if normalized in {"master", "masters", "mastersdegree"}:
+    if "master" in normalized:
         return "master"
-    if normalized in {"doctorate", "doctoral", "phd", "phddegree"}:
+    if "bachelor" in normalized:
+        return "bachelor"
+    if any(k in normalized for k in ("doctor", "phd")):
         return "doctorate"
-    if normalized in {"associate", "associates", "associatesdegree"}:
+    if "associate" in normalized:
         return "associate"
     return normalized
 
@@ -246,6 +246,14 @@ class WorkdayAdapter:
                         email_flow.click(force=True)
                     self._wait(page, 1500)
                     break
+                existing_account = page.locator('[data-automation-id="signInLink"]:visible').first
+                if existing_account.count() > 0:
+                    try:
+                        existing_account.evaluate("element => element.click()")
+                    except Exception:
+                        existing_account.click(force=True)
+                    self._wait(page, 1250)
+                    break
                 header_sign_in = page.locator('button[data-automation-id="utilityButtonSignIn"]:visible, button:has-text("Sign In"):visible').first
                 if header_sign_in.count() > 0:
                     try:
@@ -261,14 +269,9 @@ class WorkdayAdapter:
                             email_flow.click(force=True)
                         self._wait(page, 1500)
                         break
-                existing_account = page.locator('[data-automation-id="signInLink"]:visible').first
-                if existing_account.count() > 0:
-                    try:
-                        existing_account.evaluate("element => element.click()")
-                    except Exception:
-                        existing_account.click(force=True)
-                    self._wait(page, 1250)
-                    break
+                    dialog_sign_in = page.locator('[data-automation-id="popUpDialog"]:visible').first
+                    if dialog_sign_in.count() > 0:
+                        break
                 self._wait(page, 500)
 
             scope = self._sign_in_scope(page)
@@ -344,7 +347,7 @@ class WorkdayAdapter:
                 except Exception:
                     error_text = ""
 
-            if any(token in error_text for token in ("invalid user name", "invalid username", "account does not exist", "incorrect")):
+            if any(token in error_text for token in ("invalid user name", "invalid username", "account does not exist", "incorrect", "wrong email address or password", "wrong email")):
                 create_link = page.locator('button[data-automation-id="createAccountLink"]:visible, a[data-automation-id="createAccountLink"]:visible').first
                 if create_link.count() > 0:
                     create_link.click(force=True)
@@ -2225,6 +2228,11 @@ class WorkdayAdapter:
                             )
                         for candidate in candidates:
                             try:
+                                aria_checked = str(candidate.get_attribute("aria-checked") or "").lower()
+                                if aria_checked == "true":
+                                    return True
+                                if aria_checked == "false":
+                                    continue
                                 if candidate.is_checked():
                                     return True
                             except Exception:
@@ -2241,12 +2249,25 @@ class WorkdayAdapter:
                             option_id = str(option_locator.get_attribute("id") or "")
                             if option_id:
                                 escaped_id = option_id.replace("\\", "\\\\").replace('"', '\\"')
-                                page.locator(f'label[for="{escaped_id}"]').first.click(force=True)
-                                self._wait(page, 600)
+                                label_locator = page.locator(f'label[for="{escaped_id}"]').first
+                                try:
+                                    label_locator.scroll_into_view_if_needed()
+                                    label_locator.click()
+                                    self._wait(page, 500)
+                                    if is_selected():
+                                        return
+                                except Exception:
+                                    pass
+                                label_locator.click(force=True)
+                                self._wait(page, 500)
                                 if is_selected():
                                     return
                         except Exception:
                             pass
+                    try:
+                        option_locator.scroll_into_view_if_needed()
+                    except Exception:
+                        pass
                     try:
                         # Let Playwright use the native radio semantics before
                         # falling back to Workday's custom visual controls.
@@ -2258,10 +2279,30 @@ class WorkdayAdapter:
                         pass
                     if field_type == "checkbox-group":
                         try:
+                            option_id = str(option_locator.get_attribute("id") or "")
+                            if option_id and hasattr(page, "evaluate"):
+                                page.evaluate(
+                                    """
+                                    ({ id }) => {
+                                      const label = document.querySelector(`label[for="${id}"]`);
+                                      if (label) {
+                                        label.scrollIntoView({ block: 'center' });
+                                        label.click();
+                                      }
+                                    }
+                                    """,
+                                    {"id": option_id},
+                                )
+                                self._wait(page, 400)
+                                if is_selected():
+                                    return
+                        except Exception:
+                            pass
+                        try:
                             # A DOM-native click performs the checkbox default
                             # action even when Workday's zero-size input cannot
                             # receive a Playwright pointer click.
-                            option_locator.evaluate("element => element.click()")
+                            option_locator.evaluate("element => { element.scrollIntoView({ block: 'center' }); element.click(); }")
                             self._wait(page, 350)
                             if is_selected():
                                 return
@@ -2275,6 +2316,7 @@ class WorkdayAdapter:
                                 "xpath=ancestor-or-self::*[@role='row'][1]"
                             ).first
                             if row.count() > 0:
+                                row.scroll_into_view_if_needed()
                                 row.click(force=True)
                                 self._wait(page, 350)
                                 if is_selected():
@@ -2296,17 +2338,24 @@ class WorkdayAdapter:
                             # checkbox while React owns the visible control.
                             # Update the native property through its prototype
                             # setter and bubble the form events React observes.
-                            # This is intentionally not a DOM attribute write:
-                            # attributes do not update the controlled value.
                             option_locator.evaluate(
                                 """
                                 element => {
+                                  element.scrollIntoView({ block: 'center' });
+                                  const lastValue = element.checked;
                                   const checkedSetter = Object.getOwnPropertyDescriptor(
                                     HTMLInputElement.prototype,
                                     'checked'
                                   )?.set;
-                                  if (!checkedSetter) throw new Error('native checkbox setter unavailable');
-                                  checkedSetter.call(element, true);
+                                  if (checkedSetter) {
+                                    checkedSetter.call(element, true);
+                                  } else {
+                                    element.checked = true;
+                                  }
+                                  element.setAttribute('aria-checked', 'true');
+                                  const tracker = element._valueTracker;
+                                  if (tracker) tracker.setValue(lastValue);
+                                  element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                                   element.dispatchEvent(new Event('input', { bubbles: true }));
                                   element.dispatchEvent(new Event('change', { bubbles: true }));
                                 }

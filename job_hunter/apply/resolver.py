@@ -29,7 +29,7 @@ _QUESTION_FIELD_MAP: list[tuple[tuple[str, ...], str]] = [
     (("degree",), "education.degree"),
     (("major", "field of study"), "education.major"),
     (("graduation", "graduate date"), "education.graduation_date"),
-    (("gpa",), "education.gpa"),
+    (("gpa", "g.p.a.", "g.p.a"), "education.gpa"),
     (("current company", "current employer"), "employment.current_company"),
     (("current title", "job title", "title"), "employment.current_title"),
     (("years of experience",), "employment.years_experience"),
