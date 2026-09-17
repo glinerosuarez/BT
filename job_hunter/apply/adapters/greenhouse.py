@@ -46,6 +46,9 @@ class GreenhouseAdapter:
         if self._has_unsupported_widget(page):
             return self._blocked("unsupported_widget", page, [])
         steps: list[StepSnapshot] = []
+        page_wait = getattr(page, "wait_for_timeout", None)
+        if callable(page_wait):
+            page_wait(1000)
         for _ in range(3):
             blocker, filled_count = self._fill_required_fields(page=page, resolver=resolver, context=context, steps=steps)
             if blocker is not None:
@@ -210,8 +213,16 @@ class GreenhouseAdapter:
                       ''
                     ).trim()
                   : (el.value || '').trim();
+                let fieldSelector = '';
+                if (id) {
+                  fieldSelector = `[id="${id.replace(/"/g, '\\"')}"]`;
+                } else if (el.getAttribute('name')) {
+                  fieldSelector = `[name="${el.getAttribute('name').replace(/"/g, '\\"')}"]`;
+                } else {
+                  fieldSelector = `[data-jobhunter-field-index="${counter}"]`;
+                }
                 fields.push({
-                  selector: id ? `#${CSS.escape(id)}` : `[data-jobhunter-field-index="${counter}"]`,
+                  selector: fieldSelector,
                   field_name: el.getAttribute('name') || id || '',
                   field_type: fieldType,
                   question_text: questionText,
@@ -229,9 +240,20 @@ class GreenhouseAdapter:
                 const options = inputs.map((el, index) => {
                   counter += 1;
                   el.setAttribute('data-jobhunter-field-index', String(counter));
+                  const id = el.getAttribute('id') || '';
+                  const name = el.getAttribute('name') || '';
+                  const val = el.getAttribute('value') || '';
+                  let selector = '';
+                  if (id) {
+                    selector = `[id="${id.replace(/"/g, '\\"')}"]`;
+                  } else if (name && val) {
+                    selector = `input[name="${name.replace(/"/g, '\\"')}"][value="${val.replace(/"/g, '\\"')}"]`;
+                  } else {
+                    selector = `input[data-jobhunter-field-index="${counter}"]`;
+                  }
                   return {
-                    selector: `input[data-jobhunter-field-index="${counter}"]`,
-                    value: (el.getAttribute('value') || '').trim(),
+                    selector,
+                    value: val.trim(),
                     label: labelTextFor(el),
                     checked: !!el.checked,
                     index,
@@ -364,27 +386,47 @@ class GreenhouseAdapter:
             if bool(field.get("checked")) != desired:
                 page.click(selector)
         elif field_type in {"radio-group", "checkbox-group"}:
-            normalized = value.strip().lower()
+            candidates = [v.strip().lower() for v in value.split("||") if v.strip()] if "||" in value else [value.strip().lower()]
             options = list(field.get("options") or [])
-            for option in options:
-                option_label = str(option.get("label") or option.get("value") or "").strip()
-                if option_label.lower() == normalized:
-                    page.locator(str(option.get("selector") or "")).check(force=True)
-                    page.wait_for_timeout(300)
-                    return
-            for option in options:
-                option_label = str(option.get("label") or option.get("value") or "").strip().lower()
-                if normalized in {"true", "1", "yes", "on"} and option_label == "yes":
-                    page.locator(str(option.get("selector") or "")).check(force=True)
-                    page.wait_for_timeout(300)
-                    return
-                if normalized in {"false", "0", "no", "off"} and option_label == "no":
-                    page.locator(str(option.get("selector") or "")).check(force=True)
-                    page.wait_for_timeout(300)
-                    return
-            raise RuntimeError(f"Unsupported choice-group value '{value}' for {field.get('field_name') or field.get('question_text')}")
+            matched_any = False
+            for target in candidates:
+                matched = False
+                for option in options:
+                    option_label = str(option.get("label") or option.get("value") or "").strip()
+                    if option_label.lower() == target:
+                        page.locator(str(option.get("selector") or "")).check(force=True, timeout=5000)
+                        page.wait_for_timeout(300)
+                        matched = True
+                        matched_any = True
+                        break
+                if not matched:
+                    for option in options:
+                        option_label = str(option.get("label") or option.get("value") or "").strip().lower()
+                        if target in {"true", "1", "yes", "on"} and option_label == "yes":
+                            page.locator(str(option.get("selector") or "")).check(force=True, timeout=5000)
+                            page.wait_for_timeout(300)
+                            matched = True
+                            matched_any = True
+                            break
+                        if target in {"false", "0", "no", "off"} and option_label == "no":
+                            page.locator(str(option.get("selector") or "")).check(force=True, timeout=5000)
+                            page.wait_for_timeout(300)
+                            matched = True
+                            matched_any = True
+                            break
+            if not matched_any:
+                raise RuntimeError(f"Unsupported choice-group value '{value}' for {field.get('field_name') or field.get('question_text')}")
         else:
             page.fill(selector, value)
+            wait = getattr(page, "wait_for_timeout", None)
+            if callable(wait):
+                wait(100)
+            try:
+                locator = page.locator(selector)
+                if locator.input_value() != value:
+                    locator.fill(value)
+            except Exception:
+                pass
 
     def _artifact_for_field(self, *, context, question_text: str, field_name: str) -> str:
         field_description = f"{question_text} {field_name}".lower()

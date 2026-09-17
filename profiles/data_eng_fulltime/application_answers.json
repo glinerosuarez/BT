@@ -1,0 +1,709 @@
+{
+    "question_overrides": [
+        {
+            "match_type": "exact",
+            "pattern": "Please select the ethnicity which most accurately describes how you identify yourself.*",
+            "answer": "Hispanic or Latino"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*conflict of interest.*",
+            "answer": "No"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*minimum qualification.*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*active student.*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*source.*information influenced.*",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*available to start.*",
+            "answer": "06/01/2027"
+        },
+        {
+            "match_type": "regex",
+            "pattern": ".*military.*",
+            "answer": "No"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "This is an on-site opportunity in Dallas, TX. Will you be able to report to this location?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Terms & Conditions*",
+            "answer": "I agree"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What country do you currently reside in?*",
+            "answer": "United States"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Do you have relevant internship experience at a proprietary trading firm?*",
+            "answer": "No"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Please re-confirm the university you currently attend *",
+            "answer": "University of Southern California"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Tell me about the most exciting project you've built (please type answer without AI)",
+            "answer": "Built an agentic document extraction pipeline to ingest ESG data from more than 1000 company reports, using a LangChain LLM orchestrator hosted on Google Agent Platform, fine-tuned vision-language models (VLMs), OCR models, and PyTorch-based deep learning workflows. Designed and deployed our evals approach, which included building eval datasets, using Phoenix to instrument agent calls with OpenTelemetry, computing metrics, and running experiments across versions to improve visibility into agent performance and make the system more truthful, increasing precision from 50% with our initial zero-shot approach to 80% with a RAG-based system."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What internship term(s) are you targeting? Please check all that apply*",
+            "answer": "Fall"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What is the duration of internship you are available to work full time, 40 hours/week? *",
+            "answer": "6 Months"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Depending on the needs of the role, we may have openings in multiple locations. Please choose which locations you are open to working in/relocating to. (Select all that apply) *",
+            "answer": "Santa Clara, CA"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Are you willing and able to work in the office 5 days a week? *",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "How did you hear about the role?*",
+            "answer": "Other (please specify)"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "If you selected \"Other,\" please specify how you heard about us",
+            "answer": "JobRight"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "I have read and understand the Export Control statement included in the job description above.*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "How Did You Hear About Us?*",
+            "answer": "A Job Board > LinkedIn"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Have you previously worked for CCC?*",
+            "answer": "No"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Are you currently enrolled in an accredited academic program (Associate\u2019s, Bachelor\u2019s, Master\u2019s, or PhD), and will you remain enrolled for the full duration of the internship?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Please select the veteran status which most accurately describes how you identify yourself.*",
+            "answer": "I am not a protected veteran"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Please select if you identify yourself as Hispanic or Latino.*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Have you completed at least one internship, apprenticeship, or comparable work experience in the field you are applying for? *",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Have you ever held, or do you currently hold, any leadership roles through employment, volunteer work, or university organizations such as clubs or societies? *",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Are you currently a member of any university organizations, such as clubs or societies?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Why are you interested in this specific role at Appian?*",
+            "answer": "I\u2019m interested in Appian because the role combines production software engineering with AI-powered automation, technical rigor, and collaboration on a platform used for mission-critical enterprise work. My experience building and evaluating LLM/RAG systems, full-stack AI workflows, and scalable data pipelines aligns with Appian\u2019s focus on reliable AI capabilities and high-quality engineering. I\u2019m particularly excited to contribute to real engineering work, learn through code reviews and mentorship, and use AI coding tools responsibly to improve development speed while maintaining correctness and maintainability."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "current cumulative GPA",
+            "answer": "3.7 or Higher"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Primary Mailing Address *",
+            "answer": "3030 Shrine Pl, Los Angeles, CA, 90007, USA"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Address Line 1*",
+            "answer": "3030 Shrine Pl"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Postal Code*",
+            "answer": "90007"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "County*",
+            "answer": "Los Angeles"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Are you over the age of 18?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Type to Add Skills*",
+            "answer": "Python || SQL || Apache Spark || Snowflake || Databricks || Delta Lake || Airflow || dbt || Kafka || AWS || Docker"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "are you willing to complete a background check?",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "hear about us",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "how did you hear about",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "regex",
+            "pattern": "pronouns?",
+            "answer": "He, him, his"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "bound by any agreements with a current or former employer",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "signed any agreements with your current or former employer",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "will you also perform work (paid or unpaid) for any other company or entity",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "relatives or individuals with whom you have a close personal relationship employed by gdit",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "relatives or individuals with whom you have a close personal relationship in the organization to which you would be assigned",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "currently or formerly employed by a general dynamics company",
+            "answer": "none"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "currently providing services to any general dynamics information technology entity as an independent contractor",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "current, highest level of security clearance obtained",
+            "answer": "None"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "export control compliance information",
+            "answer": "No"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "are you willing to travel?*",
+            "answer": "75-100%"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "are you willing to relocate?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "what is your desired salary range?*",
+            "answer": ",000 - ,000"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "have you ever worked for the u.s. government",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "worked in the last three (3) years for a foreign, state or local government agency",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "ever been debarred or suspended from participation in government contracting",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "ever been retained by the u.s. government",
+            "answer": "No"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "are you a resident of the state of maryland?*",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "consent to receive telephone calls and/or text messages from gdit",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "additional information about your current immigration status",
+            "answer": "F-1 OPT"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "start date month*",
+            "answer": "August"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "start date year*",
+            "answer": "2025"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "end date month*",
+            "answer": "May"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "end date year*",
+            "answer": "2027"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What are your strongest programming languages and technical areas? Please list specific languages, frameworks, and technologies you're proficient in (e.g., Go, Python, React, Kubernetes, LLMs, etc.).",
+            "answer": "Python and SQL are my strongest languages, alongside Java and C++. My primary technical areas are large-scale distributed data platforms, batch and stream processing with Apache Spark and Kafka, cloud data warehouses (Snowflake, Delta Lake on Databricks), orchestration with Airflow, and data modeling with dbt."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Describe a product or system you built from scratch (0-to-1). Include: what you built, your specific contributions, the tech stack used, and the outcome or impact.",
+            "answer": "At Impatico, I built an agentic document-extraction system for ESG data from scratch. I designed the pipeline to ingest over 1,000 company reports and combined a LangChain-based LLM orchestrator on Google Agent Platform with OCR, fine-tuned vision-language models, and PyTorch workflows. I also built the evaluation approach: creating eval datasets, instrumenting agent calls with Phoenix and OpenTelemetry, and running experiments across versions. The result improved extraction precision from roughly 50% with the initial zero-shot approach to 80% with a RAG-based system, while making performance and failure modes much more observable."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Why are you interested in joining an early-stage startup like Serval, and what excites you about this specific role?",
+            "answer": "I am interested in an early-stage startup because I want to work close to the product and the engineering decisions that determine whether it succeeds. Serval's focus on agents that reason over real workflows and take action across systems strongly matches my experience building LLM orchestration, RAG, MCP tool-calling, evaluation, and production data systems. I am especially excited by the opportunity to contribute backend code that ships to customers while learning from a founding team building an AI-native automation platform."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What motivates you to pursue an opportunity with Walleye Capital?*",
+            "answer": "I am interested in Walleye Capital because the role combines large-scale data work, quantitative analysis, and infrastructure used in live decision-making. My background includes building anomaly detection systems, evaluation infrastructure, and high-volume data pipelines on AWS and Spark, and I am interested in applying that foundation in an environment where analytical rigor and fast iteration both matter. I am also drawn to the chance to work closely with experienced researchers and engineers while contributing to projects that support real trading and risk workflows."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Do you have experience with LLMs?",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Have you built a personal project using LLM\u2019s?",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What are some AI specific technologies you are comfortable with?",
+            "answer": "I'm comfortable with Python, PyTorch, LangChain, RAG systems, LLM orchestration and tool-calling workflows, OCR and vision-language models, agent evaluation with Phoenix and OpenTelemetry, and deploying AI workloads on GCP and AWS."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Why do you want to work at Notion?",
+            "answer": "I want to work at Notion because it is building software that makes knowledge work clearer and less fragmented, while treating AI as part of the product rather than a separate feature. I've built LLM-based systems for document extraction and data workflows, including evaluation infrastructure that improved precision from 50% to 80%. I'd value applying that experience to product engineering problems where reliability, usability, and thoughtful tradeoffs matter."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Please indicate all of the locations that you would be interested in relocating to for this position.",
+            "answer": "New York, NY || San Francisco, CA"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "How many prior internships have you had?",
+            "answer": "3+"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What type of engineering role are you interested in?",
+            "answer": "Data || Data Platform || Infra"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "First example:*",
+            "answer": "Built an agentic ESG document-extraction pipeline processing 1,000+ company reports with LangChain orchestration, fine-tuned vision-language models, OCR, and PyTorch workflows."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "First example:",
+            "answer": "Built an agentic ESG document-extraction pipeline processing 1,000+ company reports with LangChain orchestration, fine-tuned vision-language models, OCR, and PyTorch workflows."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Second example:",
+            "answer": "Designed evaluation infrastructure for that pipeline, including curated eval datasets and OpenTelemetry/Phoenix instrumentation; improved precision from 50% with zero-shot extraction to 80% using RAG."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Second example:",
+            "answer": "Designed evaluation infrastructure for that pipeline, including curated eval datasets and OpenTelemetry/Phoenix instrumentation; improved precision from 50% with zero-shot extraction to 80% using RAG."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Third example:",
+            "answer": "Built an IoT anomaly-detection pipeline at EPAM that caught 95% of incorrect records before production, improving data quality for a SaaS platform."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Third example:",
+            "answer": "Built an IoT anomaly-detection pipeline at EPAM that caught 95% of incorrect records before production, improving data quality for a SaaS platform."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Fourth example:",
+            "answer": "Optimized Spark workloads processing terabytes of scientific data from nearly one day to under one hour, reducing AWS EMR costs by about $10,000 per month."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Fourth example:",
+            "answer": "Optimized Spark workloads processing terabytes of scientific data from nearly one day to under one hour, reducing AWS EMR costs by about $10,000 per month."
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Do you have prior internship or co-op experience?*",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "What intern season are you interested in?*",
+            "answer": "Summer 2026 (May - August)"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Ideal start date in office",
+            "answer": "June 1, 2027"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Ideal start date in office",
+            "answer": "June 1, 2027"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "I understand that this position requires me to work on-site. *",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "Address Line 1 *",
+            "answer": "3030 Shrine Pl"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "address line 1 *",
+            "answer": "3030 Shrine Pl"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "ZIP Code *",
+            "answer": "90007"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "ZIP Code*",
+            "answer": "90007"
+        },
+        {
+            "match_type": "exact",
+            "pattern": "County *",
+            "answer": "Los Angeles"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "how did you hear of this opportunity",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "related to a current or previous employee",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "ever worked for one gas",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "convicted of, pled guilty or no contest",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "currently working for a government agency",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "wish to be considered for other opportunities",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "how you heard about Zipline",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "available for a full-time onsite internship this summer",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Why are you interested in becoming an Enterprise Systems Software Engineering Intern",
+            "answer": "Building high-availability software that coordinates autonomous logistics at scale requires high-throughput data contracts, parts traceability, and continuous observability. The operational software powering manufacturing execution and supply chain reliability is the nervous system of Zipline\u2019s fleet. With my background in building resilient data pipelines at Perficient and EPAM and designing observable backend systems with OpenTelemetry, I want to take ownership of core product domains, eliminate manual bottlenecks, and help ensure 99.9% uptime as Zipline scales to fulfill deliveries every 30 seconds worldwide."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "project where something didn\u2019t work as expected",
+            "answer": "At EPAM, while building an ingestion pipeline for high-velocity IoT telemetry data, unexpected schema drifts, out-of-order timestamps, and misrouted messages from upstream Kafka topics caused corrupted aggregations and silent failures in downstream analytics dashboards. The system broke when firmware updates introduced unannounced payload variations and upstream producer services sent records to incorrect topics. To resolve this, I instrumented distributed tracing and consumer group metrics to isolate failure boundaries and track message origins. I then designed an automated schema validation and anomaly detection staging layer with dead-letter queue routing. This intercepted malformed payloads and misrouted Kafka events before they reached production stores, catching 95% of invalid records upstream while automatically alerting engineering teams to schema mismatches and topic routing errors."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Describe a recent project where you used AI tools while building software",
+            "answer": "At Impatico, I built an agentic document extraction system to process operational and ESG data from over 1,000 corporate reports. The task was to leverage frontier LLMs to automate schema mapping across unstructured filings while guaranteeing strict data accuracy. I applied spec-driven development and context engineering to bound tool schemas, structure prompts, and eliminate ambiguity for coding and orchestration agents. Where AI accelerated boilerplate generation and multi-modal layout parsing, my engineering judgment was essential for building the evaluation infrastructure: I instrumented agent execution traces with Phoenix and OpenTelemetry, implemented deterministic validation rules to block numerical hallucinations, and designed hybrid RAG retrieval to close feedback loops. As a result, extraction precision increased from 50% with zero-shot prompting to 80% with our validated agentic pipeline. This project proved that agent reliability is not about raw model generation, but about enforcing strict context engineering, curated tool interfaces, and continuous evaluation guardrails."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "most technically challenging project you\u2019ve built",
+            "answer": "At Perficient, I was tasked with optimizing a multi-terabyte scientific data processing pipeline on AWS EMR that suffered from 24-hour runtimes, frequent out-of-memory crashes, and high infrastructure costs. Profiling Spark execution plans revealed two core bottlenecks: severe partition data skew causing redundant shuffles, and reliance on PySpark\u2019s low-level RDD API, which forced costly JVM-to-Python socket serialization and duplicate memory allocations. To fix this, I adopted Apache Arrow's columnar in-memory format to enable zero-copy vectorized data sharing between the JVM and Python runtimes, transitioned operations to DataFrames repartitioned by composite keys, and tuned worker memory allocation. This slashed batch runtime from 24 hours to under 1 hour and reduced monthly AWS EMR spend by $10,000. If I were approaching this project today, I would establish automated partition sizing and comprehensive pipeline instrumentation upfront to catch serialization overhead and partition skew dynamically during ingestion rather than retroactively tuning after cost overruns."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "current work authorization status in the United States",
+            "answer": "Authorized to work in the United States (F-1 OPT eligible; future visa sponsorship required)"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Voluntary Self-Identification - Disability",
+            "answer": "No, I do not have a disability, and have not had one in the past"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Voluntary Self-Identification - Veteran",
+            "answer": "I am not a protected veteran"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Please re-confirm your expected graduation date",
+            "answer": "May 2027"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "What country do you currently reside in",
+            "answer": "United States of America"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "which US state do you reside in",
+            "answer": "California"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Are you legally authorized to work in the country where this role is based",
+            "answer": "Yes, I am authorized to work in this country for any employer"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Will you now or in the future require employer sponsorship for work authorization in this country",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "What are your preferred pronouns",
+            "answer": "He/Him"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "How did you hear about DV Trading",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Terms & Conditions",
+            "answer": "Yes, I have read and agree to DV Trading's Privacy Policy."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Are you Hispanic/Latino",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "will not disclose or use",
+            "answer": "I agree"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "employee of any Government",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "retaining your Candidate profile",
+            "answer": "I consent"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "communication method would you like us to use",
+            "answer": "Email"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "What is your current overall GPA",
+            "answer": "3.5 - 4.0"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "strong interest in a GE Vernova segment",
+            "answer": "Electrification"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "willing to work in the office",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Tell us how you heard about Zipline and this job",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "available for a full-time onsite internship this summer",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Why are you interested in becoming an Enterprise Systems",
+            "answer": "I am deeply inspired by Zipline\u2019s mission to provide instant, equal access to vital medical supplies, food, and goods across the globe through autonomous logistics. What excites me about the Enterprise Systems team is the opportunity to work at the intersection of high-availability distributed software and mission-critical physical operations. The operational software powering manufacturing execution, parts traceability, and supply chain reliability is the nervous system of Zipline\u2019s fleet. With my background in building resilient data pipelines at Perficient and EPAM and designing observable backend systems with OpenTelemetry, I want to take ownership of core product domains, eliminate manual bottlenecks, and help ensure 99.9% uptime as Zipline scales to deliver every 30 seconds worldwide."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Tell us about a project where something didn\u2019t work as expected",
+            "answer": "At EPAM, while building an ingestion pipeline for high-velocity IoT telemetry data, we noticed unexpected schema drifts and out-of-order timestamps from field sensors causing corrupted aggregations and silent failures in downstream analytics dashboards. The existing system assumed semi-static schemas, which broke when hardware firmware updates rolled out. To resolve this, I first instrumented detailed metrics and log tracing to isolate the exact points of failure. I then designed an automated schema validation and anomaly detection staging layer with dead-letter queue routing. This intercepted malformed payloads before they reached production stores and caught 95% of invalid records upstream, while automatically alerting engineers to new firmware schema variations."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Describe a recent project where you used AI tools while building software",
+            "answer": "At Impatico, I built an automated document extraction pipeline leveraging Vision-Language Models (VLMs) and LLM orchestrators to ingest ESG and operational data from thousands of complex corporate reports. AI tools were exceptionally helpful for initial layout parsing, text extraction from unstructured tables, and drafting semantic schema mappings across disparate document formats. However, critical engineering judgment was essential for building the evaluation framework: I used Phoenix and OpenTelemetry to trace and benchmark model outputs, set deterministic validation boundaries to reject hallucinations on numerical compliance data, and engineered hybrid retrieval (RAG) strategies that increased precision from 50% to 80% while keeping latency and inference costs bounded."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Tell us about the most technically challenging project you\u2019ve built",
+            "answer": "At Perficient, I was tasked with optimizing a multi-terabyte scientific data processing pipeline on AWS EMR that was taking nearly 24 hours per batch run, frequently failing due to memory pressure, and incurring significant cloud costs. I analyzed Spark execution plans to identify severe data skew and unnecessary shuffle operations. I repartitioned datasets using composite keys, tuned memory allocation parameters, and transitioned repetitive PySpark logic into a streamlined, reusable framework. This slashed runtime to under 1 hour and reduced monthly EMR costs by $10,000. If I were doing this project today, I would establish automated partition sizing and OpenTelemetry-based job profiling upfront to detect skew dynamically during ingestion rather than retroactively tuning after cost overruns."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "current work authorization status in the United States",
+            "answer": "Authorized to work in the United States (F-1 OPT eligible; future visa sponsorship required)"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "based in the SF Bay Area, or ready to relocate",
+            "answer": "Yes - I can relocate within 1\u20132 months (if offered the role)"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Have you worked with any startups previously",
+            "answer": "Yes, at Impatico (seed-stage AI startup), I built end-to-end multimodal data extraction pipelines using Vision-Language Models (VLMs) and LLM orchestrators. I owned the core ingestion pipeline, engineered hybrid RAG retrieval that increased precision from 50% to 80%, and built evaluation benchmarks with Phoenix and OpenTelemetry to ensure deterministic reliability and sub-second response times. I thrive in high-autonomy environments where engineers iterate and ship fast."
+        },
+        {
+            "match_type": "contains",
+            "pattern": "What is your current visa status",
+            "answer": "F-1 Student Visa (OPT / STEM OPT Eligible)"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "Still Student",
+            "answer": "true"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "require sponsorship",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "require visa sponsorship",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "will you require sponsorship",
+            "answer": "Yes"
+        }
+    ],
+    "field_defaults": {
+        "ai_resume_screening_opt_in": true,
+        "close_personal_relationship": false,
+        "company_client_relationship": false,
+        "previous_employers": "EPAM || Perficient || Impatico",
+        "pursue_cpa": false,
+        "valid_drivers_license": true,
+        "veteran_status": false,
+        "gender": "Male",
+        "race_ethnicity": "Hispanic or Latino",
+        "disability_status": false,
+        "street_address": "3030 Shrine Pl",
+        "address_line_1": "3030 Shrine Pl",
+        "address_line_2": "Apt 212",
+        "apartment": "Apt 212",
+        "zip_code": "90007",
+        "postal_code": "90007",
+        "county": "Los Angeles",
+        "available_start_date": "06/01/2027"
+    }
+}

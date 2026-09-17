@@ -14,7 +14,7 @@ AI Engineer with experience building LLM orchestration, RAG, evaluation, and dat
 ## Education
 **University of Southern California** *January 2026-December 2027*
 <br>Master of Science in Computer Science *3.67/4.0 GPA*
-<br>Coursework: *Programming Systems Design (C++, Java), Analysis of Algorithms, Computer Networks, Deep Learning.*
+<br>Coursework: *Operating Systems, Agentic Information Retrieval, Programming Systems Design (C++, Java), Analysis of Algorithms, Computer Networks, Deep Learning.*
 <br>Clubs and Associations: *Director of the Society of Hispanic Professional Engineers (SHPE) at USC*
 
 ## Work Experience

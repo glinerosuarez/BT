@@ -28,3 +28,22 @@
 - **Date Approved**: 2026-09-17
 - **Rationale**: Approved by user via interactive consultation gate.
 
+## Stripe Greenhouse Questionnaire (Job 1450)
+
+### Decision: Work Authorization and Question Overrides
+- **Context**: Stripe Backend Engineer, Intelligent Commerce (Job 1450, Greenhouse portal) presents work authorization, location, remote preference, and employment fields.
+- **Approved Answers**:
+  - `Please select the country where you currently reside.*`: `US`
+  - `Please select the country or countries you anticipate working in for the role in which you are applying. *`: `US`
+  - `Are you authorized to work in the location(s) you selected in your previous response?*`: `Yes`
+  - `Will you require Stripe to sponsor you for a work permit now or in the future for the location(s) you selected in in your previous response?*`: `No`
+  - `If this role offers the option to work from a remote location, do you plan to work remotely?*`: `No, I intend to work from an office location.`
+  - `Have you ever been employed by Stripe or a Stripe affiliate?*`: `No`
+  - `Who is your current or previous employer?*`: `EPAM Systems`
+  - `What is your current or previous job title?*`: `Software Engineer`
+  - `Do you opt-in to receive WhatsApp messages from Stripe Recruiting?*`: `No`
+  - `If located in the US, in what city and state do you reside?*`: `Los Angeles, CA`
+  - `Location (City)*`: `Los Angeles, California, United States`
+- **Date Approved**: 2026-09-17
+- **Rationale**: Approved by user via interactive consultation gate.
+

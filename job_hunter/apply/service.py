@@ -759,6 +759,14 @@ class ApplicationService:
         if workday_target_url:
             page.goto(workday_target_url, wait_until="domcontentloaded")
             target_url = workday_target_url
+        greenhouse_target_url = self._page_greenhouse_apply_url(page)
+        if greenhouse_target_url:
+            page.goto(greenhouse_target_url, wait_until="domcontentloaded")
+            target_url = greenhouse_target_url
+            embedded_gh = self._page_greenhouse_apply_url(page)
+            if embedded_gh and self.greenhouse_adapter.is_greenhouse_target(embedded_gh, page=page):
+                page.goto(embedded_gh, wait_until="domcontentloaded")
+                target_url = embedded_gh
         if self.greenhouse_adapter.is_greenhouse_target(target_url, page=page):
             return "greenhouse", self.greenhouse_adapter, target_url
         if self.ashby_adapter.is_ashby_target(target_url, page=page):
@@ -959,6 +967,33 @@ class ApplicationService:
             return ""
         candidate = str(candidate or "").strip()
         return candidate if self.workday_adapter.is_workday_target(candidate) else ""
+
+    def _page_greenhouse_apply_url(self, page) -> str:
+        """Resolve the canonical Greenhouse endpoint embedded by career-site wrappers."""
+        extractor = getattr(page, "extract_greenhouse_apply_url", None)
+        if callable(extractor):
+            candidate = str(extractor() or "").strip()
+            if candidate:
+                return candidate
+        if not hasattr(page, "evaluate"):
+            return ""
+        try:
+            candidate = page.evaluate(
+                """
+                () => {
+                  const iframe = document.querySelector('iframe[src*="greenhouse.io"]');
+                  if (iframe && iframe.src) return iframe.src;
+                  const ghLink = Array.from(document.querySelectorAll('a[href*="greenhouse.io"], a[href*="grnh.se"]')).find(a => a.href);
+                  if (ghLink && ghLink.href) return ghLink.href;
+                  const applyLink = Array.from(document.querySelectorAll('a[href*="/apply/"], a[href*="job_app"]')).find(a => a.href);
+                  if (applyLink && applyLink.href) return applyLink.href;
+                  return '';
+                }
+                """
+            )
+        except Exception:
+            return ""
+        return str(candidate or "").strip()
 
     def _discover_external_apply_url_from_click(self, page, target_url: str) -> str:
         if not hasattr(page, "locator"):
