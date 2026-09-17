@@ -1,6 +1,16 @@
 {
     "question_overrides": [
         {
+            "match_type": "contains",
+            "pattern": "in-office culture",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "willing and able to work in the office",
+            "answer": "Yes"
+        },
+        {
             "match_type": "exact",
             "pattern": "Please select the ethnicity which most accurately describes how you identify yourself.*",
             "answer": "Hispanic or Latino"

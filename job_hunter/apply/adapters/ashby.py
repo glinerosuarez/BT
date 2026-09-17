@@ -54,11 +54,37 @@ class AshbyAdapter:
                     return re.sub(r"[?&]embed=[^&]+", "", src)
         except Exception:
             pass
+        try:
+            current_url = getattr(page, "url", "") or ""
+            host = urlparse(current_url).netloc.lower()
+            if "ashbyhq.com" not in host:
+                match = re.search(r"ashby_jid=([a-f0-9-]+)", current_url, re.IGNORECASE)
+                if match:
+                    jid = match.group(1)
+                    anchor = page.locator(f"a[href*='{jid}']").first
+                    try:
+                        waiter = getattr(anchor, "wait_for", None)
+                        if callable(waiter):
+                            waiter(state="attached", timeout=4000)
+                    except Exception:
+                        pass
+                    if anchor.count() > 0:
+                        href = str(anchor.get_attribute("href") or "").strip()
+                        if href:
+                            return href
+        except Exception:
+            pass
         return ""
 
 
     def submit(self, *, page, resolver: AnswerResolver, context) -> SubmitResult:
         steps: list[StepSnapshot] = []
+        underlying = self.extract_underlying_apply_url(page)
+        if underlying and underlying != getattr(page, "url", ""):
+            try:
+                page.goto(underlying, wait_until="domcontentloaded")
+            except Exception:
+                pass
         self._open_application_form(page)
         # A manual CAPTCHA handoff may have completed the submit while the
         # session stayed open. Recognize that terminal page before attempting

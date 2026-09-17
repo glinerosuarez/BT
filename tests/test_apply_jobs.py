@@ -1708,6 +1708,36 @@ class ApplyJobsTests(unittest.TestCase):
         self.assertEqual(result.blocker.reason, "submission_flagged")
         self.assertTrue(page.submitted)
 
+    def test_ashby_adapter_extracts_underlying_apply_url_from_portal_page_link(self) -> None:
+        adapter = AshbyAdapter()
+
+        class _AnchorLocator:
+            def __init__(self, href: str) -> None:
+                self._href = href
+
+            @property
+            def first(self):
+                return self
+
+            def count(self) -> int:
+                return 1 if self._href else 0
+
+            def get_attribute(self, name: str) -> str:
+                return self._href if name == "href" else ""
+
+        class _PortalPage:
+            url = "https://careers.example.com?ashby_jid=c097505b-0a28-4a33-a917-268f463641e8&utm_source=test"
+
+            def locator(self, selector: str):
+                if "c097505b-0a28-4a33-a917-268f463641e8" in selector:
+                    return _AnchorLocator("https://jobs.ashbyhq.com/example/c097505b-0a28-4a33-a917-268f463641e8")
+                return _AnchorLocator("")
+
+        self.assertEqual(
+            adapter.extract_underlying_apply_url(_PortalPage()),
+            "https://jobs.ashbyhq.com/example/c097505b-0a28-4a33-a917-268f463641e8",
+        )
+
     def test_phenom_adapter_fills_required_fields_uploads_artifacts_and_confirms(self) -> None:
         adapter = PhenomAdapter()
         page = FakePage(
