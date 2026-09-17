@@ -350,9 +350,11 @@ class SemanticShadowScorer:
 
     def score(self, job: JobRecord) -> SemanticStage2Result:
         job_text = build_job_text_v1(job)
-        return self.score_job_text(job_text)
+        detail_status = str(job.source_metadata.get("detail_quality_status") or "") if isinstance(job.source_metadata, dict) else ""
+        is_thin_detail = detail_status in {"card_only", "detail_partial"}
+        return self.score_job_text(job_text, is_thin_detail=is_thin_detail)
 
-    def score_job_text(self, job_text: str) -> SemanticStage2Result:
+    def score_job_text(self, job_text: str, *, is_thin_detail: bool = False) -> SemanticStage2Result:
         text_hash = stable_text_hash(job_text)
         job_vectors = self.backend.embed_texts([job_text], batch_size=1, normalize_embeddings=True).vectors
         if job_vectors.size == 0:
@@ -388,6 +390,7 @@ class SemanticShadowScorer:
         builder_evidence_penalty, builder_adjustment_reason_codes = _builder_evidence_adjustment(
             job_text,
             pre_adjustment_score=max(0.0, min(base_score - negative_penalty - research_heaviness_score, 1.0)),
+            is_thin_detail=is_thin_detail,
         )
         adjusted_score = max(
             0.0,
@@ -518,7 +521,26 @@ def _negative_profile_adjustment(
     ]
 
 
-def _builder_evidence_adjustment(job_text: str, *, pre_adjustment_score: float) -> tuple[float, list[str]]:
+def _is_unhydrated_chrome_job_text(job_text: str) -> bool:
+    if "QUALIFICATIONS:\n- none" not in job_text or "RESPONSIBILITIES:\n- none" not in job_text:
+        return False
+    lowered = job_text.lower()
+    chrome_signals = (
+        "alumni work here",
+        "school alumni",
+        "early applicant",
+        "easy apply",
+        "connections work here",
+    )
+    return any(sig in lowered for sig in chrome_signals)
+
+
+def _builder_evidence_adjustment(
+    job_text: str,
+    *,
+    pre_adjustment_score: float,
+    is_thin_detail: bool = False,
+) -> tuple[float, list[str]]:
     if pre_adjustment_score < 0.52:
         return 0.0, []
     blob = job_text.lower()
@@ -529,6 +551,10 @@ def _builder_evidence_adjustment(job_text: str, *, pre_adjustment_score: float) 
     has_generalist_signal = any(re.search(pattern, blob, flags=re.IGNORECASE) for pattern in _GENERALIST_ANALYTICAL_PATTERNS)
     if not has_generalist_signal and bucket_count == 1:
         return 0.0, []
+    if is_thin_detail or _is_unhydrated_chrome_job_text(job_text):
+        return 0.0, [
+            "semantic_thin_description_review",
+        ]
     if bucket_count == 0:
         return BUILDER_SPARSE_PENALTY_ZERO_BUCKETS, [
             "semantic_penalty_missing_builder_evidence",

@@ -74,6 +74,7 @@ class FakeEmbeddingBackend:
                     "mongodb",
                     "docker",
                     "azure cloud",
+                    "platform engineer",
                 )
             ):
                 vectors.append([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
@@ -590,6 +591,40 @@ class Stage2SemanticTests(unittest.TestCase):
             "semantic_negative_profile_web_frontend_product",
             result.semantic_match_reason_codes,
         )
+
+    def test_semantic_scorer_protects_thin_detail_from_false_rejection(self) -> None:
+        backend = FakeEmbeddingBackend()
+        scorer = SemanticShadowScorer(backend=backend)
+        job = JobRecord(
+            source="linkedin",
+            external_id="8",
+            url="https://www.linkedin.com/jobs/view/4467962120",
+            title="Lead Platform Engineer",
+            company="Eggs Unlimited",
+            location="Irvine, CA",
+            is_internship=False,
+            job_type="full_time",
+            posted_at="2026-09-16",
+            description="Lead Platform Engineer - On-Site (Irvine) Eggs Unlimited Irvine, CA (On-site) 401(k), +1 benefit 2 school alumni work here Be an early applicant · Posted 20 hours ago Easy Apply",
+            ingested_at="2026-09-17T00:00:00+00:00",
+            source_metadata={"detail_quality_status": "detail_partial"},
+        )
+
+        result = scorer.score(job)
+
+        self.assertNotIn(
+            "semantic_penalty_missing_builder_evidence",
+            result.semantic_match_reason_codes,
+        )
+        self.assertNotIn(
+            "semantic_penalty_builder_bucket_count_0",
+            result.semantic_match_reason_codes,
+        )
+        self.assertIn(
+            "semantic_thin_description_review",
+            result.semantic_match_reason_codes,
+        )
+        self.assertNotEqual(result.semantic_match_label, "reject")
 
 
 if __name__ == "__main__":

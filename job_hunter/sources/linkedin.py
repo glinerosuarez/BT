@@ -156,7 +156,7 @@ EXTERNAL_ATS_DOMAINS = (
 )
 
 # Minimum description length to consider the detail fetch successful.
-_DETAIL_MIN_LENGTH = 200
+_DETAIL_MIN_LENGTH = 400
 
 EXPAND_MORE_SCRIPT = """
 () => {
@@ -661,9 +661,21 @@ class LinkedInSource(SourceConnector):
         if "/jobs/view/" not in page.url.lower():
             LOG.info("linkedin_job_skipped_redirected url=%s dest_url=%s", job_url, page.url)
             return None
+        try:
+            page.wait_for_selector(
+                "#job-details, .jobs-description, .jobs-description__content, [data-view-name='job-details'], .job-details-jobs-unified-top-card, .jobs-unified-top-card, .topcard",
+                timeout=5000,
+            )
+        except Exception:
+            pass
+        try:
+            page.evaluate("() => window.scrollTo(0, 300)")
+            page.wait_for_timeout(300)
+        except Exception:
+            pass
         expanded = int(page.evaluate(EXPAND_MORE_SCRIPT) or 0)
         if expanded:
-            page.wait_for_timeout(750)
+            page.wait_for_timeout(500)
         page_text = str(page.locator("body").inner_text() or "")
         if _is_linkedin_closed(page_text.splitlines()):
             LOG.info("linkedin_job_skipped_closed url=%s", job_url)
@@ -723,14 +735,19 @@ class LinkedInSource(SourceConnector):
                 return "", "", True, False
             try:
                 detail_page.wait_for_selector(
-                    ".job-details-jobs-unified-top-card, .jobs-unified-top-card, .topcard, #job-details, .jobs-description, main, strong:has-text('posted')",
+                    "#job-details, .jobs-description, .jobs-description__content, [data-view-name='job-details'], .job-details-jobs-unified-top-card, .jobs-unified-top-card, .topcard",
                     timeout=5000,
                 )
             except Exception:
                 pass
+            try:
+                detail_page.evaluate("() => window.scrollTo(0, 300)")
+                detail_page.wait_for_timeout(300)
+            except Exception:
+                pass
             expanded = int(detail_page.evaluate(EXPAND_MORE_SCRIPT) or 0)
             if expanded:
-                detail_page.wait_for_timeout(750)
+                detail_page.wait_for_timeout(500)
 
             # Wait until body has rendered real content beyond the top navigation chrome
             page_text = ""
@@ -757,18 +774,24 @@ class LinkedInSource(SourceConnector):
                 return "", "", False, True
 
             detail_text = str(detail_page.evaluate(DETAIL_TEXT_SCRIPT) or "")
-            if not detail_text.strip():
-                detail_text = page_text
-            external_apply_url = _extract_external_apply_url_from_page(detail_page)
-            # If description is too short, try polling a bit more in case React hydrated late.
+            # If description is too short, try scrolling down and expanding again in case React hydrated late
             if len(detail_text.strip()) < _DETAIL_MIN_LENGTH:
                 for _wait_ms in (1500, 2500):
                     detail_page.wait_for_timeout(_wait_ms)
+                    try:
+                        detail_page.evaluate("() => window.scrollTo(0, 600)")
+                        detail_page.evaluate(EXPAND_MORE_SCRIPT)
+                    except Exception:
+                        pass
                     retried = str(detail_page.evaluate(DETAIL_TEXT_SCRIPT) or "")
                     if len(retried.strip()) > len(detail_text.strip()):
                         detail_text = retried
                     if len(detail_text.strip()) >= _DETAIL_MIN_LENGTH:
                         break
+
+            if not detail_text.strip():
+                detail_text = page_text
+            external_apply_url = _extract_external_apply_url_from_page(detail_page)
             # If description is still thin and the apply button leads to a known ATS,
             # open that ATS page directly and extract its description.
             if len(detail_text.strip()) < _DETAIL_MIN_LENGTH and _is_external_ats_url(external_apply_url):
@@ -1092,7 +1115,9 @@ def _build_row(
     detail_location = str(detail.get("location") or "").strip()
     location = detail_location if _is_valid_location(detail_location) else str(card.get("location") or "").strip()
     posted_at = str(detail.get("posted_at") or card.get("posted_at") or "").strip()
-    description = str(detail.get("description") or "").strip() or str(card.get("card_text") or "").strip()
+    raw_desc = str(detail.get("description") or "").strip()
+    is_card_fallback = not raw_desc
+    description = raw_desc or str(card.get("card_text") or "").strip()
     job_url = _canonical_linkedin_job_url(str(card.get("url") or "").strip())
 
     if not title or not company or not job_url:
@@ -1100,7 +1125,12 @@ def _build_row(
 
     job_id = _linkedin_job_id(job_url)
     external_id = job_id or f"{company}|{title}|{location}|{posted_at or ''}"
-    detail_status = "detail_complete" if detail_text.strip() and len(description) >= 200 else ("card_only" if not detail_text.strip() else "detail_partial")
+    if not detail_text.strip():
+        detail_status = "card_only"
+    elif not is_card_fallback and len(description) >= _DETAIL_MIN_LENGTH:
+        detail_status = "detail_complete"
+    else:
+        detail_status = "detail_partial"
     source_metadata = {
         "detail_fetch_attempted": detail_fetch_attempted,
         "detail_quality_status": detail_status,
