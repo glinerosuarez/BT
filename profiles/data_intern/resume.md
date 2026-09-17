@@ -13,7 +13,7 @@ Data Engineer and ML Systems engineer with experience building distributed data 
 **Specializations**: Distributed systems design, batch processing, data quality frameworks, schema enforcement, anomaly detection, ML observability
 
 ## Education
-**University of Southern California** *August 2025-December 2027*
+**University of Southern California** *January 2026-December 2027*
 <br>Master of Science in Computer Science *3.67/4.0 GPA*
 <br>Coursework: *Programming Systems Design (C++, Java), Analysis of Algorithms, Computer Networks, Deep Learning.*
 <br>Clubs and Associations: *Director of the Society of Hispanic Professional Engineers (SHPE) at USC*
@@ -34,14 +34,7 @@ removal of pipeline bottlenecks across distributed batch processing workflows, r
 to a more cost-effective EMR on EKS architecture and refactoring small-scale tasks into native Python running on a
 single Kubernetes pod.
 
-**Software Engineer | Perficient (Client: SoFi)** October 2023 - October 2024<br>
-**Technologies**: Python, SQL, Snowflake, dbt, Airflow, AWS, Terraform, Docker, Oracle Database<br>
-*(Colombia-Remote)*<br>
-- Modernized the daily transaction reporting system as a Python application on a new stack (AWS, Snowflake, dbt,
-Airflow), accelerating the worst-case processing time by 12x for a workflow processing 1 TB of data into 2,000+
-reports daily.
-
-**Software Engineer | Perficient (Client: Uptake)** May 2022 - October 2023<br>
+**Software Engineer | Perficient (Client: Uptake)** May 2023 - October 2024<br>
 **Technologies**: Python, SQL, Apache Spark, Databricks, Delta Lake, AWS, Terraform, Docker, PostgreSQL<br>
 *(Colombia-Remote)*<br>
 - Led the migration of high-volume tables and their ingestion pipelines from AWS Athena to Delta Lake format on

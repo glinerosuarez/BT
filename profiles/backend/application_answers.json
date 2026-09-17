@@ -7,6 +7,11 @@
     },
     {
       "match_type": "exact",
+      "pattern": "Do you have or are you pursuing a degree in Data Science, Statistics, Computer Science, Economics, or a related quantitative field?",
+      "answer": "Yes"
+    },
+    {
+      "match_type": "exact",
       "pattern": "Have you ever worked for Robinhood as an employee, intern or contractor? Note that providing false or misleading information may result in disqualification from the hiring process. (required)",
       "answer": "I have never worked at Robinhood"
     },
