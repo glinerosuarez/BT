@@ -1,6 +1,41 @@
 {
     "question_overrides": [
         {
+            "match_type": "contains",
+            "pattern": "in-office position based in irvine, ca",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "employed at eggs unlimited",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "done business with eggs unlimited",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "learn about this position at eggs unlimited",
+            "answer": "LinkedIn"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "eggs unlimited customer, vendor, competitor",
+            "answer": "No"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "applicant certification",
+            "answer": "Yes"
+        },
+        {
+            "match_type": "contains",
+            "pattern": "i certify that the information i have provided in this application",
+            "answer": "Yes"
+        },
+        {
             "match_type": "exact",
             "pattern": "please select the country where you currently reside. *",
             "answer": "US"

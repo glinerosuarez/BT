@@ -57,6 +57,13 @@ _EMPTY_SELECT_PLACEHOLDERS = {
     "year",
     "mes",
     "año",
+    "select an option",
+    "select option",
+    "select",
+    "choose an option",
+    "please select",
+    "seleccione una opción",
+    "seleccionar",
 }
 _KNOWN_RADIO_QUESTIONS: tuple[tuple[str, str], ...] = (
     ("require sponsorship", "work_authorization.requires_future_sponsorship"),
@@ -536,7 +543,7 @@ class LinkedInEasyApplyAdapter:
             self._select_radio_value(page, field, value)
         elif field_type == "checkbox-group":
             self._select_checkbox_group_value(page, field, value)
-        elif field_type == "select-one":
+        elif field_type in {"select", "select-one"}:
             self._select_value(page, field, value)
         elif field_type == "checkbox":
             desired = value.strip().lower() in {"1", "true", "yes", "on"}
@@ -697,8 +704,10 @@ class LinkedInEasyApplyAdapter:
 
     def _normalized_current_value(self, *, field_type: str, current_value: str) -> str:
         normalized = current_value.strip()
-        if field_type in {"select", "select-one"} and normalized.lower() in _EMPTY_SELECT_PLACEHOLDERS:
-            return ""
+        if field_type in {"select", "select-one"}:
+            lowered = normalized.lower()
+            if lowered in _EMPTY_SELECT_PLACEHOLDERS or lowered.startswith("select") or lowered.startswith("seleccio"):
+                return ""
         return normalized
 
     def _handle_delete_education_validation(self, page, steps: list[StepSnapshot]) -> bool:
@@ -1163,19 +1172,31 @@ class LinkedInEasyApplyAdapter:
         selector = str(field.get("selector") or "")
         options = field.get("options") or []
         normalized_target = value.strip().lower()
+        if normalized_target in {"true", "1", "on"}:
+            normalized_target = "yes"
+        elif normalized_target in {"false", "0", "off"}:
+            normalized_target = "no"
         for option in options:
             text = str(option.get("text") or "").strip()
             raw_value = str(option.get("value") or "").strip()
             if text.lower() == normalized_target or raw_value.lower() == normalized_target:
-                page.select_option(selector, value=raw_value)
+                try:
+                    page.select_option(selector, value=raw_value)
+                except Exception:
+                    page.select_option(selector, label=text)
                 return
             if normalized_target and normalized_target in text.lower():
+                try:
+                    page.select_option(selector, value=raw_value)
+                except Exception:
+                    page.select_option(selector, label=text)
+                return
+        for option in options:
+            raw_value = str(option.get("value") or "").strip()
+            text = str(option.get("text") or "").strip()
+            if raw_value and text.lower() not in _EMPTY_SELECT_PLACEHOLDERS and not text.lower().startswith("select"):
                 page.select_option(selector, value=raw_value)
                 return
-        if options:
-            first_value = str(options[0].get("value") or "").strip()
-            if first_value:
-                page.select_option(selector, value=first_value)
 
     def _select_radio_value(self, page, field: dict[str, object], value: str) -> None:
         options = field.get("options") or []
@@ -1196,7 +1217,27 @@ class LinkedInEasyApplyAdapter:
             if alias in {"yes", "no"} and self._click_dialog_option_text(page, alias.title()):
                 return
 
+    def _dialog_has_radios(self, page) -> bool:
+        if not hasattr(page, "evaluate"):
+            return False
+        try:
+            return bool(
+                page.evaluate(
+                    """
+                    () => {
+                      const dialogs = Array.from(document.querySelectorAll('dialog[open]'));
+                      const dialog = dialogs[dialogs.length - 1] || document;
+                      return dialog.querySelectorAll('input[type="radio"], [role="radio"]').length > 0;
+                    }
+                    """
+                )
+            )
+        except Exception:
+            return False
+
     def _handle_known_radio_questions(self, page, resolver: AnswerResolver, steps: list[StepSnapshot]) -> str | SubmitResult | None:
+        if not self._dialog_has_radios(page):
+            return None
         dialog_text = self._dialog_text(page)
         lowered = dialog_text.lower()
         if "yes" not in lowered or "no" not in lowered:

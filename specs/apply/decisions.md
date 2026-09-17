@@ -47,3 +47,23 @@
 - **Date Approved**: 2026-09-17
 - **Rationale**: Approved by user via interactive consultation gate.
 
+## Eggs Unlimited LinkedIn Easy Apply (Job 1451)
+
+### Decision: Candidate Profile Selection
+- **Context**: Eggs Unlimited Lead Platform Engineer - On-Site (Irvine) (Job 1451, LinkedIn Easy Apply).
+- **Approved Profile**: `swe_fulltime`
+- **Date Approved**: 2026-09-17
+- **Rationale**: Full-time engineering role aligned with `swe_fulltime` profile. Approved by user via interactive consultation gate.
+
+### Decision: Questionnaire Answers
+- **Approved Answers**:
+  - `Are you legally authorized to work in the United States?*`: `Yes`
+  - `This is an in-office position based in Irvine, CA. Are you able to work in office Monday through Friday?*`: `Yes`
+  - `Do you know anyone currently or formerly employed at Eggs Unlimited?*`: `No`
+  - `Have you ever done business with Eggs Unlimited?*`: `No`
+  - `How did you learn about this position at Eggs Unlimited?*`: `LinkedIn`
+  - `To the best of your knowledge, have you, someone you are related to, someone you are acquainted with, or someone in your immediate professional network worked with an Eggs Unlimited customer, vendor, competitor, or regulatory agency? If yes, please briefly describe the connection.*`: `No`
+  - `Applicant Certification: I certify that the information I have provided in this application...*`: `Yes`
+- **Date Approved**: 2026-09-17
+- **Rationale**: Approved by user via interactive consultation gate.
+
