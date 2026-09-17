@@ -14,7 +14,7 @@ class ConfigTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             settings = load_settings()
         self.assertEqual(settings.poll_interval_minutes, 15)
-        self.assertTrue(settings.use_arbeitnow)
+        self.assertFalse(settings.use_arbeitnow)
         self.assertTrue(settings.use_greenhouse)
         self.assertTrue(settings.use_lever)
         self.assertTrue(settings.use_rss)

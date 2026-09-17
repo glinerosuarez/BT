@@ -112,6 +112,45 @@ US_LOCATION_HINTS = {
     "u.s.",
 }
 
+US_LOCATION_PATTERN = r"(?:\b(?:united states|usa|us)\b|\bu\.s\.(?:a\.)?)"
+
+NON_US_LOCATION_PATTERN = (
+    r"\b(?:"
+    r"germany|deutschland|dusseldorf|düsseldorf|berlin|munich|münchen|frankfurt|hamburg|stuttgart|cologne|köln|"
+    r"united kingdom|great britain|england|scotland|wales|\buk\b|"
+    r"canada|toronto|vancouver|montreal|montréal|ottawa|calgary|edmonton|quebec|alberta|"
+    r"india|bangalore|bengaluru|hyderabad|mumbai|new delhi|pune|chennai|noida|gurugram|gurgaon|kolkata|"
+    r"united arab emirates|\buae\b|dubai|abu dhabi|"
+    r"saudi arabia|riyadh|"
+    r"australia|sydney|melbourne|brisbane|perth|adelaide|"
+    r"switzerland|suisse|schweiz|geneva|genève|zug|zurich|zürich|basel|lausanne|"
+    r"netherlands|amsterdam|rotterdam|utrecht|the hague|eindhoven|"
+    r"spain|españa|madrid|barcelona|valencia|seville|"
+    r"france|paris|lyon|marseille|toulouse|"
+    r"belgium|belgique|belgien|brussels|bruxelles|"
+    r"ireland|dublin|cork|galway|"
+    r"poland|polska|warsaw|warszawa|krakow|kraków|wroclaw|wrocław|"
+    r"singapore|"
+    r"japan|tokyo|osaka|kyoto|"
+    r"china|beijing|shanghai|shenzhen|hangzhou|"
+    r"brazil|brasil|sao paulo|são paulo|rio de janeiro|"
+    r"(?<!new\s)(?:mexico|méxico|guadalajara|monterrey)|"
+    r"italy|italia|rome|roma|milan|milano|"
+    r"sweden|sverige|stockholm|gothenburg|"
+    r"denmark|danmark|copenhagen|"
+    r"norway|norge|oslo|"
+    r"finland|suomi|helsinki|"
+    r"israel|tel aviv|jerusalem|haifa|"
+    r"taiwan|taipei|"
+    r"south korea|korea|seoul|"
+    r"emea|apac|latam|europe|asia"
+    r")\b"
+)
+
+US_MAJOR_CITIES_PATTERN = (
+    r"\b(?:austin|seattle|san francisco|san jose|new york|chicago|boston|los angeles|denver|atlanta|dallas|houston)\b"
+)
+
 NEGATIVE_WORK_AUTH_PATTERNS = {
     "us_work_authorized_only": r"\b(indefinite\s+)?(us|u\.s\.|united states)\s+work authorized individuals only\b",
     "citizen_or_pr_required": (

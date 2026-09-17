@@ -27,8 +27,11 @@ from job_hunter.keywords import (
     ML_DATA_KEYWORDS,
     NEGATIVE_WORK_AUTH_PATTERNS,
     NON_DATA_ROLE_TITLE_PATTERNS,
+    NON_US_LOCATION_PATTERN,
     POSITIVE_SPONSORSHIP_PATTERNS,
     US_LOCATION_HINTS,
+    US_LOCATION_PATTERN,
+    US_MAJOR_CITIES_PATTERN,
 )
 from job_hunter.models import JobRecord, PipelineOutcome, SourceRunStats
 from job_hunter.notify import TelegramNotifier
@@ -112,9 +115,12 @@ POSITIVE_SPONSORSHIP_REGEXES = {
     for name, pattern in POSITIVE_SPONSORSHIP_PATTERNS.items()
 }
 US_CITY_STATE_RE = re.compile(
-    r"\b[a-z][a-z .'-]+,\s*(al|ak|az|ar|ca|co|ct|de|dc|fl|ga|hi|ia|id|il|in|ks|ky|la|ma|md|me|mi|mn|mo|ms|mt|nc|nd|ne|nh|nj|nm|nv|ny|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|va|vt|wa|wi|wv|wy)\b",
+    r"\b[a-z][a-z .'-]+,\s*(?:al|ak|az|ar|ca|co|ct|de|dc|fl|ga|hi|ia|id|il|in|ks|ky|la|ma|md|me|mi|mn|mo|ms|mt|nc|nd|ne|nh|nj|nm|nv|ny|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|va|vt|wa|wi|wv|wy)(?:\s*,|\s+\d{5}|\s*\([^\)]*\)|\s*[-–—]|\s*$)",
     flags=re.IGNORECASE,
 )
+US_LOCATION_RE = re.compile(US_LOCATION_PATTERN, flags=re.IGNORECASE)
+NON_US_LOCATION_RE = re.compile(NON_US_LOCATION_PATTERN, flags=re.IGNORECASE)
+US_MAJOR_CITIES_RE = re.compile(US_MAJOR_CITIES_PATTERN, flags=re.IGNORECASE)
 NEGATED_SPONSORSHIP_REGEXES = {
     "no_sponsorship": re.compile(r"\b(no|not|without)\s+(visa\s+)?sponsorships?\b", flags=re.IGNORECASE),
     "cannot_sponsor": re.compile(r"\b(cannot|can't|unable to)\s+sponsor\b", flags=re.IGNORECASE),
@@ -1153,11 +1159,17 @@ def _is_us_scope(job: JobRecord) -> bool:
     location = _normalize_scope_text(job.location)
     if not location:
         return True
-    if "remote" in location:
-        return True
     if US_CITY_STATE_RE.search(location):
         return True
-    return any(hint in location for hint in US_LOCATION_HINTS)
+    if NON_US_LOCATION_RE.search(location):
+        return False
+    if US_LOCATION_RE.search(location):
+        return True
+    if "remote" in location:
+        return True
+    if US_MAJOR_CITIES_RE.search(location):
+        return True
+    return False
 
 
 def _normalize_scope_text(value: str) -> str:

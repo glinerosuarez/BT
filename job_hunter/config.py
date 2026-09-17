@@ -417,7 +417,7 @@ def load_settings(*, load_dotenv: bool = False, dotenv_path: str = ".env") -> Se
         db_path=os.getenv("JOB_HUNTER_DB_PATH", DEFAULT_DB_PATH),
         poll_interval_minutes=_env_int("JOB_HUNTER_POLL_INTERVAL_MINUTES", 15),
         request_timeout_seconds=_env_int("JOB_HUNTER_REQUEST_TIMEOUT_SECONDS", 20),
-        use_arbeitnow=_env_bool("JOB_HUNTER_SOURCE_ARBEITNOW", True),
+        use_arbeitnow=_env_bool("JOB_HUNTER_SOURCE_ARBEITNOW", False),
         use_remotive=_env_bool("JOB_HUNTER_SOURCE_REMOTIVE", True),
         use_themuse=_env_bool("JOB_HUNTER_SOURCE_THEMUSE", True),
         use_greenhouse=_env_bool("JOB_HUNTER_SOURCE_GREENHOUSE", True),

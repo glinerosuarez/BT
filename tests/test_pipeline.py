@@ -502,6 +502,61 @@ class PipelineUnitTests(unittest.TestCase):
         )
         self.assertTrue(_is_us_scope(job))
 
+    def test_us_scope_rejects_foreign_locations(self) -> None:
+        foreign_locations = [
+            "Düsseldorf",
+            "Berlin, Germany",
+            "London, UK",
+            "Sydney, Australia",
+            "Toronto, ON, Canada",
+            "Onsite, based in Dubai, United Arab Emirates, or Abu Dhabi, United Arab Emirates",
+            "Onsite, based in Geneva, Switzerland, or Zug, Switzerland",
+            "UK, Netherlands, Spain, or Belgium. Some travel to our offices will be required from time-to-time",
+            "Remote - Germany",
+            "Remote - Europe",
+            "France Remote",
+        ]
+        for loc in foreign_locations:
+            job = JobRecord(
+                source="x",
+                external_id="foreign_1",
+                url="https://example.com/foreign",
+                title="Software Engineer Intern",
+                company="Global Corp",
+                location=loc,
+                is_internship=True,
+                posted_at=None,
+                description="Python and SQL",
+                ingested_at="now",
+            )
+            self.assertFalse(_is_us_scope(job), f"Expected {loc} to be rejected by _is_us_scope")
+
+    def test_us_scope_accepts_us_edge_cases(self) -> None:
+        valid_us_locations = [
+            "Melbourne, FL",
+            "Dublin, OH",
+            "Austin",
+            "San Francisco",
+            "Remote - US",
+            "United States",
+            "Seattle, WA 98101",
+            "Portland, OR (Remote)",
+        ]
+        for loc in valid_us_locations:
+            job = JobRecord(
+                source="x",
+                external_id="us_1",
+                url="https://example.com/us",
+                title="Software Engineer Intern",
+                company="US Corp",
+                location=loc,
+                is_internship=True,
+                posted_at=None,
+                description="Python and SQL",
+                ingested_at="now",
+            )
+            self.assertTrue(_is_us_scope(job), f"Expected {loc} to be accepted by _is_us_scope")
+
     def test_description_based_internship_match(self) -> None:
         job = JobRecord(
             source="x",
